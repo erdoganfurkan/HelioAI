@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "helioai"
+version = "0.1.0"
+description = "AI agent for heliophysics and space plasma data analysis"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["heliophysics", "plasma", "space physics", "AI agent", "MCP"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "speasy>=1.4",
+    "plasmapy>=2024.5",
+    "chromadb>=0.5",
+    "sentence-transformers>=3.0",
+    "groq>=0.9",
+    "google-genai>=0.8",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "mcp>=1.0",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "structlog>=24.0",
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "scipy>=1.12",
+    "astropy>=6.0",
+    "ipython>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+helioai = "helioai.interfaces.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["helioai"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

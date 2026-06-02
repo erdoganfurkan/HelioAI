@@ -21,7 +21,7 @@ async def test_returncode_zero_no_error() -> None:
 
 
 async def test_timeout_hard() -> None:
-    result = await run_python("import time; time.sleep(100)", timeout=2.0)
+    result = await run_python("import time; time.sleep(100)", timeout=5.0)
     assert "error" in result
     assert "timed out" in result["error"].lower()
 

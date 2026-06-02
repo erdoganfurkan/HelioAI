@@ -62,6 +62,12 @@ jobs:
             hf-minilm-${{ matrix.python-version }}-
             hf-minilm-
 
+      - name: Warm up sandbox imports (.pyc cache)
+        run: >
+          uv run python -c
+          "import numpy, matplotlib, scipy, astropy, astropy.units,
+          scipy.signal, scipy.stats, scipy.fft"
+
       - name: Run tests
         env:
           HELIOAI_LLM_PROVIDER: groq

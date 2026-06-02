@@ -25,12 +25,16 @@ def _set_subprocess_limits() -> None:
 
     Called via preexec_fn — runs in the child process after fork, before exec.
     Degrades silently on non-Linux or permission error.
+
+    RLIMIT_AS (virtual memory) is intentionally not set: numpy/scipy/speasy use
+    large sparse mmap regions at import time that can exceed any safe threshold,
+    causing OSError on import rather than at actual allocation. The hard timeout
+    already handles runaway CPU usage.
     """
     try:
         import resource
 
-        _4GB = 4 * 1024**3
-        resource.setrlimit(resource.RLIMIT_AS, (_4GB, _4GB))
+        # 200 MB max file write — prevents disk exhaustion from large figure dumps
         _200MB = 200 * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_FSIZE, (_200MB, _200MB))
     except Exception:
@@ -142,7 +146,7 @@ print("__HELIOAI_RESULT__" + json.dumps(_out))
 
 
 async def run_python(
-    code: str, timeout: float = 30.0, _plot_dir: str | None = None, _run_idx: int | None = None
+    code: str, timeout: float = 60.0, _plot_dir: str | None = None, _run_idx: int | None = None
 ) -> dict:
     """Execute Python code in an isolated subprocess.
 

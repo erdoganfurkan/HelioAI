@@ -47,7 +47,7 @@ pip install helioai
 Or from source with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-git clone https://github.com/<your-username>/HelioAI.git
+git clone https://github.com/erdoganfurkan/HelioAI.git
 cd HelioAI
 uv sync
 ```

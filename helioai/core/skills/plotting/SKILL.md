@@ -7,14 +7,15 @@ allowed_tools: [run_python]
 
 # Procedure — produce a heliophysics matplotlib figure
 
-## 1. Always call export() alongside plt.show()
+## 1. Always call clean(), export(), and plt.show()
 
-Never produce only a figure without also exporting numerical summaries.
-The LLM cannot see the PNG — it reads the export() dict to comment on the results.
+Before plotting, always pass `var.values` through `clean()` to mask CDF fill values
+(`-1e31`, `9.96e36`) and infinities as NaN. matplotlib renders NaN as gaps in the line,
+preserving the correct Y-axis scale.
 
 ```python
-export("B_stats", B_array)        # → min/max/mean/std surfaced to the LLM
-export("density_stats", n_array)
+data = clean(var.values)           # → masks fill values / infinities as NaN
+export("B_stats", data)            # → min/max/mean/std surfaced to the LLM
 plt.show()                         # → captures the PNG to disk
 ```
 

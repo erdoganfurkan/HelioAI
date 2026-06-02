@@ -48,6 +48,7 @@ import os
 os.environ.setdefault('MPLBACKEND', 'Agg')
 
 import json
+import re as _re
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -105,6 +106,14 @@ def export(name, data):
         __sandbox_exports[name] = {"error": str(e), "repr": repr(data)[:200]}
 
 
+def clean(values):
+    \"\"\"Convert CDF fill values (|x|>=1e30) and infinities to NaN before plotting.\"\"\"
+    arr = np.asarray(values, dtype=float)
+    arr[~np.isfinite(arr)] = np.nan
+    arr[np.abs(arr) >= 1e30] = np.nan
+    return arr
+
+
 def param_card(var, param_id: str) -> None:
     \"\"\"Emit a parameter metadata card for display in the UI. Call after spz.get_data().\"\"\"
     try:
@@ -123,6 +132,22 @@ def param_card(var, param_id: str) -> None:
                 cadence = f"{med_ms:.4g} ms"
         meta = getattr(var, "meta", {}) or {}
         parts = param_id.split("/")
+        columns = list(getattr(var, "columns", None) or [])
+        coord_sys = ""
+        for _key in ("COORDINATE_SYSTEM", "COORDINATE_SYSTEM_NAME", "FRAME", "FRAME_ORIGIN"):
+            _val = str(meta.get(_key, "") or "").strip()
+            if _val:
+                coord_sys = _val[:20]
+                break
+        if not coord_sys:
+            _name = str(getattr(var, "name", "") or "")
+            _haystack = " ".join(filter(None, [param_id, _name] + columns))
+            _m = _re.search(
+                r"\b(GSE|GSM|RTN|HCI|HAE|HEE|HEEQ|GCI|SSE|VSO|MSO|MFA|FAC)\b",
+                _haystack, _re.IGNORECASE
+            )
+            if _m:
+                coord_sys = _m.group(0).upper()
         __sandbox_cards.append({
             "kind": "parameter_card",
             "param_id": param_id,
@@ -131,7 +156,8 @@ def param_card(var, param_id: str) -> None:
             "instrument": str(meta.get("FIELDNAM", "") or "")[:80],
             "units": str(getattr(var, "unit", "") or ""),
             "cadence": cadence,
-            "components": list(getattr(var, "columns", None) or []),
+            "coord_sys": coord_sys,
+            "components": columns,
             "n_points": len(t),
         })
     except Exception:

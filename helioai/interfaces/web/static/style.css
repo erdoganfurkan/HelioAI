@@ -194,6 +194,34 @@ select:focus { border-color: var(--accent); }
 /* Error banner */
 .error-banner { align-self: stretch; background: #2d1515; border: 1px solid var(--red); border-radius: 8px; color: var(--red); padding: 10px 14px; font-size: 13px; }
 
+/* Welcome screen */
+.welcome {
+  margin: auto;
+  text-align: center;
+  max-width: 560px;
+  padding: 40px 24px;
+}
+.welcome-title {
+  font-size: 22px; font-weight: 700; color: var(--text);
+  margin-bottom: 6px;
+}
+.welcome-sub {
+  font-size: 13px; color: var(--text-muted); margin-bottom: 28px;
+}
+.suggested-prompts {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; text-align: left;
+}
+.suggested-prompt {
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px;
+  font-size: 12px; color: var(--text-muted); line-height: 1.4;
+  cursor: pointer; text-align: left;
+  transition: border-color 0.15s, color 0.15s;
+}
+.suggested-prompt:hover {
+  border-color: var(--accent); color: var(--text);
+}
+
 /* Done badge */
 .done-badge { align-self: flex-start; color: var(--text-muted); font-size: 11px; font-style: italic; }
 

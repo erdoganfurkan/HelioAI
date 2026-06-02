@@ -109,3 +109,18 @@ export('val', 42.0)
     assert result.get("error") is None
     assert result["stdout"] == "output line"
     assert "val" in result["exports"]
+
+
+async def test_clean_masks_fill_values() -> None:
+    code = """
+import numpy as np
+arr = np.array([1.0, -1e31, 9.96e36, 2.0, float('inf'), float('-inf')])
+cleaned = clean(arr)
+export('cleaned', cleaned)
+"""
+    result = await run_python(code)
+    assert result.get("error") is None
+    stats = result["exports"]["cleaned"]
+    assert stats["n_nan"] >= 4
+    assert stats["max"] is not None and stats["max"] < 1e29
+    assert stats["min"] is not None and stats["min"] > -1e29

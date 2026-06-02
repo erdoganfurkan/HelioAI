@@ -47,6 +47,32 @@ function argsStr(args) {
   }).join(', ');
 }
 
+// ── Welcome screen ──────────────────────────────────────────────────────────
+
+const SUGGESTED_PROMPTS = [
+  'Solar wind speed and density from ACE, 2005-01-17 to 2005-01-18, with a plot',
+  'Find an interplanetary shock in WIND data around 2004-11-07 and compute θ_Bn',
+  'Compare the IMF Bz between ACE and Cluster for 2003-10-29',
+  'Compute the plasma beta in the magnetosheath: B=20 nT, n=15 cm⁻³, T=200 eV',
+];
+
+function renderWelcome() {
+  const wrap = el('div', 'welcome');
+  const title = el('div', 'welcome-title', 'What do you want to explore?');
+  const sub = el('div', 'welcome-sub', '70+ missions · 83k parameters · sandboxed Python analysis');
+  const grid = el('div', 'suggested-prompts');
+  SUGGESTED_PROMPTS.forEach(prompt => {
+    const btn = el('button', 'suggested-prompt', prompt);
+    btn.addEventListener('click', () => {
+      input.value = prompt;
+      sendMessage();
+    });
+    grid.append(btn);
+  });
+  wrap.append(title, sub, grid);
+  chatArea.append(wrap);
+}
+
 // ── Event rendering ─────────────────────────────────────────────────────────
 
 function appendTlEvent(iconText, text, extraClass) {
@@ -142,6 +168,7 @@ function renderArtifact(data) {
       { label: 'Instrument', value: data.instrument },
       { label: 'Units', value: data.units },
       { label: 'Cadence', value: data.cadence },
+      { label: 'Frame', value: data.coord_sys || null },
       { label: 'Components', value: (data.components || []).join(', ') || null },
       { label: 'Points', value: data.n_points != null ? String(data.n_points) : null },
     ];
@@ -203,6 +230,7 @@ async function sendMessage() {
   const text = input.value.trim();
   if (!text || isStreaming) return;
 
+  document.querySelector('.welcome')?.remove();
   const userBubble = el('div', 'msg-user', text);
   chatArea.append(userBubble);
   input.value = '';
@@ -264,6 +292,7 @@ function newSession() {
   chatArea.innerHTML = '';
   closeCodePanel();
   document.querySelectorAll('.session-item').forEach(i => i.classList.remove('active'));
+  renderWelcome();
 }
 
 async function loadHistory() {
@@ -319,6 +348,7 @@ async function deleteSession(sid) {
 async function resumeSession(sid, itemEl) {
   sessionId = sid;
   chatArea.innerHTML = '';
+  document.querySelector('.welcome')?.remove();
   closeCodePanel();
   document.querySelectorAll('.session-item').forEach(i => i.classList.remove('active'));
   itemEl.classList.add('active');
@@ -367,3 +397,4 @@ input.addEventListener('input', () => {
 
 // Init
 loadHistory();
+renderWelcome();

@@ -34,7 +34,7 @@ import matplotlib.pyplot as plt
 var = spz.get_data("cda/AC_H0_MFI/BGSEc", "2008-01-01T00:00:00", "2008-01-02T00:00:00")
 param_card(var, "cda/AC_H0_MFI/BGSEc")  # displays metadata card in UI
 t = var.time
-data = var.values  # shape (N,) or (N, components)
+data = clean(var.values)  # shape (N,) or (N, components) — masks CDF fill values
 
 export("n_points", len(t))
 export("units", str(var.unit))
@@ -68,7 +68,7 @@ from scipy.signal import welch
 var = spz.get_data("PARAM_ID", "START", "STOP")
 param_card(var, "PARAM_ID")
 t = var.time
-data = var.values
+data = clean(var.values)
 signal = np.nanmean(data, axis=1) if data.ndim > 1 else data
 dt = float(np.median(np.diff(t.astype("int64"))) * 1e-9)
 
@@ -88,6 +88,7 @@ plt.show()
 
 - **plt.show() is mandatory** — it is the only way to save a figure to disk.
 - **param_card(var, param_id)** — call immediately after `spz.get_data()` to display a metadata card. Always call it for every downloaded parameter.
+- **clean(var.values)** — always wrap `var.values` in `clean()`. speasy/CDAWeb return CDF fill values (`-1e31`, `9.96e36`) for data gaps that destroy the Y-axis scale. `clean()` converts them to NaN, which matplotlib renders as gaps.
 - **export(name, value)** for every key number so the LLM sees it in the response.
 - If spz.get_data() raises an error, try a corrected id (strip extra path segments, e.g. `cda/AC_H0_MFI/BGSEc` instead of `cda/ACE/MAG/AC_H0_MFI/BGSEc`).
 - For vectors: plot components separately (Bx, By, Bz) with sharex=True.
@@ -123,7 +124,7 @@ for name, var in datasets.items():
     if var is None or len(var.time) == 0:
         export(f"{name}_ok", False)
         continue
-    df = pd.DataFrame(var.values, index=pd.to_datetime(var.time))
+    df = pd.DataFrame(clean(var.values), index=pd.to_datetime(var.time))
     aligned[name] = df.resample("1min").mean().reindex(t_common)
     export(f"{name}_ok", True)
 

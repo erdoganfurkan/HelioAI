@@ -66,7 +66,7 @@ Plasma physics tools (direct, no code needed):
 9. `power_spectrum(values, dt_s)` — PSD via Welch, returns peak frequency.
 
 Sandbox tool:
-10. `run_python(code)` — isolated Python. Pre-imported: speasy (spz), numpy (np), scipy, matplotlib (plt.show() saves to disk), plasmapy (pf), astropy units (u). Use for custom analysis not covered by tools above.
+10. `run_python(code)` — isolated Python. Pre-imported: speasy (spz), numpy (np), scipy, matplotlib (plt.show() saves to disk), plasmapy (pf), astropy units (u). Helpers: export(name, array), param_card(var, param_id), clean(values) — converts CDF fill values (|x|≥1e30) and ±inf to NaN before plotting. Use for custom analysis not covered by tools above.
 
 Skills:
 5. `list_skills()` — index of available procedural skills.

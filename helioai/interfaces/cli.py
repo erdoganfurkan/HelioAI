@@ -26,6 +26,7 @@ def _delete_session(prefix: str) -> None:
     import shutil
     from helioai.core.session import store
     from helioai.workspace import _root as _ws_root
+
     all_ids = store.all_sessions(_USER_ID)
     matches = [s for s in all_ids if s.startswith(prefix)]
     if not matches:
@@ -43,6 +44,7 @@ def _delete_session(prefix: str) -> None:
 
 def _show_history() -> None:
     from helioai.core.session import store
+
     summaries = store.list_summaries(_USER_ID)
     if not summaries:
         print("No sessions found.")
@@ -57,6 +59,7 @@ def _show_history() -> None:
 
 def _pick_session() -> str | None:
     from helioai.core.session import store
+
     summaries = store.list_summaries(_USER_ID, limit=10)
     if not summaries:
         print("No previous sessions found.")
@@ -85,6 +88,7 @@ def _pick_session() -> str | None:
 
 def _build_llm_client():
     from helioai.core.llm.factory import build_llm_client
+
     return build_llm_client()
 
 
@@ -92,14 +96,18 @@ def _open_file(path: str) -> None:
     """Open a file in the OS default viewer, cross-platform."""
     import subprocess
     import sys
+
     try:
         if sys.platform == "darwin":
             subprocess.Popen(["open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         elif sys.platform == "win32":
             import os
+
             os.startfile(path)  # type: ignore[attr-defined]
         else:
-            subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(
+                ["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
     except Exception:
         pass
 
@@ -164,6 +172,7 @@ async def _run_query(query: str) -> None:
     import helioai.tools.setup  # noqa: F401  registers all tools
     from helioai.core.agent_loop import stream_chat
     from helioai.logging_config import setup_logging
+
     setup_logging("WARNING")
 
     llm = _build_llm_client()
@@ -171,17 +180,20 @@ async def _run_query(query: str) -> None:
         _render_event(ev)
         if ev["event"] == "done":
             from helioai.workspace import get_session_dir
+
             print(f"  \033[90m📂 workspace: {get_session_dir()}\033[0m")
 
 
 def _run_index(rebuild: bool = False) -> None:
     from helioai.indexer import build_index  # helioai/indexer.py
+
     build_index(rebuild=rebuild)
 
 
 def _run_export(prefix: str | None = None) -> None:
     from helioai.core.session import store
     from helioai.export import export_session_notebook
+
     if prefix:
         matches = [s for s in store.all_sessions(_USER_ID) if s.startswith(prefix)]
         if not matches:
@@ -202,6 +214,7 @@ def _run_profile() -> None:
     import os
     import subprocess
     from helioai.config import settings
+
     p = settings.profile.profile_path
     p.parent.mkdir(parents=True, exist_ok=True)
     if not p.exists():
@@ -212,6 +225,7 @@ def _run_profile() -> None:
 
 def _interactive() -> None:
     import readline  # noqa: F401 — enables history & editing
+
     print("\033[1mHelioAI\033[0m — type your query, Ctrl+D to exit\n")
     while True:
         try:
@@ -271,9 +285,11 @@ def main() -> None:
                 idx = serve_args.index("--port")
                 port = int(serve_args[idx + 1])
             from helioai.interfaces.web.app import serve_web
+
             serve_web(host=host, port=port)
         else:
             from helioai.mcp_server import main as mcp_main
+
             sys.argv = [sys.argv[0]] + args[1:]
             mcp_main()
         return

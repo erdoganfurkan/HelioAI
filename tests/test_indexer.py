@@ -9,25 +9,30 @@ from helioai.indexer import _build_text, _get_region, _walk
 
 # ─────────────────────────────── _get_region ────────────────────────────────
 
-@pytest.mark.parametrize("uid,expected", [
-    ("amda/ace_imf_gse",          "Heliosphere.NearEarth"),
-    ("cda/AC_H0_MFI/BGSEc",       "Heliosphere.NearEarth"),   # AC → ACE
-    ("amda/cluster_b_gse",        "Earth.Magnetosphere"),
-    ("cda/C1_CP_FGM_FULL/B_mag",  "Earth.Magnetosphere"),
-    ("cda/MMS1_FGM_SRVY/B_vec",   "Earth.Magnetosphere"),
-    ("amda/mms_b_gse",            "Earth.Magnetosphere"),
-    ("amda/psp_mag_rtn",          "Heliosphere.Inner"),
-    ("cda/PSP_FLD_L2_MAG/B_RTN",  "Heliosphere.Inner"),
-    ("amda/cassini_b_mag",        "Saturn"),
-    ("cda/CAS_MAG_KRTP/B_KRTP",  "Saturn"),
-    ("amda/maven_sw_density",     "Mars"),
-    ("amda/unknown_xyz_123",      ""),                          # no match → empty
-])
+
+@pytest.mark.parametrize(
+    "uid,expected",
+    [
+        ("amda/ace_imf_gse", "Heliosphere.NearEarth"),
+        ("cda/AC_H0_MFI/BGSEc", "Heliosphere.NearEarth"),  # AC → ACE
+        ("amda/cluster_b_gse", "Earth.Magnetosphere"),
+        ("cda/C1_CP_FGM_FULL/B_mag", "Earth.Magnetosphere"),
+        ("cda/MMS1_FGM_SRVY/B_vec", "Earth.Magnetosphere"),
+        ("amda/mms_b_gse", "Earth.Magnetosphere"),
+        ("amda/psp_mag_rtn", "Heliosphere.Inner"),
+        ("cda/PSP_FLD_L2_MAG/B_RTN", "Heliosphere.Inner"),
+        ("amda/cassini_b_mag", "Saturn"),
+        ("cda/CAS_MAG_KRTP/B_KRTP", "Saturn"),
+        ("amda/maven_sw_density", "Mars"),
+        ("amda/unknown_xyz_123", ""),  # no match → empty
+    ],
+)
 def test_get_region(uid: str, expected: str) -> None:
     assert _get_region(uid) == expected
 
 
 # ─────────────────────────────── _build_text ────────────────────────────────
+
 
 def test_build_text_minimal() -> None:
     text = _build_text("Bx", "X component of B", "nT", "ace_b_x")
@@ -37,22 +42,26 @@ def test_build_text_minimal() -> None:
 
 
 def test_build_text_with_region() -> None:
-    text = _build_text("Np", "Proton density", "#/cc", "ace_np",
-                       region="Heliosphere.NearEarth")
+    text = _build_text("Np", "Proton density", "#/cc", "ace_np", region="Heliosphere.NearEarth")
     assert "Heliosphere.NearEarth" in text
 
 
 def test_build_text_with_parent_meta() -> None:
-    text = _build_text("Np", "Proton density", "#/cc", "ace_np",
-                       parent_meta={"measurement_type": "ThermalPlasma",
-                                    "dataset_description": "ACE/SWEPAM 64s"})
+    text = _build_text(
+        "Np",
+        "Proton density",
+        "#/cc",
+        "ace_np",
+        parent_meta={"measurement_type": "ThermalPlasma", "dataset_description": "ACE/SWEPAM 64s"},
+    )
     assert "ThermalPlasma" in text
     assert "ACE/SWEPAM 64s" in text
 
 
 def test_build_text_with_entity_and_prop() -> None:
-    text = _build_text("Ne", "Electron density", "#/cc", "mms_ne",
-                       entity="Electron", prop="NumberDensity")
+    text = _build_text(
+        "Ne", "Electron density", "#/cc", "mms_ne", entity="Electron", prop="NumberDensity"
+    )
     assert "Electron" in text
     assert "NumberDensity" in text
 
@@ -64,13 +73,16 @@ def test_build_text_no_description_uses_xmlid() -> None:
 
 # ─────────────────────────────── _walk ──────────────────────────────────────
 
+
 class _FakeSpeasyIndex:
     """Minimal stand-in for speasy.core.inventory.indexes.SpeasyIndex."""
+
     pass
 
 
-def _make_param(xmlid: str, description: str = "desc", units: str = "nT",
-                name: str = "") -> _FakeSpeasyIndex:
+def _make_param(
+    xmlid: str, description: str = "desc", units: str = "nT", name: str = ""
+) -> _FakeSpeasyIndex:
     node = _FakeSpeasyIndex()
     node.xmlid = xmlid
     node.description = description

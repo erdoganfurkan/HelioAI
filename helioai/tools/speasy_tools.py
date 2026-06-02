@@ -7,9 +7,7 @@ of AMDA's download_timeseries and list_parameters.
 
 from __future__ import annotations
 
-import json
 import logging
-from datetime import datetime
 
 log = logging.getLogger(__name__)
 
@@ -161,9 +159,12 @@ async def list_missions() -> dict:
     }
 
 
-async def search_parameters(query: str | None = None, top_k: int = 5,
-                            provider: str | None = None,
-                            queries: list[str] | None = None) -> dict:
+async def search_parameters(
+    query: str | None = None,
+    top_k: int = 5,
+    provider: str | None = None,
+    queries: list[str] | None = None,
+) -> dict:
     """Semantic search over the speasy catalog (65k+ products).
 
     Requires the index to be built first (run: helioai index).
@@ -182,16 +183,23 @@ async def search_parameters(query: str | None = None, top_k: int = 5,
     if queries:
         try:
             from helioai.tools.rag import search_batch as rag_search_batch
+
             batch = rag_search_batch(queries, top_k=top_k, provider=provider)
-            return {"provider": provider,
-                    "groups": [{"query": q, "results": r} for q, r in zip(queries, batch)]}
+            return {
+                "provider": provider,
+                "groups": [{"query": q, "results": r} for q, r in zip(queries, batch)],
+            }
         except Exception as e:
             log.warning("RAG batch search failed (%s), falling back to text scan", e)
         try:
             import speasy as spz
+
             groups = [{"query": q, "results": _fallback_search(spz, q, top_k)} for q in queries]
-            return {"provider": provider, "groups": groups,
-                    "note": "RAG index not built — using text fallback (provider filter ignored)"}
+            return {
+                "provider": provider,
+                "groups": groups,
+                "note": "RAG index not built — using text fallback (provider filter ignored)",
+            }
         except Exception as e2:
             return {"error": f"Search failed: {e2}"}
 
@@ -200,6 +208,7 @@ async def search_parameters(query: str | None = None, top_k: int = 5,
 
     try:
         from helioai.tools.rag import search as rag_search
+
         results = rag_search(query, top_k=top_k, provider=provider)
         return {"query": query, "provider": provider, "results": results}
     except Exception as e:
@@ -208,9 +217,13 @@ async def search_parameters(query: str | None = None, top_k: int = 5,
     # Fallback: naive text search on speasy inventory (provider filter ignored — best effort)
     try:
         import speasy as spz
+
         results = _fallback_search(spz, query, top_k)
-        return {"query": query, "results": results,
-                "note": "RAG index not built — using text fallback (provider filter ignored)"}
+        return {
+            "query": query,
+            "results": results,
+            "note": "RAG index not built — using text fallback (provider filter ignored)",
+        }
     except Exception as e2:
         return {"error": f"Search failed: {e2}"}
 
@@ -233,12 +246,14 @@ def _fallback_search(spz, query: str, top_k: int) -> list[dict]:
             desc = getattr(child, "desc", "") or ""
             uid = getattr(child, "uid", "") or ""
             if q in name.lower() or q in desc.lower() or q in attr.lower():
-                results.append({
-                    "id": str(uid) or attr,
-                    "name": str(name),
-                    "description": str(desc)[:120],
-                    "score": 0.5,
-                })
+                results.append(
+                    {
+                        "id": str(uid) or attr,
+                        "name": str(name),
+                        "description": str(desc)[:120],
+                        "score": 0.5,
+                    }
+                )
             if not hasattr(child, "uid") and depth < 6:
                 _walk(child, depth + 1)
 

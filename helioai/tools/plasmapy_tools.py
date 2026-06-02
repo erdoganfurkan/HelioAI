@@ -20,9 +20,16 @@ import math
 def _parse_particle(particle: str):
     """Map user-friendly particle name to PlasmaPy particle string."""
     mapping = {
-        "proton": "p+", "p": "p+", "p+": "p+", "ion": "p+",
-        "electron": "e-", "e": "e-", "e-": "e-",
-        "alpha": "He-4 2+", "alpha particle": "He-4 2+", "he": "He-4 2+",
+        "proton": "p+",
+        "p": "p+",
+        "p+": "p+",
+        "ion": "p+",
+        "electron": "e-",
+        "e": "e-",
+        "e-": "e-",
+        "alpha": "He-4 2+",
+        "alpha particle": "He-4 2+",
+        "he": "He-4 2+",
     }
     return mapping.get(particle.lower().strip(), particle)
 
@@ -42,7 +49,7 @@ async def plasma_beta(B_nT: float, n_cm3: float, T_eV: float) -> dict:
         import plasmapy.formulary as pf
 
         B = B_nT * u.nT
-        n = n_cm3 * u.cm ** -3
+        n = n_cm3 * u.cm**-3
         T = T_eV * u.eV
 
         beta_val = float(pf.beta(T, n, B).value)
@@ -77,7 +84,6 @@ async def gyrofrequency(B_nT: float, particle: str = "proton") -> dict:
     """
     try:
         import astropy.units as u
-        import numpy as np
         import plasmapy.formulary as pf
 
         B = B_nT * u.nT
@@ -111,7 +117,7 @@ async def debye_length(n_cm3: float, T_eV: float) -> dict:
         import astropy.units as u
         import plasmapy.formulary as pf
 
-        n = n_cm3 * u.cm ** -3
+        n = n_cm3 * u.cm**-3
         T = T_eV * u.eV
 
         lambda_D = pf.Debye_length(T, n)
@@ -142,8 +148,8 @@ async def alfven_speed(B_nT: float, n_cm3: float, mass_amu: float = 1.0) -> dict
         import plasmapy.formulary as pf
 
         B = B_nT * u.nT
-        n = n_cm3 * u.cm ** -3
-        ion = f"H-1 1+" if mass_amu == 1.0 else f"p+"
+        n = n_cm3 * u.cm**-3
+        ion = "H-1 1+" if mass_amu == 1.0 else "p+"
 
         V_A = pf.Alfven_speed(B, n, ion=ion)
         va_km_s = float(V_A.to(u.km / u.s).value)
@@ -171,7 +177,7 @@ async def inertial_length(n_cm3: float, particle: str = "proton") -> dict:
         import astropy.units as u
         import plasmapy.formulary as pf
 
-        n = n_cm3 * u.cm ** -3
+        n = n_cm3 * u.cm**-3
         p = _parse_particle(particle)
 
         d = pf.inertial_length(n, particle=p)

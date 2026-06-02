@@ -11,7 +11,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import AsyncIterator
 
 import structlog
 
@@ -149,7 +149,9 @@ def _build_system_prompt(role: SubAgentRole) -> tuple[str, list[str]]:
             skill_blocks.append(f"## Skill: {skill_name}\n\n{body}")
             loaded.append(skill_name)
         except SkillError as e:
-            log.warning("subagent_skill_load_failed", role=role.name, skill=skill_name, error=str(e))
+            log.warning(
+                "subagent_skill_load_failed", role=role.name, skill=skill_name, error=str(e)
+            )
     prompt = SUB_SYSTEM_PROMPT_BASE + "\n" + role.system_addon
     if skill_blocks:
         prompt += "\n\n# Pre-loaded skills\n\n" + "\n\n".join(skill_blocks)
@@ -181,11 +183,17 @@ async def stream_subagent(
 
     if role not in AGENT_ROLES:
         known = ", ".join(sorted(AGENT_ROLES))
-        yield {"event": "sub_agent_end", "data": {
-            "task_id": task_id, "role": role, "summary": "",
-            "n_iterations": 0, "error": f"unknown agent_role {role!r}. Known: {known}",
-            "artifacts": [],
-        }}
+        yield {
+            "event": "sub_agent_end",
+            "data": {
+                "task_id": task_id,
+                "role": role,
+                "summary": "",
+                "n_iterations": 0,
+                "error": f"unknown agent_role {role!r}. Known: {known}",
+                "artifacts": [],
+            },
+        }
         return
 
     role_cfg = AGENT_ROLES[role]
@@ -204,8 +212,13 @@ async def stream_subagent(
         allowed = set(role_cfg.allowed_tools)
         tools = registry.list_tool_defs(only=allowed)
 
-        log.info("subagent_start", role=role, description=description[:200],
-                 allowed_tools=sorted(allowed), max_turns=role_cfg.max_turns)
+        log.info(
+            "subagent_start",
+            role=role,
+            description=description[:200],
+            allowed_tools=sorted(allowed),
+            max_turns=role_cfg.max_turns,
+        )
 
         history: list[Message] = [Message(role="user", content=description)]
         artifacts: list[dict] = []
@@ -217,7 +230,9 @@ async def stream_subagent(
         for i in range(role_cfg.max_turns):
             n_iters = i + 1
             tc_choice = "required" if i == 0 else "auto"
-            response = await llm_client.chat(history, tools, system_prompt=system_prompt, tool_choice=tc_choice)
+            response = await llm_client.chat(
+                history, tools, system_prompt=system_prompt, tool_choice=tc_choice
+            )
             history.append(response)
 
             if not response.tool_calls:
@@ -226,28 +241,38 @@ async def stream_subagent(
 
             for tc in response.tool_calls:
                 log.info("tool_call_issued", turn=n_iters, tool=tc.name, sub_role=role)
-                yield {"event": "tool_call", "data": {
-                    "turn": n_iters, "name": tc.name, "arguments": tc.arguments,
-                    "sub_agent_ctx": ctx,
-                }}
+                yield {
+                    "event": "tool_call",
+                    "data": {
+                        "turn": n_iters,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
+                        "sub_agent_ctx": ctx,
+                    },
+                }
 
                 if tc.name not in allowed:
                     log.warning("subagent_tool_denied", role=role, tool=tc.name)
-                    result = json.dumps({
-                        "error": f"tool {tc.name!r} not available to {role!r}. Allowed: {sorted(allowed)}"
-                    })
+                    result = json.dumps(
+                        {
+                            "error": f"tool {tc.name!r} not available to {role!r}. Allowed: {sorted(allowed)}"
+                        }
+                    )
                 else:
                     result = await registry.call_tool(
                         tc.name, inject_run_python_args(tc.name, tc.arguments)
                     )
 
                 for ev in emit_post_tool_events(
-                    tc.name, result,
+                    tc.name,
+                    result,
                     tool_result_extra={"turn": n_iters, "sub_agent_ctx": ctx},
                     common_extra={"sub_agent_ctx": ctx},
                 ):
                     if ev["event"] == "artifact":
-                        artifacts.append({k: v for k, v in ev["data"].items() if k != "sub_agent_ctx"})
+                        artifacts.append(
+                            {k: v for k, v in ev["data"].items() if k != "sub_agent_ctx"}
+                        )
                     yield ev
 
                 history.append(Message(role="tool", tool_call_id=tc.id, content=result))
@@ -255,23 +280,40 @@ async def stream_subagent(
             capped = True
             final_text = f"(sub-agent {role!r} reached its {role_cfg.max_turns}-turn cap)"
 
-        log.info("subagent_end", role=role, n_iterations=n_iters,
-                 duration_ms=int((time.monotonic() - t0) * 1000),
-                 capped=capped, n_artifacts=len(artifacts))
+        log.info(
+            "subagent_end",
+            role=role,
+            n_iterations=n_iters,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            capped=capped,
+            n_artifacts=len(artifacts),
+        )
 
-        yield {"event": "sub_agent_end", "data": {
-            "task_id": task_id, "role": role,
-            "summary": final_text[:200], "n_iterations": n_iters,
-            "error": None, "artifacts": artifacts,
-        }}
+        yield {
+            "event": "sub_agent_end",
+            "data": {
+                "task_id": task_id,
+                "role": role,
+                "summary": final_text[:200],
+                "n_iterations": n_iters,
+                "error": None,
+                "artifacts": artifacts,
+            },
+        }
 
     except Exception as e:
         log.exception("subagent_error", role=role, task_id=task_id)
-        yield {"event": "sub_agent_end", "data": {
-            "task_id": task_id, "role": role, "summary": "",
-            "n_iterations": n_iters if "n_iters" in dir() else 0,
-            "error": str(e), "artifacts": [],
-        }}
+        yield {
+            "event": "sub_agent_end",
+            "data": {
+                "task_id": task_id,
+                "role": role,
+                "summary": "",
+                "n_iterations": n_iters if "n_iters" in dir() else 0,
+                "error": str(e),
+                "artifacts": [],
+            },
+        }
 
     finally:
         _ws.reset_session(_ws_token)
@@ -289,9 +331,12 @@ async def run_subagent(
 ) -> SubAgentResult:
     """Backward-compat wrapper — consumes stream_subagent and returns SubAgentResult."""
     async for ev in stream_subagent(
-        role=role, description=description,
-        parent_session_id=parent_session_id, user_id=user_id,
-        llm_client=llm_client, task_id=task_id,
+        role=role,
+        description=description,
+        parent_session_id=parent_session_id,
+        user_id=user_id,
+        llm_client=llm_client,
+        task_id=task_id,
     ):
         if ev["event"] == "sub_agent_end":
             d = ev["data"]

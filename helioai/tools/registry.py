@@ -29,6 +29,7 @@ class ToolRegistry:
 
     def register(self, name: str, description: str, parameters: dict) -> Callable:
         """Decorator that registers an async function as a tool."""
+
         def decorator(func: Callable) -> Callable:
             self._tools[name] = Tool(
                 name=name,
@@ -37,13 +38,16 @@ class ToolRegistry:
                 func=func,
             )
             return func
+
         return decorator
 
     def list_tool_defs(self, only: set[str] | None = None) -> list[ToolDef]:
         tools = self._tools.values()
         if only is not None:
             tools = [t for t in tools if t.name in only]
-        return [ToolDef(name=t.name, description=t.description, parameters=t.parameters) for t in tools]
+        return [
+            ToolDef(name=t.name, description=t.description, parameters=t.parameters) for t in tools
+        ]
 
     async def call_tool(self, name: str, arguments: dict | None) -> str:
         """Invoke a tool and return its JSON-serialized result string."""

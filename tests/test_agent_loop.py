@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 from helioai.core.agent_loop import _extract_artifact, _summarize_tool_result
 
 
 # ──────────────────────────────── _summarize_tool_result ────────────────────
+
 
 def test_summarize_non_json_truncated() -> None:
     summary = _summarize_tool_result("hello world", max_chars=5)
@@ -27,10 +27,12 @@ def test_summarize_error_is_concise() -> None:
 
 
 def test_summarize_figure_paths_returns_filename_only() -> None:
-    payload = json.dumps({
-        "figure_paths": ["/tmp/helioai_abc/fig_0.png", "/tmp/helioai_abc/fig_1.png"],
-        "stdout": "done",
-    })
+    payload = json.dumps(
+        {
+            "figure_paths": ["/tmp/helioai_abc/fig_0.png", "/tmp/helioai_abc/fig_1.png"],
+            "stdout": "done",
+        }
+    )
     summary = _summarize_tool_result(payload)
     data = json.loads(summary)
     assert data["figure_paths"] == ["fig_0.png", "fig_1.png"]
@@ -76,12 +78,15 @@ def test_summarize_scalar_fields_kept() -> None:
 
 # ──────────────────────────────── _extract_artifact ─────────────────────────
 
+
 def test_extract_run_python_with_figures() -> None:
-    payload = json.dumps({
-        "figure_paths": ["/tmp/helioai_abc/fig_0.png"],
-        "stdout": "shock detected",
-        "exports": {},
-    })
+    payload = json.dumps(
+        {
+            "figure_paths": ["/tmp/helioai_abc/fig_0.png"],
+            "stdout": "shock detected",
+            "exports": {},
+        }
+    )
     arts = _extract_artifact("run_python", payload)
     assert len(arts) == 1
     assert arts[0]["kind"] == "image"
@@ -95,12 +100,14 @@ def test_extract_run_python_no_figures_returns_empty() -> None:
 
 
 def test_extract_run_python_with_param_card() -> None:
-    payload = json.dumps({
-        "figure_paths": ["/tmp/fig.png"],
-        "stdout": "",
-        "exports": {},
-        "cards": [{"kind": "parameter_card", "param_id": "cda/AC_H0_MFI/BGSEc", "units": "nT"}],
-    })
+    payload = json.dumps(
+        {
+            "figure_paths": ["/tmp/fig.png"],
+            "stdout": "",
+            "exports": {},
+            "cards": [{"kind": "parameter_card", "param_id": "cda/AC_H0_MFI/BGSEc", "units": "nT"}],
+        }
+    )
     arts = _extract_artifact("run_python", payload)
     assert len(arts) == 2
     kinds = {a["kind"] for a in arts}
@@ -110,20 +117,22 @@ def test_extract_run_python_with_param_card() -> None:
 
 
 def test_extract_get_timeseries_preview() -> None:
-    payload = json.dumps({
-        "param_id": "cda/AC_H0_SWE/Np",
-        "name": "Np",
-        "units": "#/cc",
-        "cadence": "64 s",
-        "mission": "cda",
-        "instrument": "Solar Wind Electron Proton Alpha Monitor",
-        "components": [],
-        "n_points": 1238,
-        "shape": [1238, 1],
-        "start": "2005-01-17T12:00:00",
-        "stop": "2005-01-17T14:00:00",
-        "preview": "2005-01-17T12:00:22  13.9\n2005-01-17T12:01:26  11.09",
-    })
+    payload = json.dumps(
+        {
+            "param_id": "cda/AC_H0_SWE/Np",
+            "name": "Np",
+            "units": "#/cc",
+            "cadence": "64 s",
+            "mission": "cda",
+            "instrument": "Solar Wind Electron Proton Alpha Monitor",
+            "components": [],
+            "n_points": 1238,
+            "shape": [1238, 1],
+            "start": "2005-01-17T12:00:00",
+            "stop": "2005-01-17T14:00:00",
+            "preview": "2005-01-17T12:00:22  13.9\n2005-01-17T12:01:26  11.09",
+        }
+    )
     arts = _extract_artifact("get_timeseries", payload)
     assert len(arts) == 1
     art = arts[0]

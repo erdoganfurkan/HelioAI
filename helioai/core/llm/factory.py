@@ -9,6 +9,7 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
 
     if p == "azure":
         from helioai.core.llm.azure_openai import AzureOpenAIClient
+
         cfg = settings.llm.azure
         if not cfg.api_key:
             raise RuntimeError("AZURE_OPENAI_API_KEY is not set")
@@ -25,6 +26,7 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
 
     if p == "groq":
         from helioai.core.llm.groq import GroqClient
+
         cfg = settings.llm.groq
         if not cfg.api_key:
             raise RuntimeError("GROQ_API_KEY is not set")
@@ -37,6 +39,7 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
 
     if p == "gemini":
         from helioai.core.llm.gemini import GeminiClient
+
         cfg = settings.llm.gemini
         if not cfg.api_key:
             raise RuntimeError("GEMINI_API_KEY is not set")

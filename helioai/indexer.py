@@ -19,66 +19,66 @@ import time
 # Source: https://spase-group.org/data/model/spase-2.6.0 — Region simpleType
 _SPACECRAFT_REGION: dict[str, str] = {
     # AMDA-style mission names
-    "ace":          "Heliosphere.NearEarth",
-    "wind":         "Heliosphere.NearEarth",
-    "dscovr":       "Heliosphere.NearEarth",
-    "cluster":      "Earth.Magnetosphere",
-    "mms":          "Earth.Magnetosphere",
-    "themis":       "Earth.Magnetosphere",
-    "goes":         "Earth.Magnetosphere",
-    "geotail":      "Earth.Magnetosphere",
-    "polar":        "Earth.Magnetosphere.Polar",
-    "fast":         "Earth.Magnetosphere.Polar",
-    "image":        "Earth.Magnetosphere",
-    "van allen":    "Earth.Magnetosphere.RadiationBelt",
-    "rbsp":         "Earth.Magnetosphere.RadiationBelt",
-    "crres":        "Earth.Magnetosphere.RadiationBelt",
-    "eiscat":       "Earth.NearSurface.Ionosphere",
-    "swarm":        "Earth.NearSurface.Ionosphere",
-    "dmsp":         "Earth.NearSurface.AuroralRegion",
+    "ace": "Heliosphere.NearEarth",
+    "wind": "Heliosphere.NearEarth",
+    "dscovr": "Heliosphere.NearEarth",
+    "cluster": "Earth.Magnetosphere",
+    "mms": "Earth.Magnetosphere",
+    "themis": "Earth.Magnetosphere",
+    "goes": "Earth.Magnetosphere",
+    "geotail": "Earth.Magnetosphere",
+    "polar": "Earth.Magnetosphere.Polar",
+    "fast": "Earth.Magnetosphere.Polar",
+    "image": "Earth.Magnetosphere",
+    "van allen": "Earth.Magnetosphere.RadiationBelt",
+    "rbsp": "Earth.Magnetosphere.RadiationBelt",
+    "crres": "Earth.Magnetosphere.RadiationBelt",
+    "eiscat": "Earth.NearSurface.Ionosphere",
+    "swarm": "Earth.NearSurface.Ionosphere",
+    "dmsp": "Earth.NearSurface.AuroralRegion",
     "solar orbiter": "Heliosphere.Inner",
-    "solo":         "Heliosphere.Inner",
-    "parker":       "Heliosphere.Inner",
-    "psp":          "Heliosphere.Inner",
-    "helios":       "Heliosphere.Inner",
-    "stereo":       "Heliosphere.Inner",
-    "ulysses":      "Heliosphere",
-    "voyager":      "Heliosphere.Outer",
+    "solo": "Heliosphere.Inner",
+    "parker": "Heliosphere.Inner",
+    "psp": "Heliosphere.Inner",
+    "helios": "Heliosphere.Inner",
+    "stereo": "Heliosphere.Inner",
+    "ulysses": "Heliosphere",
+    "voyager": "Heliosphere.Outer",
     "new horizons": "Heliosphere.Outer",
-    "cassini":      "Saturn",
-    "galileo":      "Jupiter",
-    "juno":         "Jupiter",
-    "bepicolombo":  "Mercury",
-    "bepi":         "Mercury",
-    "mex":          "Mars",
-    "maven":        "Mars",
-    "vex":          "Venus",
+    "cassini": "Saturn",
+    "galileo": "Jupiter",
+    "juno": "Jupiter",
+    "bepicolombo": "Mercury",
+    "bepi": "Mercury",
+    "mex": "Mars",
+    "maven": "Mars",
+    "vex": "Venus",
     # CDA-style spacecraft codes
-    "ac":           "Heliosphere.NearEarth",   # ACE
-    "wi":           "Heliosphere.NearEarth",   # Wind
-    "ds":           "Heliosphere.NearEarth",   # DSCOVR
-    "c1":           "Earth.Magnetosphere",     # Cluster-1
-    "c2":           "Earth.Magnetosphere",     # Cluster-2
-    "c3":           "Earth.Magnetosphere",     # Cluster-3
-    "c4":           "Earth.Magnetosphere",     # Cluster-4
-    "th":           "Earth.Magnetosphere",     # THEMIS (THA/THB/THC/THD/THE)
-    "mms1":         "Earth.Magnetosphere",
-    "mms2":         "Earth.Magnetosphere",
-    "mms3":         "Earth.Magnetosphere",
-    "mms4":         "Earth.Magnetosphere",
-    "ge":           "Earth.Magnetosphere",     # Geotail
-    "po":           "Earth.Magnetosphere.Polar",
-    "fa":           "Earth.Magnetosphere.Polar",   # FAST
-    "rbspa":        "Earth.Magnetosphere.RadiationBelt",
-    "rbspb":        "Earth.Magnetosphere.RadiationBelt",
-    "sta":          "Heliosphere.Inner",       # STEREO-A
-    "stb":          "Heliosphere.Inner",       # STEREO-B
-    "ul":           "Heliosphere",             # Ulysses
-    "vg1":          "Heliosphere.Outer",       # Voyager-1
-    "vg2":          "Heliosphere.Outer",       # Voyager-2
-    "cas":          "Saturn",                  # Cassini
-    "jno":          "Jupiter",                 # Juno
-    "mav":          "Mars",                    # MAVEN
+    "ac": "Heliosphere.NearEarth",  # ACE
+    "wi": "Heliosphere.NearEarth",  # Wind
+    "ds": "Heliosphere.NearEarth",  # DSCOVR
+    "c1": "Earth.Magnetosphere",  # Cluster-1
+    "c2": "Earth.Magnetosphere",  # Cluster-2
+    "c3": "Earth.Magnetosphere",  # Cluster-3
+    "c4": "Earth.Magnetosphere",  # Cluster-4
+    "th": "Earth.Magnetosphere",  # THEMIS (THA/THB/THC/THD/THE)
+    "mms1": "Earth.Magnetosphere",
+    "mms2": "Earth.Magnetosphere",
+    "mms3": "Earth.Magnetosphere",
+    "mms4": "Earth.Magnetosphere",
+    "ge": "Earth.Magnetosphere",  # Geotail
+    "po": "Earth.Magnetosphere.Polar",
+    "fa": "Earth.Magnetosphere.Polar",  # FAST
+    "rbspa": "Earth.Magnetosphere.RadiationBelt",
+    "rbspb": "Earth.Magnetosphere.RadiationBelt",
+    "sta": "Heliosphere.Inner",  # STEREO-A
+    "stb": "Heliosphere.Inner",  # STEREO-B
+    "ul": "Heliosphere",  # Ulysses
+    "vg1": "Heliosphere.Outer",  # Voyager-1
+    "vg2": "Heliosphere.Outer",  # Voyager-2
+    "cas": "Saturn",  # Cassini
+    "jno": "Jupiter",  # Juno
+    "mav": "Mars",  # MAVEN
 }
 
 
@@ -145,7 +145,9 @@ def _extract_dataset_meta(child_vars: dict, provider_prefix: str) -> dict:
             meta["observatory"] = observatory
         experiments = child_vars.get("experiments") or ""
         if experiments:
-            meta["experiments"] = experiments if isinstance(experiments, str) else ", ".join(experiments)
+            meta["experiments"] = (
+                experiments if isinstance(experiments, str) else ", ".join(experiments)
+            )
     return meta
 
 
@@ -231,7 +233,7 @@ def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = Tr
     total = 0
 
     for i in range(0, len(docs), batch_size):
-        batch = docs[i:i + batch_size]
+        batch = docs[i : i + batch_size]
         ids = [d["id"] for d in batch]
         texts = [d["text"] for d in batch]
         metas = [d["meta"] for d in batch]
@@ -258,9 +260,16 @@ def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = Tr
     return total
 
 
-def _walk(node, provider_prefix: str, out: list[dict], skip_ids: set[str],
-          SpeasyIndex, depth: int = 0, max_docs: int = 200_000,
-          parent_meta: dict | None = None) -> None:
+def _walk(
+    node,
+    provider_prefix: str,
+    out: list[dict],
+    skip_ids: set[str],
+    SpeasyIndex,
+    depth: int = 0,
+    max_docs: int = 200_000,
+    parent_meta: dict | None = None,
+) -> None:
     """Recursively walk a SpeasyIndex node, collecting indexable parameters."""
     if len(out) >= max_docs or depth > 15:
         return
@@ -275,8 +284,16 @@ def _walk(node, provider_prefix: str, out: list[dict], skip_ids: set[str],
         # Dataset container: capture metadata and propagate to children
         if _is_dataset_node(child_vars, provider_prefix):
             dataset_meta = _extract_dataset_meta(child_vars, provider_prefix)
-            _walk(child, provider_prefix, out, skip_ids, SpeasyIndex,
-                  depth + 1, max_docs, dataset_meta)
+            _walk(
+                child,
+                provider_prefix,
+                out,
+                skip_ids,
+                SpeasyIndex,
+                depth + 1,
+                max_docs,
+                dataset_meta,
+            )
             continue
 
         xmlid = child_vars.get("xmlid") or ""
@@ -286,11 +303,17 @@ def _walk(node, provider_prefix: str, out: list[dict], skip_ids: set[str],
         if not (xmlid and description) and spz_type in ("ParameterIndex", "ComponentIndex"):
             if not is_amda:
                 xmlid = child_vars.get("__spz_uid__") or ""
-            description = (child_vars.get("CATDESC") or child_vars.get("cat_description")
-                           or description or "")
+            description = (
+                child_vars.get("CATDESC") or child_vars.get("cat_description") or description or ""
+            )
 
-        name = (child_vars.get("name") or child_vars.get("FIELDNAM") or child_vars.get("field_name")
-                or child_vars.get("__spz_name__") or xmlid)
+        name = (
+            child_vars.get("name")
+            or child_vars.get("FIELDNAM")
+            or child_vars.get("field_name")
+            or child_vars.get("__spz_name__")
+            or xmlid
+        )
         units = child_vars.get("units") or child_vars.get("UNITS") or ""
 
         # CSA ParameterIndex carries entity/property directly (no parent needed)
@@ -302,9 +325,16 @@ def _walk(node, provider_prefix: str, out: list[dict], skip_ids: set[str],
             if uid not in skip_ids:
                 skip_ids.add(uid)
                 region = _get_region(uid)
-                text = _build_text(name, description, units, xmlid,
-                                   parent_meta=parent_meta, entity=entity,
-                                   prop=prop, region=region)
+                text = _build_text(
+                    name,
+                    description,
+                    units,
+                    xmlid,
+                    parent_meta=parent_meta,
+                    entity=entity,
+                    prop=prop,
+                    region=region,
+                )
                 if text.strip():
                     meta_entry: dict = {
                         "name": name,
@@ -319,13 +349,19 @@ def _walk(node, provider_prefix: str, out: list[dict], skip_ids: set[str],
                         meta_entry["region"] = region
                     out.append({"id": uid, "text": text, "meta": meta_entry})
 
-        _walk(child, provider_prefix, out, skip_ids, SpeasyIndex,
-              depth + 1, max_docs, parent_meta)
+        _walk(child, provider_prefix, out, skip_ids, SpeasyIndex, depth + 1, max_docs, parent_meta)
 
 
-def _build_text(name: str, description: str, units: str, xmlid: str,
-                parent_meta: dict | None = None, entity: str = "",
-                prop: str = "", region: str = "") -> str:
+def _build_text(
+    name: str,
+    description: str,
+    units: str,
+    xmlid: str,
+    parent_meta: dict | None = None,
+    entity: str = "",
+    prop: str = "",
+    region: str = "",
+) -> str:
     head = name if name != xmlid else xmlid.replace("_", " ")
     parts = [f"{head}."]
     if description:

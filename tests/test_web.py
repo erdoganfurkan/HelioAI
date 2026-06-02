@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
@@ -12,15 +10,27 @@ from starlette.testclient import TestClient
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture
 def fake_stream():
     """Async generator that replays a scripted sequence of SSE events."""
+
     async def _gen(_llm, _user, _sid, _msg):
-        yield {"event": "tool_call", "data": {"turn": 1, "name": "search_parameters", "arguments": {"query": "solar wind"}}}
-        yield {"event": "tool_result", "data": {"turn": 1, "name": "search_parameters", "summary": "3 results"}}
-        yield {"event": "artifact", "data": {"kind": "image", "figure_paths": ["/tmp/helioai_test/fig_0.png"]}}
+        yield {
+            "event": "tool_call",
+            "data": {"turn": 1, "name": "search_parameters", "arguments": {"query": "solar wind"}},
+        }
+        yield {
+            "event": "tool_result",
+            "data": {"turn": 1, "name": "search_parameters", "summary": "3 results"},
+        }
+        yield {
+            "event": "artifact",
+            "data": {"kind": "image", "figure_paths": ["/tmp/helioai_test/fig_0.png"]},
+        }
         yield {"event": "reply", "data": {"text": "Here is the answer."}}
         yield {"event": "done", "data": {"n_iterations": 2}}
+
     return _gen
 
 
@@ -28,6 +38,7 @@ def fake_stream():
 def web_client(monkeypatch, fake_stream, tmp_path):
     """TestClient with stream_chat and build_llm_client monkeypatched."""
     from helioai.core.session import SessionStore
+
     test_store = SessionStore(tmp_path / "sessions.db")
 
     monkeypatch.setattr("helioai.interfaces.web.app.stream_chat", fake_stream)
@@ -35,10 +46,12 @@ def web_client(monkeypatch, fake_stream, tmp_path):
     monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
 
     from helioai.interfaces.web.app import app
+
     return TestClient(app, raise_server_exceptions=False)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
+
 
 def test_health(web_client):
     r = web_client.get("/health")
@@ -48,6 +61,7 @@ def test_health(web_client):
 
 # ── Index ─────────────────────────────────────────────────────────────────────
 
+
 def test_index_returns_html(web_client):
     r = web_client.get("/")
     assert r.status_code == 200
@@ -56,6 +70,7 @@ def test_index_returns_html(web_client):
 
 
 # ── SSE streaming ─────────────────────────────────────────────────────────────
+
 
 def _parse_sse(raw: bytes) -> list[dict]:
     events = []
@@ -69,10 +84,14 @@ def _parse_sse(raw: bytes) -> list[dict]:
 
 
 def test_chat_stream_events(web_client):
-    with web_client.stream("POST", "/chat/stream", json={
-        "message": "solar wind density",
-        "session_id": "test-session-001",
-    }) as resp:
+    with web_client.stream(
+        "POST",
+        "/chat/stream",
+        json={
+            "message": "solar wind density",
+            "session_id": "test-session-001",
+        },
+    ) as resp:
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers["content-type"]
         raw = resp.read()
@@ -88,10 +107,14 @@ def test_chat_stream_events(web_client):
 
 
 def test_chat_stream_reply_content(web_client):
-    with web_client.stream("POST", "/chat/stream", json={
-        "message": "test query",
-        "session_id": "test-session-002",
-    }) as resp:
+    with web_client.stream(
+        "POST",
+        "/chat/stream",
+        json={
+            "message": "test query",
+            "session_id": "test-session-002",
+        },
+    ) as resp:
         raw = resp.read()
 
     events = _parse_sse(raw)
@@ -101,10 +124,14 @@ def test_chat_stream_reply_content(web_client):
 
 
 def test_chat_stream_artifact(web_client):
-    with web_client.stream("POST", "/chat/stream", json={
-        "message": "plot something",
-        "session_id": "test-session-003",
-    }) as resp:
+    with web_client.stream(
+        "POST",
+        "/chat/stream",
+        json={
+            "message": "plot something",
+            "session_id": "test-session-003",
+        },
+    ) as resp:
         raw = resp.read()
 
     events = _parse_sse(raw)
@@ -114,6 +141,7 @@ def test_chat_stream_artifact(web_client):
 
 
 # ── Sessions API ──────────────────────────────────────────────────────────────
+
 
 def test_sessions_empty(web_client):
     r = web_client.get("/api/sessions")
@@ -139,6 +167,7 @@ def test_sessions_after_save(monkeypatch, tmp_path):
     monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
 
     from helioai.interfaces.web.app import app
+
     client = TestClient(app)
 
     r = client.get("/api/sessions")
@@ -155,7 +184,9 @@ def test_session_messages(monkeypatch, tmp_path):
     from helioai.core.llm.base import Message
 
     test_store = SessionStore(tmp_path / "sessions.db")
-    tool_result = json.dumps({"stdout": "ok", "figure_paths": ["/tmp/ws/fig_0_0.png"], "n_figures": 1, "exports": {}})
+    tool_result = json.dumps(
+        {"stdout": "ok", "figure_paths": ["/tmp/ws/fig_0_0.png"], "n_figures": 1, "exports": {}}
+    )
     history = [
         Message(role="user", content="Plot something."),
         Message(role="assistant", content="", tool_calls=[]),
@@ -169,6 +200,7 @@ def test_session_messages(monkeypatch, tmp_path):
     monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
 
     from helioai.interfaces.web.app import app
+
     client = TestClient(app)
 
     r = client.get("/api/sessions/sess-xyz/messages")
@@ -186,6 +218,7 @@ def test_session_messages(monkeypatch, tmp_path):
 
 # ── Figure endpoint ───────────────────────────────────────────────────────────
 
+
 def test_figure_invalid_path(web_client):
     r = web_client.get("/figure?path=/etc/passwd")
     assert r.status_code == 404
@@ -198,6 +231,7 @@ def test_figure_path_outside_workspace(web_client):
 
 def test_figure_path_traversal(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
+
     monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
     # path traversal attempt
     r = web_client.get(f"/figure?path={tmp_path}/../etc/passwd")
@@ -206,6 +240,7 @@ def test_figure_path_traversal(web_client, tmp_path, monkeypatch):
 
 def test_figure_valid(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
+
     monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
 
     fig_dir = tmp_path / "sess123" / "run001"
@@ -220,6 +255,7 @@ def test_figure_valid(web_client, tmp_path, monkeypatch):
 
 # ── Code endpoint ────────────────────────────────────────────────────────────
 
+
 def test_code_outside_workspace(web_client):
     r = web_client.get("/code?path=/etc/passwd")
     assert r.status_code == 404
@@ -227,6 +263,7 @@ def test_code_outside_workspace(web_client):
 
 def test_code_path_traversal(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
+
     monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
     r = web_client.get(f"/code?path={tmp_path}/../etc/passwd")
     assert r.status_code == 404
@@ -234,6 +271,7 @@ def test_code_path_traversal(web_client, tmp_path, monkeypatch):
 
 def test_code_not_py(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
+
     monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
     txt_file = tmp_path / "sess" / "data.txt"
     txt_file.parent.mkdir(parents=True)
@@ -244,6 +282,7 @@ def test_code_not_py(web_client, tmp_path, monkeypatch):
 
 def test_code_valid(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
+
     monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
     code_dir = tmp_path / "sess123"
     code_dir.mkdir(parents=True)
@@ -264,14 +303,16 @@ def test_session_messages_attach_code(monkeypatch, tmp_path):
 
     test_store = SessionStore(tmp_path / "sessions.db")
     code_path = str(tmp_path / "sess" / "code_0.py")
-    tool_result = json.dumps({
-        "stdout": "ok",
-        "figure_paths": [],
-        "n_figures": 0,
-        "exports": {},
-        "code_path": code_path,
-        "n_lines": 5,
-    })
+    tool_result = json.dumps(
+        {
+            "stdout": "ok",
+            "figure_paths": [],
+            "n_figures": 0,
+            "exports": {},
+            "code_path": code_path,
+            "n_lines": 5,
+        }
+    )
     history = [
         Message(role="user", content="Run some code."),
         Message(role="assistant", content="", tool_calls=[]),
@@ -286,6 +327,7 @@ def test_session_messages_attach_code(monkeypatch, tmp_path):
 
     from helioai.interfaces.web.app import app
     from starlette.testclient import TestClient
+
     client = TestClient(app)
 
     r = client.get("/api/sessions/sess-code/messages")
@@ -304,8 +346,10 @@ def test_session_messages_attach_code(monkeypatch, tmp_path):
 
 # ── LLM Factory ──────────────────────────────────────────────────────────────
 
+
 def test_factory_unknown_provider():
     from helioai.core.llm.factory import build_llm_client
+
     with pytest.raises(RuntimeError, match="Unknown"):
         build_llm_client("unknown_provider_xyz")
 
@@ -314,11 +358,13 @@ def test_factory_default_returns_client():
     """Factory with no override returns a valid LLMClient instance."""
     from helioai.core.llm.base import LLMClient
     from helioai.core.llm.factory import build_llm_client
+
     client = build_llm_client()
     assert isinstance(client, LLMClient)
 
 
 # ── Export endpoint ─────────────────────────────────────────────────────────────
+
 
 def test_export_endpoint(monkeypatch, tmp_path):
     import nbformat
@@ -335,6 +381,7 @@ def test_export_endpoint(monkeypatch, tmp_path):
     monkeypatch.setattr(export_module.settings.workspace, "workspace_dir", tmp_path / "ws")
 
     from helioai.interfaces.web.app import app
+
     client = TestClient(app, raise_server_exceptions=False)
 
     r = client.get(f"/api/export?session_id={sid}")
@@ -346,10 +393,12 @@ def test_export_endpoint(monkeypatch, tmp_path):
 
 def test_export_endpoint_unknown_session(monkeypatch, tmp_path):
     from helioai.core.session import SessionStore
+
     test_store = SessionStore(tmp_path / "sessions.db")
     monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
 
     from helioai.interfaces.web.app import app
+
     client = TestClient(app, raise_server_exceptions=False)
     r = client.get("/api/export?session_id=does-not-exist")
     assert r.status_code == 404

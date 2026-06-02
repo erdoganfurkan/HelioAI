@@ -48,9 +48,11 @@ def _load():
     with _lock:
         if _model is None:
             from sentence_transformers import SentenceTransformer
+
             _model = SentenceTransformer(settings.rag.embed_model)
         if _collection is None:
             import chromadb
+
             client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
             _collection = client.get_collection(name=settings.rag.collection_name)
 
@@ -67,6 +69,7 @@ def _load_reranker():
         if not _reranker_loaded:
             try:
                 from sentence_transformers import CrossEncoder
+
                 _reranker = CrossEncoder(settings.rag.rerank_model)
             except Exception as e:
                 log.warning("reranker %s unavailable (%s)", settings.rag.rerank_model, e)
@@ -89,6 +92,7 @@ def _load_bm25():
         if not _bm25_loaded:
             try:
                 from rank_bm25 import BM25Okapi
+
                 _, collection = _load()
                 # Paginate: a single get() over the whole catalog blows SQLite's
                 # variable limit on large collections (~83k).
@@ -97,12 +101,14 @@ def _load_bm25():
                 page = 5000
                 for off in range(0, total, page):
                     data = collection.get(
-                        include=["documents", "metadatas"], limit=page, offset=off)
+                        include=["documents", "metadatas"], limit=page, offset=off
+                    )
                     _bm25_ids.extend(data.get("ids", []) or [])
                     _bm25_docs.extend(data.get("documents", []) or [])
                     _bm25_meta.extend(data.get("metadatas", []) or [])
-                corpus = [_tokenize(f"{pid} {doc or ''}")
-                          for pid, doc in zip(_bm25_ids, _bm25_docs)]
+                corpus = [
+                    _tokenize(f"{pid} {doc or ''}") for pid, doc in zip(_bm25_ids, _bm25_docs)
+                ]
                 _bm25 = BM25Okapi(corpus) if corpus else None
             except Exception as e:
                 log.warning("BM25 unavailable (%s) — falling back to dense-only", e)
@@ -133,11 +139,12 @@ def _meta_matches(meta: dict, provider, region, measurement_type) -> bool:
 def _truncate(text: str, max_chars: int = 280) -> str:
     if len(text) <= max_chars:
         return text
-    return text[:max_chars - 1].rstrip() + "…"
+    return text[: max_chars - 1].rstrip() + "…"
 
 
-def _build_where(provider: str | None, region: str | None,
-                 measurement_type: str | None) -> dict | None:
+def _build_where(
+    provider: str | None, region: str | None, measurement_type: str | None
+) -> dict | None:
     """Build a ChromaDB metadata filter. One condition → flat dict, ≥2 → $and."""
     conds: list[dict] = []
     if provider:
@@ -151,8 +158,9 @@ def _build_where(provider: str | None, region: str | None,
     return conds[0] if len(conds) == 1 else {"$and": conds}
 
 
-def _fuse_query(query: str, dense_hit: tuple, top_k: int, *, provider, region,
-                measurement_type, hybrid: bool) -> list[dict]:
+def _fuse_query(
+    query: str, dense_hit: tuple, top_k: int, *, provider, region, measurement_type, hybrid: bool
+) -> list[dict]:
     """Run the hybrid fusion + scoring for ONE query given its dense hit.
 
     `dense_hit` is (ids, documents, metadatas, distances) for this query.
@@ -209,17 +217,20 @@ def _fuse_query(query: str, dense_hit: tuple, top_k: int, *, provider, region,
     if not ordered_ids:
         return []
 
-    candidates: list[dict] = [{
-        "id": pid,
-        "name": info[pid]["name"],
-        "description": _truncate(info[pid]["full_text"]),
-        "_full_text": info[pid]["full_text"],
-        "_raw": raw.get(pid, 0.0),
-    } for pid in ordered_ids]
+    candidates: list[dict] = [
+        {
+            "id": pid,
+            "name": info[pid]["name"],
+            "description": _truncate(info[pid]["full_text"]),
+            "_full_text": info[pid]["full_text"],
+            "_raw": raw.get(pid, 0.0),
+        }
+        for pid in ordered_ids
+    ]
 
     reranker = _load_reranker()
     if reranker is not None and len(candidates) > 1:
-        head = candidates[:max(top_k, settings.rag.rerank_fetch_k)]
+        head = candidates[: max(top_k, settings.rag.rerank_fetch_k)]
         rerank_scores = reranker.predict([(query, c["_full_text"]) for c in head])
         for c, s in zip(head, rerank_scores):
             c["score"] = round(1.0 / (1.0 + math.exp(-float(s))), 4)
@@ -242,9 +253,14 @@ def _fuse_query(query: str, dense_hit: tuple, top_k: int, *, provider, region,
     return candidates[:top_k]
 
 
-def search_batch(queries: list[str], top_k: int = 5, *, provider: str | None = None,
-                 region: str | None = None,
-                 measurement_type: str | None = None) -> list[list[dict]]:
+def search_batch(
+    queries: list[str],
+    top_k: int = 5,
+    *,
+    provider: str | None = None,
+    region: str | None = None,
+    measurement_type: str | None = None,
+) -> list[list[dict]]:
     """Resolve several queries in ONE pass — the 'composed RAG'.
 
     Encodes all queries in a single embedding pass and issues a single
@@ -267,7 +283,9 @@ def search_batch(queries: list[str], top_k: int = 5, *, provider: str | None = N
         dense_k = top_k
 
     vecs = model.encode(
-        [q for _, q in active], normalize_embeddings=True, convert_to_numpy=True,
+        [q for _, q in active],
+        normalize_embeddings=True,
+        convert_to_numpy=True,
     ).tolist()
 
     res = collection.query(
@@ -288,14 +306,26 @@ def search_batch(queries: list[str], top_k: int = 5, *, provider: str | None = N
             all_metas[j] if j < len(all_metas) else [],
             all_dists[j] if j < len(all_dists) else [],
         )
-        results[i] = _fuse_query(q, dense_hit, top_k, provider=provider,
-                                 region=region, measurement_type=measurement_type,
-                                 hybrid=hybrid)
+        results[i] = _fuse_query(
+            q,
+            dense_hit,
+            top_k,
+            provider=provider,
+            region=region,
+            measurement_type=measurement_type,
+            hybrid=hybrid,
+        )
     return results
 
 
-def search(query: str, top_k: int = 5, *, provider: str | None = None,
-           region: str | None = None, measurement_type: str | None = None) -> list[dict]:
+def search(
+    query: str,
+    top_k: int = 5,
+    *,
+    provider: str | None = None,
+    region: str | None = None,
+    measurement_type: str | None = None,
+) -> list[dict]:
     """Semantic search over speasy catalog (single query).
 
     Optional metadata filters narrow the search at query time (the metadata is
@@ -313,5 +343,6 @@ def search(query: str, top_k: int = 5, *, provider: str | None = None,
     """
     if not query or not query.strip():
         return []
-    return search_batch([query], top_k, provider=provider, region=region,
-                        measurement_type=measurement_type)[0]
+    return search_batch(
+        [query], top_k, provider=provider, region=region, measurement_type=measurement_type
+    )[0]

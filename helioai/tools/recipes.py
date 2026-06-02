@@ -12,7 +12,6 @@ list_recipes() returns the catalogue; load_recipe(name) returns the source code.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from helioai.config import settings
 

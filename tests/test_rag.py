@@ -37,8 +37,10 @@ def _seed(collection, n: int = 10) -> list[str]:
     norms = np.linalg.norm(vecs, axis=1, keepdims=True)
     vecs = vecs / np.maximum(norms, 1e-9)
     docs = [f"Parameter {i}: solar wind measurement. Units: nT." for i in range(n)]
-    metas = [{"name": f"P{i}", "units": "nT", "xmlid": f"param_{i}", "provider": "amda"}
-             for i in range(n)]
+    metas = [
+        {"name": f"P{i}", "units": "nT", "xmlid": f"param_{i}", "provider": "amda"}
+        for i in range(n)
+    ]
     collection.add(ids=ids, embeddings=vecs.tolist(), documents=docs, metadatas=metas)
     return ids
 
@@ -115,8 +117,10 @@ def test_search_no_filter_returns_all_providers(isolated_rag) -> None:
 
 # ──────────────────────────────── hybrid search ─────────────────────────────
 
+
 def test_rrf_fuse_rewards_agreement() -> None:
     from helioai.tools.rag import _rrf_fuse
+
     # 'b' is #1 in one list and #1 in the other; 'a' only appears once
     fused = _rrf_fuse([["a", "b"], ["b", "c"]], k=60)
     assert fused["b"] > fused["a"]
@@ -136,6 +140,7 @@ def _seed_with_code(collection) -> None:
 
 def test_hybrid_finds_exact_code(isolated_rag, monkeypatch) -> None:
     from helioai.config import settings
+
     monkeypatch.setattr(settings.rag, "hybrid_enabled", True)
     _seed_with_code(isolated_rag)
     results = search("BGSEc", top_k=5)
@@ -145,6 +150,7 @@ def test_hybrid_finds_exact_code(isolated_rag, monkeypatch) -> None:
 
 def test_hybrid_disabled_is_dense_only(isolated_rag, monkeypatch) -> None:
     from helioai.config import settings
+
     monkeypatch.setattr(settings.rag, "hybrid_enabled", False)
     _seed_with_code(isolated_rag)
     # With hybrid off and random dense embeddings, the exact code is not reliably #1
@@ -154,6 +160,7 @@ def test_hybrid_disabled_is_dense_only(isolated_rag, monkeypatch) -> None:
 
 def test_hybrid_respects_provider_filter(isolated_rag, monkeypatch) -> None:
     from helioai.config import settings
+
     monkeypatch.setattr(settings.rag, "hybrid_enabled", True)
     _seed_mixed(isolated_rag)  # amda/* and cda/*
     results = search("solar wind magnetic field", top_k=10, provider="amda")
@@ -162,6 +169,7 @@ def test_hybrid_respects_provider_filter(isolated_rag, monkeypatch) -> None:
 
 
 # ──────────────────────────────── batch search ──────────────────────────────
+
 
 def test_search_batch_groups(isolated_rag) -> None:
     _seed(isolated_rag, n=10)
@@ -202,10 +210,12 @@ def test_search_batch_empty_slot(isolated_rag) -> None:
 
 # ──────────────────────────── reranker composition ──────────────────────────
 
+
 def test_reranker_composes_with_hybrid_and_batch(isolated_rag, monkeypatch) -> None:
     """Enabling the cross-encoder reranker must re-rank the fused candidates,
     per query, in batch mode — and produce absolute sigmoid scores in [0,1]."""
     from helioai.config import settings
+
     monkeypatch.setattr(settings.rag, "hybrid_enabled", True)
     monkeypatch.setattr(settings.rag, "rerank_enabled", True)
     _seed(isolated_rag, n=8)  # docs "Parameter i: ...", ids param_i
@@ -222,6 +232,6 @@ def test_reranker_composes_with_hybrid_and_batch(isolated_rag, monkeypatch) -> N
     assert len(groups) == 2
     for g in groups:
         assert g
-        assert g[0]["id"] == "param_5"          # reranker re-ordered the fused set
-        assert g[0]["score"] > 0.9              # sigmoid(10) ≈ 1.0 (absolute score)
+        assert g[0]["id"] == "param_5"  # reranker re-ordered the fused set
+        assert g[0]["score"] > 0.9  # sigmoid(10) ≈ 1.0 (absolute score)
         assert all(0.0 <= r["score"] <= 1.0 for r in g)

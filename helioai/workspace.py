@@ -21,6 +21,7 @@ _current_label: ContextVar[str | None] = ContextVar("helioai_workspace_label", d
 
 def _root() -> Path:
     from helioai.config import settings
+
     p = Path(settings.workspace.workspace_dir)
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -71,6 +72,7 @@ def get_session_dir() -> Path:
         d.mkdir(parents=True, exist_ok=True)
         return d
     import tempfile
+
     return Path(tempfile.mkdtemp(prefix="helioai_"))
 
 
@@ -108,6 +110,7 @@ def is_under_workspace(path: str | Path) -> bool:
 def cleanup_old_runs(ttl_seconds: int | None = None) -> int:
     """Purge session dirs older than ttl_seconds. Returns count removed."""
     from helioai.config import settings
+
     if ttl_seconds is None:
         ttl_seconds = settings.workspace.ttl_seconds
     root = _root()

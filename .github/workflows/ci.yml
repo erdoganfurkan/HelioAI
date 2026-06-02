@@ -22,7 +22,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dev dependencies
-        run: uv sync --group dev
+        run: uv sync --extra dev
 
       - name: Ruff lint
         run: uv run ruff check .
@@ -51,7 +51,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --extra dev
 
       - name: Cache sentence-transformers model
         uses: actions/cache@v4

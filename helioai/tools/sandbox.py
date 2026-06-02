@@ -124,7 +124,9 @@ print("__HELIOAI_RESULT__" + json.dumps(_out))
 """
 
 
-async def run_python(code: str, timeout: float = 30.0, _plot_dir: str | None = None, _run_idx: int | None = None) -> dict:
+async def run_python(
+    code: str, timeout: float = 30.0, _plot_dir: str | None = None, _run_idx: int | None = None
+) -> dict:
     """Execute Python code in an isolated subprocess.
 
     Args:
@@ -145,28 +147,32 @@ async def run_python(code: str, timeout: float = 30.0, _plot_dir: str | None = N
     """
     if _plot_dir is None:
         from helioai.workspace import get_run_dir_for_sandbox
+
         _plot_dir = get_run_dir_for_sandbox()
     run_idx = _run_idx if _run_idx is not None else 0
     plot_dir = _plot_dir
     from helioai.logging_config import get_logger as _get_logger
+
     _get_logger(__name__).info("sandbox_plot_dir", plot_dir=plot_dir, run_idx=run_idx)
     code_file = Path(plot_dir, f"code_{run_idx}.py")
     dedented_code = textwrap.dedent(code)
     code_file.write_text(dedented_code, encoding="utf-8")
     n_lines = len(dedented_code.splitlines())
     plot_dir_line = f"__sandbox_plot_dir = {plot_dir!r}\n__sandbox_run_idx = {run_idx!r}\n"
-    full_code = plot_dir_line + _SANDBOX_PREAMBLE + textwrap.dedent(code) + "\n" + _SANDBOX_POSTAMBLE
+    full_code = (
+        plot_dir_line + _SANDBOX_PREAMBLE + textwrap.dedent(code) + "\n" + _SANDBOX_POSTAMBLE
+    )
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-c", full_code,
+            sys.executable,
+            "-c",
+            full_code,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.communicate()
@@ -182,7 +188,7 @@ async def run_python(code: str, timeout: float = 30.0, _plot_dir: str | None = N
         for line in stdout.splitlines():
             if line.startswith("__HELIOAI_RESULT__"):
                 try:
-                    payload = json.loads(line[len("__HELIOAI_RESULT__"):])
+                    payload = json.loads(line[len("__HELIOAI_RESULT__") :])
                     figure_paths = payload.get("figure_paths", [])
                     exports = payload.get("exports", {})
                     cards = payload.get("cards", [])

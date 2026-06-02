@@ -27,13 +27,20 @@ registry.register(
     parameters={
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Free-text English query for a single parameter."},
+            "query": {
+                "type": "string",
+                "description": "Free-text English query for a single parameter.",
+            },
             "queries": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "List of queries to resolve several parameters in one call.",
             },
-            "top_k": {"type": "integer", "description": "Number of results per query (default 5).", "default": 5},
+            "top_k": {
+                "type": "integer",
+                "description": "Number of results per query (default 5).",
+                "default": 5,
+            },
             "provider": {
                 "type": "string",
                 "enum": ["amda", "cda", "csa", "ssc"],
@@ -62,8 +69,14 @@ registry.register(
                 "type": "string",
                 "description": "Speasy parameter id (e.g. 'amda/imf', 'cdaweb/MMS1_FGM_SRVY_L2/mms1_fgm_b_gse_srvy_l2').",
             },
-            "start": {"type": "string", "description": "ISO 8601 start (e.g. '2024-01-01T00:00:00')."},
-            "stop": {"type": "string", "description": "ISO 8601 stop (e.g. '2024-01-01T06:00:00')."},
+            "start": {
+                "type": "string",
+                "description": "ISO 8601 start (e.g. '2024-01-01T00:00:00').",
+            },
+            "stop": {
+                "type": "string",
+                "description": "ISO 8601 stop (e.g. '2024-01-01T06:00:00').",
+            },
             "max_points": {
                 "type": "integer",
                 "description": "Maximum samples to return (default 5000, downsampled if needed).",
@@ -120,9 +133,9 @@ registry.register(
     parameters={
         "type": "object",
         "properties": {
-            "B_nT":  {"type": "number", "description": "Magnetic field magnitude (nT)."},
+            "B_nT": {"type": "number", "description": "Magnetic field magnitude (nT)."},
             "n_cm3": {"type": "number", "description": "Number density (cm⁻³)."},
-            "T_eV":  {"type": "number", "description": "Temperature (eV)."},
+            "T_eV": {"type": "number", "description": "Temperature (eV)."},
         },
         "required": ["B_nT", "n_cm3", "T_eV"],
     },
@@ -139,8 +152,11 @@ registry.register(
     parameters={
         "type": "object",
         "properties": {
-            "B_nT":    {"type": "number", "description": "Magnetic field magnitude (nT)."},
-            "particle": {"type": "string", "description": "'proton', 'electron', or 'alpha' (default: proton)."},
+            "B_nT": {"type": "number", "description": "Magnetic field magnitude (nT)."},
+            "particle": {
+                "type": "string",
+                "description": "'proton', 'electron', or 'alpha' (default: proton).",
+            },
         },
         "required": ["B_nT"],
     },
@@ -149,15 +165,12 @@ registry.register(
 
 registry.register(
     name="debye_length",
-    description=(
-        "Compute electron Debye length. "
-        "Returns length in meters and km."
-    ),
+    description=("Compute electron Debye length. Returns length in meters and km."),
     parameters={
         "type": "object",
         "properties": {
             "n_cm3": {"type": "number", "description": "Electron number density (cm⁻³)."},
-            "T_eV":  {"type": "number", "description": "Electron temperature (eV)."},
+            "T_eV": {"type": "number", "description": "Electron temperature (eV)."},
         },
         "required": ["n_cm3", "T_eV"],
     },
@@ -167,16 +180,17 @@ registry.register(
 registry.register(
     name="alfven_speed",
     description=(
-        "Compute Alfvén speed. "
-        "SPASE: ParticleQuantity.AlfvenVelocity. "
-        "Returns speed in km/s."
+        "Compute Alfvén speed. SPASE: ParticleQuantity.AlfvenVelocity. Returns speed in km/s."
     ),
     parameters={
         "type": "object",
         "properties": {
-            "B_nT":     {"type": "number", "description": "Magnetic field magnitude (nT)."},
-            "n_cm3":    {"type": "number", "description": "Ion number density (cm⁻³)."},
-            "mass_amu": {"type": "number", "description": "Ion mass in atomic mass units (default 1.0 = proton)."},
+            "B_nT": {"type": "number", "description": "Magnetic field magnitude (nT)."},
+            "n_cm3": {"type": "number", "description": "Ion number density (cm⁻³)."},
+            "mass_amu": {
+                "type": "number",
+                "description": "Ion mass in atomic mass units (default 1.0 = proton).",
+            },
         },
         "required": ["B_nT", "n_cm3"],
     },
@@ -192,8 +206,11 @@ registry.register(
     parameters={
         "type": "object",
         "properties": {
-            "n_cm3":    {"type": "number", "description": "Number density (cm⁻³)."},
-            "particle": {"type": "string", "description": "'proton' or 'electron' (default: proton)."},
+            "n_cm3": {"type": "number", "description": "Number density (cm⁻³)."},
+            "particle": {
+                "type": "string",
+                "description": "'proton' or 'electron' (default: proton).",
+            },
         },
         "required": ["n_cm3"],
     },
@@ -210,9 +227,16 @@ registry.register(
     parameters={
         "type": "object",
         "properties": {
-            "values":  {"type": "array", "items": {"type": "number"}, "description": "Time series as array of floats."},
-            "dt_s":    {"type": "number", "description": "Sampling interval in seconds."},
-            "nperseg": {"type": "integer", "description": "Samples per FFT segment (default: auto)."},
+            "values": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Time series as array of floats.",
+            },
+            "dt_s": {"type": "number", "description": "Sampling interval in seconds."},
+            "nperseg": {
+                "type": "integer",
+                "description": "Samples per FFT segment (default: auto).",
+            },
         },
         "required": ["values", "dt_s"],
     },

@@ -26,10 +26,12 @@ def test_save_and_reload_round_trips_all_fields(db: Path) -> None:
     s1 = SessionStore(db)
     h = s1.get_or_create("alice", "t1")
     h.append(Message(role="user", content="hello"))
-    h.append(Message(
-        role="assistant",
-        tool_calls=[ToolCall(id="search::1", name="search_parameters", arguments={"q": "imf"})],
-    ))
+    h.append(
+        Message(
+            role="assistant",
+            tool_calls=[ToolCall(id="search::1", name="search_parameters", arguments={"q": "imf"})],
+        )
+    )
     h.append(Message(role="tool", tool_call_id="search::1", content='{"hits":3}'))
     h.append(Message(role="assistant", content="Found 3 results."))
     s1.save("alice", "t1", h)

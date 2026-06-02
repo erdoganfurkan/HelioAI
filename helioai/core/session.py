@@ -114,14 +114,22 @@ class SessionStore:
                 "ON CONFLICT(user_id, session_id) DO UPDATE SET updated_at = julianday('now')",
                 (user_id, session_id),
             )
-            conn.execute("DELETE FROM messages WHERE user_id = ? AND session_id = ?",
-                         (user_id, session_id))
+            conn.execute(
+                "DELETE FROM messages WHERE user_id = ? AND session_id = ?", (user_id, session_id)
+            )
             conn.executemany(
                 "INSERT INTO messages(user_id, session_id, seq, role, content, tool_calls, tool_call_id) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 [
-                    (user_id, session_id, i, m.role, m.content or "",
-                     _dump_tool_calls(m.tool_calls), m.tool_call_id)
+                    (
+                        user_id,
+                        session_id,
+                        i,
+                        m.role,
+                        m.content or "",
+                        _dump_tool_calls(m.tool_calls),
+                        m.tool_call_id,
+                    )
                     for i, m in enumerate(history)
                 ],
             )
@@ -162,6 +170,7 @@ class SessionStore:
 
     def list_summaries(self, user_id: str, limit: int = 50) -> list[dict]:
         from datetime import datetime, timezone
+
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -184,14 +193,18 @@ class SessionStore:
             if len(preview) > 80:
                 preview = preview[:77] + "..."
             unix_ts = (jd - 2440587.5) * 86400
-            iso = datetime.fromtimestamp(unix_ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
-            out.append({
-                "session_id": session_id,
-                "first_message": preview,
-                "n_messages": n_messages,
-                "updated_at": iso,
-                "workspace_dir": workspace_dir,
-            })
+            iso = (
+                datetime.fromtimestamp(unix_ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            )
+            out.append(
+                {
+                    "session_id": session_id,
+                    "first_message": preview,
+                    "n_messages": n_messages,
+                    "updated_at": iso,
+                    "workspace_dir": workspace_dir,
+                }
+            )
         return out
 
 

@@ -14,6 +14,7 @@ from helioai.tools.speasy_tools import get_timeseries, list_missions, search_par
 
 # ─────────────────────────────── list_missions ──────────────────────────────
 
+
 async def test_list_missions_returns_dict(monkeypatch) -> None:
     mock_tree = MagicMock()
     type(mock_tree).__iter__ = MagicMock(return_value=iter([]))
@@ -29,10 +30,11 @@ async def test_list_missions_returns_dict(monkeypatch) -> None:
 
 # ─────────────────────────────── search_parameters ──────────────────────────
 
+
 async def test_search_parameters_calls_rag_search(monkeypatch) -> None:
     fake_results = [
         {"id": "amda/ace_b_gse", "name": "Bx", "description": "ACE B field", "score": 0.92},
-        {"id": "amda/ace_b_y",   "name": "By", "description": "ACE B field Y", "score": 0.88},
+        {"id": "amda/ace_b_y", "name": "By", "description": "ACE B field Y", "score": 0.88},
     ]
     monkeypatch.setattr(rag_module, "search", lambda q, top_k=5, provider=None: fake_results)
 
@@ -51,8 +53,11 @@ async def test_search_parameters_returns_query_field(monkeypatch) -> None:
 
 async def test_search_parameters_batch_returns_groups(monkeypatch) -> None:
     def fake_batch(queries, top_k=5, provider=None):
-        return [[{"id": f"amda/p{i}", "name": q, "description": "", "score": 0.9}]
-                for i, q in enumerate(queries)]
+        return [
+            [{"id": f"amda/p{i}", "name": q, "description": "", "score": 0.9}]
+            for i, q in enumerate(queries)
+        ]
+
     monkeypatch.setattr(rag_module, "search_batch", fake_batch)
 
     result = await search_parameters(queries=["imf bz ace", "sw density ace"])
@@ -68,6 +73,7 @@ async def test_search_parameters_requires_query_or_queries() -> None:
 
 
 # ─────────────────────────────── get_timeseries ─────────────────────────────
+
 
 def _make_fake_var(n: int = 5) -> MagicMock:
     fake_var = MagicMock()

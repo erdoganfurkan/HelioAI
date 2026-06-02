@@ -12,8 +12,7 @@ from .base import LLMClient, Message, ToolDef
 class OllamaClient(LLMClient):
     def __init__(self, base_url: str, model: str):
         raise NotImplementedError(
-            "OllamaClient is not yet implemented. "
-            "Set HELIOAI_LLM_PROVIDER=groq or gemini in .env."
+            "OllamaClient is not yet implemented. Set HELIOAI_LLM_PROVIDER=groq or gemini in .env."
         )
 
     async def chat(

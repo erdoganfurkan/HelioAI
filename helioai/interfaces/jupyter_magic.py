@@ -43,6 +43,7 @@ def _get_llm():
     if _llm is not None:
         return _llm
     from helioai.core.llm.factory import build_llm_client
+
     _llm = build_llm_client()
     return _llm
 
@@ -91,6 +92,7 @@ def _render_jupyter_event(ev: dict) -> None:
     elif name == "done":
         print(f"\n  ({data.get('n_iterations', 0)} iteration(s))")
         from helioai.workspace import get_session_dir
+
         ws = get_session_dir()
         display(HTML(f"<small style='color:#8b949e'>📂 {ws}</small>"))
 
@@ -100,12 +102,12 @@ def _render_jupyter_event(ev: dict) -> None:
 
 @magics_class
 class HelioAIMagics(Magics):
-
     @cell_magic
     def helioai(self, line: str, cell: str) -> None:
         import helioai.tools.setup  # noqa: F401
         from helioai.core.agent_loop import stream_chat
         from helioai.logging_config import setup_logging
+
         setup_logging("WARNING")
 
         async def _run():
@@ -123,12 +125,14 @@ class HelioAIMagics(Magics):
 
         if cmd == "reset":
             from helioai.core.session import store
+
             store.reset(_USER_ID, _SESSION_ID)
             _SESSION_ID = str(uuid.uuid4())
             print(f"Session reset. New id: {_SESSION_ID[:8]}")
         elif cmd == "delete":
             from helioai.core.session import store
             from helioai.workspace import _root
+
             if not arg:
                 print("Usage: %helioai_session delete <session_id_prefix>")
                 return
@@ -142,6 +146,7 @@ class HelioAIMagics(Magics):
             store.reset(_USER_ID, sid)
             if wdir:
                 import shutil
+
                 ws_path = _root() / wdir
                 if ws_path.exists():
                     shutil.rmtree(ws_path, ignore_errors=True)
@@ -161,6 +166,7 @@ class HelioAIMagics(Magics):
             print(f"Unknown provider {provider!r}. Use: groq | gemini | azure")
             return
         import os
+
         os.environ["HELIOAI_LLM_PROVIDER"] = provider
         _llm = None
         print(f"Provider switched to {provider!r}.")
@@ -168,6 +174,7 @@ class HelioAIMagics(Magics):
     @line_magic
     def helioai_history(self, line: str) -> None:
         from helioai.core.session import store
+
         summaries = store.list_summaries(_USER_ID)
         if not summaries:
             print("No history found.")
@@ -181,18 +188,21 @@ class HelioAIMagics(Magics):
             f"</tr>"
             for s in summaries
         )
-        display(HTML(
-            "<table><thead><tr>"
-            "<th>Session</th><th>Updated</th><th>Msgs</th><th>First message</th>"
-            "</tr></thead><tbody>" + rows + "</tbody></table>"
-        ))
+        display(
+            HTML(
+                "<table><thead><tr>"
+                "<th>Session</th><th>Updated</th><th>Msgs</th><th>First message</th>"
+                "</tr></thead><tbody>" + rows + "</tbody></table>"
+            )
+        )
 
     @line_magic
     def helioai_profile(self, line: str) -> None:
         from helioai.config import settings
+
         parts = line.strip().split(maxsplit=1)
         cmd = parts[0] if parts else ""
-        arg = parts[1].strip().strip('"\'') if len(parts) > 1 else ""
+        arg = parts[1].strip().strip("\"'") if len(parts) > 1 else ""
         p = settings.profile.profile_path
 
         if cmd == "show":
@@ -200,19 +210,20 @@ class HelioAIMagics(Magics):
             display(Markdown(content if content else "_(profil vide)_"))
         elif cmd == "set":
             if not arg:
-                print("Usage: %helioai_profile set \"your preferences here\"")
+                print('Usage: %helioai_profile set "your preferences here"')
                 return
             p.parent.mkdir(parents=True, exist_ok=True)
             with p.open("a", encoding="utf-8") as f:
                 f.write(("\n" if p.stat().st_size > 0 else "") + arg + "\n")
             print(f"Profile updated ({p}).")
         else:
-            print("Usage: %helioai_profile show | set \"<text>\"")
+            print('Usage: %helioai_profile show | set "<text>"')
 
     @line_magic
     def helioai_export(self, line: str) -> None:
         from helioai.core.session import store
         from helioai.export import export_session_notebook
+
         prefix = line.strip()
         session_id = _SESSION_ID
         if prefix:
@@ -223,6 +234,7 @@ class HelioAIMagics(Magics):
             session_id = matches[0]
         path = export_session_notebook(_USER_ID, session_id)
         from IPython.display import FileLink
+
         display(FileLink(str(path), result_html_prefix="📓 Exported notebook: "))
 
     @line_magic
@@ -233,6 +245,7 @@ class HelioAIMagics(Magics):
             print("Usage: %helioai_resume <session_id>")
             return
         from helioai.core.session import store
+
         all_ids = store.all_sessions(_USER_ID)
         matches = [s for s in all_ids if s.startswith(prefix)]
         if not matches:

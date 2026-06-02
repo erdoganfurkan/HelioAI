@@ -33,7 +33,7 @@ from helioai.core.llm.base import LLMClient, Message, ToolDef
 from helioai.core.session import store
 from helioai.core.skills_loader import SkillError, load_index as load_skills_index
 from helioai.core.skills_loader import load_skill as load_skill_body, list_skill_names
-from helioai.core.sub_agents import AGENT_ROLES, TASK_TOOL_NAME, stream_subagent, task_tool_def
+from helioai.core.sub_agents import TASK_TOOL_NAME, stream_subagent, task_tool_def
 from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
     _extract_artifact,
     _summarize_tool_result,
@@ -165,6 +165,7 @@ async def stream_chat(
 ) -> AsyncIterator[dict]:
     """Async generator core of the agent loop."""
     import helioai.workspace as _ws
+
     _ws_token = _ws.set_session(session_id)
 
     history = store.get_or_create(user_id, session_id)
@@ -193,8 +194,12 @@ async def stream_chat(
             log.info("llm_call_start", turn=turn, n_messages=len(history))
             t0 = time.monotonic()
             response = await llm_client.chat(history, tools, system_prompt=effective_prompt)
-            log.info("llm_call_end", turn=turn, duration_ms=int((time.monotonic() - t0) * 1000),
-                     has_tool_calls=bool(response.tool_calls))
+            log.info(
+                "llm_call_end",
+                turn=turn,
+                duration_ms=int((time.monotonic() - t0) * 1000),
+                has_tool_calls=bool(response.tool_calls),
+            )
             history.append(response)
 
             if not response.tool_calls:
@@ -205,7 +210,10 @@ async def stream_chat(
 
             for tc in response.tool_calls:
                 log.info("tool_call_issued", turn=turn, tool=tc.name)
-                yield {"event": "tool_call", "data": {"turn": turn, "name": tc.name, "arguments": tc.arguments}}
+                yield {
+                    "event": "tool_call",
+                    "data": {"turn": turn, "name": tc.name, "arguments": tc.arguments},
+                }
 
                 sub_end_event: dict | None = None
 
@@ -216,7 +224,11 @@ async def stream_chat(
                         sub_desc = args.get("description", "")
                         yield {
                             "event": "sub_agent_start",
-                            "data": {"task_id": tc.id, "role": sub_role, "description": sub_desc[:200]},
+                            "data": {
+                                "task_id": tc.id,
+                                "role": sub_role,
+                                "description": sub_desc[:200],
+                            },
                         }
                         async for sub_ev in stream_subagent(
                             role=sub_role,
@@ -228,12 +240,14 @@ async def stream_chat(
                         ):
                             if sub_ev["event"] == "sub_agent_end":
                                 end_data = sub_ev["data"]
-                                result = json.dumps({
-                                    "summary": end_data.get("summary", ""),
-                                    "n_iterations": end_data.get("n_iterations", 0),
-                                    "artifacts": end_data.get("artifacts", []),
-                                    "error": end_data.get("error"),
-                                })
+                                result = json.dumps(
+                                    {
+                                        "summary": end_data.get("summary", ""),
+                                        "n_iterations": end_data.get("n_iterations", 0),
+                                        "artifacts": end_data.get("artifacts", []),
+                                        "error": end_data.get("error"),
+                                    }
+                                )
                                 sub_end_event = {
                                     "task_id": tc.id,
                                     "role": sub_role,
@@ -254,8 +268,11 @@ async def stream_chat(
                     result = json.dumps({"error": str(e)})
                     if tc.name == TASK_TOOL_NAME:
                         sub_end_event = {
-                            "task_id": tc.id, "role": sub_role if "sub_role" in locals() else "",
-                            "summary": "", "n_iterations": 0, "error": str(e),
+                            "task_id": tc.id,
+                            "role": sub_role if "sub_role" in locals() else "",
+                            "summary": "",
+                            "n_iterations": 0,
+                            "error": str(e),
                         }
 
                 for ev in emit_post_tool_events(tc.name, result, tool_result_extra={"turn": turn}):
@@ -267,7 +284,10 @@ async def stream_chat(
 
         log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
         store.save(user_id, session_id, history)
-        yield {"event": "error", "data": {"message": f"agent loop exceeded {settings.agent.max_iterations} iterations"}}
+        yield {
+            "event": "error",
+            "data": {"message": f"agent loop exceeded {settings.agent.max_iterations} iterations"},
+        }
 
     except asyncio.CancelledError:
         store.save(user_id, session_id, history)
@@ -295,9 +315,23 @@ async def chat(llm_client: LLMClient, user_id: str, session_id: str, user_text: 
         elif name == "artifact":
             artifacts.append(data)
         elif name == "tool_call":
-            events.append({"turn": data["turn"], "type": "tool_call", "tool": data["name"], "arguments": data.get("arguments", {})})
+            events.append(
+                {
+                    "turn": data["turn"],
+                    "type": "tool_call",
+                    "tool": data["name"],
+                    "arguments": data.get("arguments", {}),
+                }
+            )
         elif name == "tool_result":
-            events.append({"turn": data["turn"], "type": "tool_result", "tool": data["name"], "summary": data.get("summary", "")})
+            events.append(
+                {
+                    "turn": data["turn"],
+                    "type": "tool_result",
+                    "tool": data["name"],
+                    "summary": data.get("summary", ""),
+                }
+            )
         elif name == "error":
             error_msg = data.get("message", "unknown agent error")
 

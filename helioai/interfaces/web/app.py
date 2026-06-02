@@ -107,26 +107,30 @@ async def get_session_messages(session_id: str):
                         if isinstance(card, dict) and card.get("kind") == "parameter_card":
                             pending_cards.append(card)
                     if data.get("code_path"):  # run_python direct — artifact code
-                        pending_code.append({
-                            "kind": "code",
-                            "code_path": data["code_path"],
-                            "name": Path(data["code_path"]).name,
-                            "n_lines": data.get("n_lines"),
-                        })
+                        pending_code.append(
+                            {
+                                "kind": "code",
+                                "code_path": data["code_path"],
+                                "name": Path(data["code_path"]).name,
+                                "n_lines": data.get("n_lines"),
+                            }
+                        )
                     if data.get("param_id") and "preview" in data:  # get_timeseries direct
-                        pending_cards.append({
-                            "kind": "parameter_card",
-                            "param_id": data.get("param_id"),
-                            "name": data.get("name"),
-                            "mission": data.get("mission"),
-                            "instrument": data.get("instrument"),
-                            "units": data.get("units"),
-                            "cadence": data.get("cadence"),
-                            "components": data.get("components"),
-                            "n_points": data.get("n_points"),
-                            "start": data.get("start"),
-                            "stop": data.get("stop"),
-                        })
+                        pending_cards.append(
+                            {
+                                "kind": "parameter_card",
+                                "param_id": data.get("param_id"),
+                                "name": data.get("name"),
+                                "mission": data.get("mission"),
+                                "instrument": data.get("instrument"),
+                                "units": data.get("units"),
+                                "cadence": data.get("cadence"),
+                                "components": data.get("components"),
+                                "n_points": data.get("n_points"),
+                                "start": data.get("start"),
+                                "stop": data.get("stop"),
+                            }
+                        )
                     for art in data.get("artifacts", []):  # résultat sous-agent
                         if not isinstance(art, dict):
                             continue
@@ -170,6 +174,7 @@ async def delete_session(session_id: str):
 @app.get("/api/export")
 async def export_notebook(session_id: str):
     from helioai.export import export_session_notebook
+
     if session_id not in store.all_sessions(_WEB_USER):
         raise HTTPException(status_code=404, detail="Unknown session")
     path = export_session_notebook(_WEB_USER, session_id)
@@ -208,4 +213,5 @@ async def serve_figure(path: str):
 
 def serve_web(host: str = "127.0.0.1", port: int = 7890) -> None:
     import uvicorn
+
     uvicorn.run(app, host=host, port=port)

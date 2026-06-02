@@ -18,19 +18,23 @@ from starlette.testclient import TestClient
 
 def test_load_user_profile_missing(tmp_path, monkeypatch):
     from helioai.config import settings
+
     monkeypatch.setattr(settings.profile, "profile_path", tmp_path / "profile.md")
 
     from helioai.core.agent_loop import _load_user_profile
+
     assert _load_user_profile() == ""
 
 
 def test_load_user_profile_present(tmp_path, monkeypatch):
     from helioai.config import settings
+
     p = tmp_path / "profile.md"
     p.write_text("preferred missions: ACE, WIND\nunits: SI\n", encoding="utf-8")
     monkeypatch.setattr(settings.profile, "profile_path", p)
 
     from helioai.core.agent_loop import _load_user_profile
+
     content = _load_user_profile()
     assert "ACE" in content
     assert "WIND" in content
@@ -38,11 +42,13 @@ def test_load_user_profile_present(tmp_path, monkeypatch):
 
 def test_load_user_profile_stripped(tmp_path, monkeypatch):
     from helioai.config import settings
+
     p = tmp_path / "profile.md"
     p.write_text("  hello  \n\n", encoding="utf-8")
     monkeypatch.setattr(settings.profile, "profile_path", p)
 
     from helioai.core.agent_loop import _load_user_profile
+
     assert _load_user_profile() == "hello"
 
 
@@ -62,6 +68,7 @@ def test_load_user_profile_oserror(tmp_path, monkeypatch):
     monkeypatch.setattr(settings.profile, "profile_path", _BadPath(tmp_path / "x.md"))
 
     from helioai.core.agent_loop import _load_user_profile
+
     assert _load_user_profile() == ""
 
 
@@ -73,6 +80,7 @@ def fake_stream():
     async def _gen(_llm, _user, _sid, _msg):
         yield {"event": "reply", "data": {"text": "ok"}}
         yield {"event": "done", "data": {"n_iterations": 1}}
+
     return _gen
 
 
@@ -88,6 +96,7 @@ def web_client(monkeypatch, fake_stream, tmp_path):
     monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
 
     from helioai.interfaces.web.app import app
+
     return TestClient(app, raise_server_exceptions=False)
 
 

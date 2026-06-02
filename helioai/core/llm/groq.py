@@ -13,7 +13,9 @@ log = logging.getLogger(__name__)
 
 
 class GroqClient(LLMClient):
-    def __init__(self, api_key: str, model: str, max_output_tokens: int = 4096, temperature: float = 0.2):
+    def __init__(
+        self, api_key: str, model: str, max_output_tokens: int = 4096, temperature: float = 0.2
+    ):
         self._client = AsyncGroq(api_key=api_key)
         self._model = model
         self._max_output_tokens = max_output_tokens
@@ -55,29 +57,33 @@ class GroqClient(LLMClient):
                 out.append({"role": "user", "content": msg.content})
             elif msg.role == "assistant":
                 if msg.tool_calls:
-                    out.append({
-                        "role": "assistant",
-                        "content": msg.content or None,
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.name,
-                                    "arguments": json.dumps(tc.arguments or {}),
-                                },
-                            }
-                            for tc in msg.tool_calls
-                        ],
-                    })
+                    out.append(
+                        {
+                            "role": "assistant",
+                            "content": msg.content or None,
+                            "tool_calls": [
+                                {
+                                    "id": tc.id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc.name,
+                                        "arguments": json.dumps(tc.arguments or {}),
+                                    },
+                                }
+                                for tc in msg.tool_calls
+                            ],
+                        }
+                    )
                 else:
                     out.append({"role": "assistant", "content": msg.content})
             elif msg.role == "tool":
-                out.append({
-                    "role": "tool",
-                    "tool_call_id": msg.tool_call_id or "",
-                    "content": msg.content,
-                })
+                out.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": msg.tool_call_id or "",
+                        "content": msg.content,
+                    }
+                )
         return out
 
     @staticmethod
@@ -105,7 +111,11 @@ class GroqClient(LLMClient):
                 try:
                     args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                 except json.JSONDecodeError:
-                    log.warning("groq tool_call %s bad JSON args: %r", tc.function.name, tc.function.arguments)
+                    log.warning(
+                        "groq tool_call %s bad JSON args: %r",
+                        tc.function.name,
+                        tc.function.arguments,
+                    )
                     args = {}
                 tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
             return Message(role="assistant", tool_calls=tool_calls)

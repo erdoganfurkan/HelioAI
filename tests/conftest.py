@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
 
-from helioai.core.llm.base import LLMClient, Message, ToolDef
+from helioai.core.llm.base import LLMClient, Message
 
 
 @pytest.fixture
@@ -31,11 +30,13 @@ class _FakeLLM(LLMClient):
         self.calls: list[dict] = []
 
     async def chat(self, messages, tools, system_prompt=None):
-        self.calls.append({
-            "messages": list(messages),
-            "tools": list(tools),
-            "system_prompt": system_prompt,
-        })
+        self.calls.append(
+            {
+                "messages": list(messages),
+                "tools": list(tools),
+                "system_prompt": system_prompt,
+            }
+        )
         return self._responses.pop(0)
 
 

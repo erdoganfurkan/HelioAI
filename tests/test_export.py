@@ -28,11 +28,20 @@ def wired(monkeypatch, tmp_path):
 
     history = [
         Message(role="user", content="Plot IMF Bz from ACE on 2005-01-17"),
-        Message(role="assistant", content="", tool_calls=[
-            ToolCall(id="t1", name="get_timeseries",
-                     arguments={"param_id": "amda/imf", "start": "2005-01-17", "stop": "2005-01-18"}),
-        ]),
-        Message(role="tool", tool_call_id="t1", content='{"param_id": "amda/imf", "preview": "..."}'),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="t1",
+                    name="get_timeseries",
+                    arguments={"param_id": "amda/imf", "start": "2005-01-17", "stop": "2005-01-18"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool", tool_call_id="t1", content='{"param_id": "amda/imf", "preview": "..."}'
+        ),
         Message(role="assistant", content="Here is the IMF Bz time series."),
     ]
     store.save(_USER, _SESSION, history)

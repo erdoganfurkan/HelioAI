@@ -18,6 +18,7 @@ from helioai.tools.plasmapy_tools import (
 
 # ──────────────────────────────── plasma_beta ────────────────────────────────
 
+
 async def test_plasma_beta_solar_wind() -> None:
     result = await plasma_beta(B_nT=5.0, n_cm3=10.0, T_eV=10.0)
     assert "beta" in result
@@ -41,6 +42,7 @@ async def test_plasma_beta_has_units_field() -> None:
 
 
 # ──────────────────────────────── gyrofrequency ──────────────────────────────
+
 
 async def test_gyrofrequency_proton_positive() -> None:
     result = await gyrofrequency(B_nT=5.0, particle="p")
@@ -68,6 +70,7 @@ async def test_gyrofrequency_alpha_particle() -> None:
 
 # ──────────────────────────────── debye_length ───────────────────────────────
 
+
 async def test_debye_length_positive() -> None:
     result = await debye_length(n_cm3=10.0, T_eV=10.0)
     assert "debye_length_km" in result
@@ -76,17 +79,18 @@ async def test_debye_length_positive() -> None:
 
 async def test_debye_length_increases_with_temperature() -> None:
     cold = await debye_length(n_cm3=10.0, T_eV=1.0)
-    hot  = await debye_length(n_cm3=10.0, T_eV=100.0)
+    hot = await debye_length(n_cm3=10.0, T_eV=100.0)
     assert hot["debye_length_km"] > cold["debye_length_km"]
 
 
 async def test_debye_length_decreases_with_density() -> None:
-    sparse = await debye_length(n_cm3=1.0,  T_eV=10.0)
-    dense  = await debye_length(n_cm3=100.0, T_eV=10.0)
+    sparse = await debye_length(n_cm3=1.0, T_eV=10.0)
+    dense = await debye_length(n_cm3=100.0, T_eV=10.0)
     assert sparse["debye_length_km"] > dense["debye_length_km"]
 
 
 # ──────────────────────────────── alfven_speed ───────────────────────────────
+
 
 async def test_alfven_speed_positive() -> None:
     result = await alfven_speed(B_nT=5.0, n_cm3=10.0)
@@ -100,12 +104,13 @@ async def test_alfven_speed_solar_wind_range() -> None:
 
 
 async def test_alfven_speed_scales_with_B() -> None:
-    r1 = await alfven_speed(B_nT=5.0,  n_cm3=10.0)
+    r1 = await alfven_speed(B_nT=5.0, n_cm3=10.0)
     r2 = await alfven_speed(B_nT=10.0, n_cm3=10.0)
     assert r2["alfven_speed_km_s"] == pytest.approx(2 * r1["alfven_speed_km_s"], rel=1e-3)
 
 
 # ──────────────────────────────── inertial_length ────────────────────────────
+
 
 async def test_inertial_length_proton_positive() -> None:
     result = await inertial_length(n_cm3=10.0, particle="p")
@@ -121,8 +126,10 @@ async def test_inertial_length_electron_shorter() -> None:
 
 # ──────────────────────────────── power_spectrum ─────────────────────────────
 
+
 async def test_power_spectrum_returns_peak_freq() -> None:
     import numpy as np
+
     dt = 1.0
     t = np.arange(256) * dt
     sig = np.sin(2 * math.pi * 0.1 * t)

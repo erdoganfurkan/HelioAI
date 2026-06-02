@@ -15,7 +15,9 @@ log = logging.getLogger(__name__)
 
 
 class GeminiClient(LLMClient):
-    def __init__(self, api_key: str, model: str, max_output_tokens: int = 4096, temperature: float = 0.2):
+    def __init__(
+        self, api_key: str, model: str, max_output_tokens: int = 4096, temperature: float = 0.2
+    ):
         self._client = genai.Client(api_key=api_key)
         self._model = model
         self._max_output_tokens = max_output_tokens

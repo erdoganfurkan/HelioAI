@@ -9,9 +9,12 @@ from helioai.core.sub_agents import AGENT_ROLES, TASK_TOOL_NAME, task_tool_def
 
 # ──────────────────────────────── role definitions ──────────────────────────
 
+
 def test_three_roles_defined() -> None:
     assert set(AGENT_ROLES.keys()) == {
-        "parameter_hunter", "data_analyst", "plasma_physicist",
+        "parameter_hunter",
+        "data_analyst",
+        "plasma_physicist",
     }
 
 
@@ -42,6 +45,7 @@ def test_parameter_hunter_has_lower_max_turns_than_data_analyst() -> None:
 
 # ──────────────────────────────── task_tool_def ──────────────────────────────
 
+
 def test_task_tool_def_name() -> None:
     tdef = task_tool_def()
     assert tdef.name == TASK_TOOL_NAME
@@ -68,11 +72,15 @@ def test_task_tool_def_description_mentions_all_roles() -> None:
 
 # ──────────────────────────────── role isolation ─────────────────────────────
 
-@pytest.mark.parametrize("role_name,forbidden", [
-    ("parameter_hunter", ["get_timeseries", "run_python"]),
-    ("data_analyst",     ["get_timeseries", "list_missions"]),
-    ("plasma_physicist", ["get_timeseries"]),
-])
+
+@pytest.mark.parametrize(
+    "role_name,forbidden",
+    [
+        ("parameter_hunter", ["get_timeseries", "run_python"]),
+        ("data_analyst", ["get_timeseries", "list_missions"]),
+        ("plasma_physicist", ["get_timeseries"]),
+    ],
+)
 def test_role_cannot_call_forbidden_tools(role_name: str, forbidden: list[str]) -> None:
     allowed = set(AGENT_ROLES[role_name].allowed_tools)
     for tool in forbidden:

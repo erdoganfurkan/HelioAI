@@ -63,7 +63,7 @@ def _collect_param_ids(history) -> list[str]:
     seen: set[str] = set()
     for m in history:
         blobs = [m.content or ""]
-        for tc in (m.tool_calls or []):
+        for tc in m.tool_calls or []:
             blobs.append(str(tc.arguments))
         for blob in blobs:
             for pid in _PARAM_ID_RE.findall(blob):
@@ -76,9 +76,11 @@ def _collect_param_ids(history) -> list[str]:
 def _code_files(workspace_dir: Path) -> list[Path]:
     """Return code_N.py files sorted by run index."""
     files = list(workspace_dir.glob("code_*.py"))
+
     def _idx(p: Path) -> int:
         parts = p.stem.split("_")
         return int(parts[1]) if len(parts) == 2 and parts[1].isdigit() else 0
+
     return sorted(files, key=_idx)
 
 
@@ -136,8 +138,7 @@ def build_notebook(user_id: str, session_id: str):
     return nb
 
 
-def export_session_notebook(user_id: str, session_id: str,
-                            out_path: Path | None = None) -> Path:
+def export_session_notebook(user_id: str, session_id: str, out_path: Path | None = None) -> Path:
     """Write the session as a .ipynb and return its path.
 
     Default location: <workspace>/<label>.ipynb (or <workspace>/<session>.ipynb).

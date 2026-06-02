@@ -53,40 +53,46 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
     # Python sandbox: figures + parameter cards emitted via param_card()
     if tool_name == "run_python":
         if data.get("figure_paths"):
-            artifacts.append({
-                "tool": tool_name,
-                "kind": "image",
-                "figure_paths": data["figure_paths"],
-                "stdout": data.get("stdout", ""),
-            })
+            artifacts.append(
+                {
+                    "tool": tool_name,
+                    "kind": "image",
+                    "figure_paths": data["figure_paths"],
+                    "stdout": data.get("stdout", ""),
+                }
+            )
         for card in data.get("cards", []):
             if isinstance(card, dict) and card.get("kind") == "parameter_card":
                 artifacts.append({"tool": tool_name, **card})
         if data.get("code_path"):
-            artifacts.append({
-                "tool": tool_name,
-                "kind": "code",
-                "code_path": data["code_path"],
-                "name": Path(data["code_path"]).name,
-                "n_lines": data.get("n_lines"),
-            })
+            artifacts.append(
+                {
+                    "tool": tool_name,
+                    "kind": "code",
+                    "code_path": data["code_path"],
+                    "name": Path(data["code_path"]).name,
+                    "n_lines": data.get("n_lines"),
+                }
+            )
 
     # get_timeseries called directly by main agent
     if tool_name == "get_timeseries" and "preview" in data:
-        artifacts.append({
-            "tool": tool_name,
-            "kind": "parameter_card",
-            "param_id": data.get("param_id"),
-            "name": data.get("name"),
-            "mission": data.get("mission"),
-            "instrument": data.get("instrument"),
-            "units": data.get("units"),
-            "cadence": data.get("cadence"),
-            "components": data.get("components"),
-            "n_points": data.get("n_points"),
-            "start": data.get("start"),
-            "stop": data.get("stop"),
-        })
+        artifacts.append(
+            {
+                "tool": tool_name,
+                "kind": "parameter_card",
+                "param_id": data.get("param_id"),
+                "name": data.get("name"),
+                "mission": data.get("mission"),
+                "instrument": data.get("instrument"),
+                "units": data.get("units"),
+                "cadence": data.get("cadence"),
+                "components": data.get("components"),
+                "n_points": data.get("n_points"),
+                "start": data.get("start"),
+                "stop": data.get("stop"),
+            }
+        )
 
     return artifacts
 
@@ -100,6 +106,7 @@ def inject_run_python_args(name: str, args: dict | None) -> dict:
     if name != "run_python":
         return args
     import helioai.workspace as _ws
+
     sdir = _ws.get_session_dir()
     ridx = _ws.get_next_run_idx(sdir)
     return {**args, "_plot_dir": str(sdir), "_run_idx": ridx}
@@ -124,17 +131,26 @@ def emit_post_tool_events(
     tool_result_extra = tool_result_extra or {}
     common_extra = common_extra or {}
 
-    yield {"event": "tool_result", "data": {
-        "name": name, "summary": _summarize_tool_result(result), **tool_result_extra,
-    }}
+    yield {
+        "event": "tool_result",
+        "data": {
+            "name": name,
+            "summary": _summarize_tool_result(result),
+            **tool_result_extra,
+        },
+    }
 
     if name == "load_skill":
         try:
             payload = json.loads(result)
             if payload.get("body") and not payload.get("error"):
-                yield {"event": "skill_loaded", "data": {
-                    "name": payload.get("name", ""), **common_extra,
-                }}
+                yield {
+                    "event": "skill_loaded",
+                    "data": {
+                        "name": payload.get("name", ""),
+                        **common_extra,
+                    },
+                }
         except (ValueError, TypeError):
             pass
 

@@ -41,9 +41,7 @@ async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.
 
 
 def _init_options() -> InitializationOptions:
-    return server.create_initialization_options(
-        notification_options=NotificationOptions()
-    )
+    return server.create_initialization_options(notification_options=NotificationOptions())
 
 
 async def serve_stdio() -> None:

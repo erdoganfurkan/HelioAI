@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 import helioai.tools.setup  # noqa: F401
 from helioai import mcp_server as ms
@@ -84,6 +83,7 @@ async def test_call_tool_none_arguments():
 def test_build_http_app_has_mcp_route():
     app = ms.build_http_app()
     from starlette.applications import Starlette
+
     assert isinstance(app, Starlette)
     paths = [str(r.path) for r in app.routes]
     assert any("/mcp" in p for p in paths)
@@ -91,6 +91,7 @@ def test_build_http_app_has_mcp_route():
 
 def test_init_options_returns_initialization_options():
     from mcp.server.models import InitializationOptions
+
     opts = ms._init_options()
     assert isinstance(opts, InitializationOptions)
 

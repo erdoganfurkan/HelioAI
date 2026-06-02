@@ -6,6 +6,7 @@ Ask questions in natural language — HelioAI finds the right parameter across 7
 
 [![CI](https://github.com/erdoganfurkan/HelioAI/actions/workflows/ci.yml/badge.svg)](https://github.com/erdoganfurkan/HelioAI/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/erdoganfurkan/HelioAI/branch/main/graph/badge.svg)](https://codecov.io/gh/erdoganfurkan/HelioAI)
+[![PyPI](https://img.shields.io/pypi/v/helioai)](https://pypi.org/project/helioai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](pyproject.toml)
 [![PyHC](https://img.shields.io/badge/PyHC-compatible-orange)](https://heliopython.org)

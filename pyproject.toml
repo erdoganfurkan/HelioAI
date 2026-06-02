@@ -9,6 +9,7 @@ description = "AI agent for heliophysics and space plasma data analysis"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+authors = [{ name = "Furkan Erdogan", email = "furkan.erdogan1205@gmail.com" }]
 keywords = ["heliophysics", "plasma", "space physics", "AI agent", "MCP"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -42,6 +43,11 @@ dependencies = [
     "nbformat>=5.0",
     "rank-bm25>=0.2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/erdoganfurkan/HelioAI"
+Repository = "https://github.com/erdoganfurkan/HelioAI"
+Issues = "https://github.com/erdoganfurkan/HelioAI/issues"
 
 [project.optional-dependencies]
 dev = [

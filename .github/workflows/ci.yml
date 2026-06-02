@@ -63,6 +63,9 @@ jobs:
             hf-minilm-
 
       - name: Run tests
+        env:
+          HELIOAI_LLM_PROVIDER: groq
+          GROQ_API_KEY: ci-placeholder
         run: uv run pytest --cov-report=xml
 
       - name: Upload coverage to Codecov

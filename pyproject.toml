@@ -9,7 +9,7 @@ description = "AI agent for heliophysics and space plasma data analysis"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Furkan Erdogan", email = "furkan.erdogan1205@gmail.com" }]
+authors = [{ name = "Furkan Erdogan", email = "furkan.erdogan.pro@gmail.com" }]
 keywords = ["heliophysics", "plasma", "space physics", "AI agent", "MCP"]
 classifiers = [
     "Development Status :: 3 - Alpha",

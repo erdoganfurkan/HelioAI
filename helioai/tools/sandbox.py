@@ -19,6 +19,23 @@ import sys
 import textwrap
 from pathlib import Path
 
+
+def _set_subprocess_limits() -> None:
+    """Apply resource limits inside the sandbox subprocess (Linux only).
+
+    Called via preexec_fn — runs in the child process after fork, before exec.
+    Degrades silently on non-Linux or permission error.
+    """
+    try:
+        import resource
+
+        _4GB = 4 * 1024**3
+        resource.setrlimit(resource.RLIMIT_AS, (_4GB, _4GB))
+        _200MB = 200 * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_FSIZE, (_200MB, _200MB))
+    except Exception:
+        pass
+
 _SANDBOX_PREAMBLE = """\
 import warnings
 warnings.filterwarnings('ignore')
@@ -170,6 +187,7 @@ async def run_python(
             full_code,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            preexec_fn=_set_subprocess_limits if sys.platform != "win32" else None,
         )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)

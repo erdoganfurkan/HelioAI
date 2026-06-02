@@ -34,10 +34,12 @@ No API key required for data access. No manual parameter hunting.
 - **PlasmaPy tools** — plasma β, gyrofrequency, Debye length, Alfvén speed, inertial length, power spectrum — ready-made for the agent.
 - **Sandboxed Python** — the agent writes and runs analysis code safely (subprocess, timeout). All scripts are saved for reproducibility.
 - **5 specialised skills** — `parameter_hunter`, `data_analyst`, `plasma_physicist`, `plotting`, `helioai_helper` — loaded as markdown, zero coupling to the agent loop.
-- **Derived recipes** — reusable scientific Python: θ_Bn, Walén test, MVA (Minimum Variance Analysis of B).
+- **Derived recipes** — 6 reusable scientific scripts: θ_Bn, Walén test, MVAB, Rankine-Hugoniot jump conditions, pressure balance, pitch angle distribution.
+- **Fill value masking** — `clean()` helper in the sandbox automatically masks CDF fill values (`|x| ≥ 1e30`, `±inf`) before any plot or analysis.
 - **Export to notebook** — any session exports as a self-contained `.ipynb` with provenance cell, setup shims, and all generated code.
-- **Multiple interfaces** — interactive CLI, Jupyter magic, Web UI (FastAPI + SSE), MCP server (Claude Desktop / `claude` CLI).
+- **Multiple interfaces** — interactive CLI, Jupyter magic, Web UI (FastAPI + SSE + activity dock), MCP server (Claude Desktop / `claude` CLI).
 - **User profile** — inject your preferred missions, domain, and plot style once; the agent adapts to you.
+- **Heliophysics scope guardrail** — the agent stays on-topic; a dev token unlocks unrestricted mode for development.
 
 ---
 
@@ -157,6 +159,15 @@ Or run the HTTP MCP server:
 helioai-mcp --http --port 8080
 ```
 
+### Docker
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+# → http://localhost:7890
+```
+
+Mount `./data` for persistent index and sessions. Set your LLM keys in `.env`.
+
 ---
 
 ## Data coverage
@@ -186,7 +197,7 @@ Full catalogue via `list_missions()` or `helioai "what missions are available"`.
 | `inertial_length` | Ion/electron inertial length |
 | `power_spectrum` | Welch PSD on a time series |
 | `list_recipes` | Catalogue of scientific Python recipes |
-| `load_recipe` | Load a recipe source (θ_Bn, Walén test, MVAB) |
+| `load_recipe` | Load a recipe source (θ_Bn, Walén, MVAB, Rankine-Hugoniot, pressure balance, pitch angle dist) |
 | `task` | Delegate to a specialised sub-agent |
 
 ---
@@ -226,7 +237,8 @@ helioai/
 │   └── web/                    FastAPI + SSE + vanilla JS UI
 ├── mcp_server.py               MCP stdio + HTTP streamable
 ├── export.py                   session → reproducible .ipynb
-└── indexer.py                  speasy catalogue → ChromaDB
+├── indexer.py                  speasy catalogue → ChromaDB
+└── docker/                     Dockerfile + docker-compose.yml
 ```
 
 ---
@@ -235,7 +247,7 @@ helioai/
 
 ```bash
 uv sync --extra dev
-uv run pytest                          # 216 tests, 65% coverage
+uv run pytest                          # 230 tests, 65% coverage
 uv run ruff check helioai/ tests/      # lint
 uv run ruff format helioai/ tests/     # format
 ```
@@ -250,8 +262,8 @@ pre-commit install
 
 ## Roadmap
 
-- [ ] CI/CD — GitHub Actions (lint + test matrix Python 3.11/3.12/3.13)
-- [ ] Docker — `helioai serve --web` in a container
+- [x] CI/CD — GitHub Actions (lint + test matrix Python 3.11/3.12)
+- [x] Docker — `helioai serve --web` in a container (`docker/`)
 - [ ] JOSS paper
 - [ ] PyPI release
 

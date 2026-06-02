@@ -42,35 +42,41 @@ def _set_subprocess_limits() -> None:
 
 
 _SANDBOX_PREAMBLE = """\
-import warnings
+import sys as _sys, io as _io, warnings, os
 warnings.filterwarnings('ignore')
-import os
 os.environ.setdefault('MPLBACKEND', 'Agg')
 
 import json
 import re as _re
-import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
+# Suppress stdout during library init — speasy prints network errors at import time
+_saved_stdout = _sys.stdout
+_sys.stdout = _io.StringIO()
 try:
-    import speasy as spz
-except ImportError:
-    spz = None
+    import numpy as np
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
 
-try:
-    import plasmapy
-    import plasmapy.formulary as pf
-    import astropy.units as u
-except ImportError:
-    pf = None
+    try:
+        import speasy as spz
+    except ImportError:
+        spz = None
 
-try:
-    import scipy
-    from scipy import signal, stats, fft
-except ImportError:
-    scipy = None
+    try:
+        import plasmapy
+        import plasmapy.formulary as pf
+        import astropy.units as u
+    except ImportError:
+        pf = None
+
+    try:
+        import scipy
+        from scipy import signal, stats, fft
+    except ImportError:
+        scipy = None
+finally:
+    _sys.stdout = _saved_stdout
 
 __sandbox_figure_paths = []
 __sandbox_exports = {}

@@ -53,6 +53,11 @@ def _load():
         if _collection is None:
             import chromadb
 
+            if not settings.rag.chroma_dir.exists():
+                raise RuntimeError(
+                    f"ChromaDB index not found at {settings.rag.chroma_dir}. "
+                    "Run `helioai index` first to build the parameter catalog."
+                )
             client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
             _collection = client.get_collection(name=settings.rag.collection_name)
 

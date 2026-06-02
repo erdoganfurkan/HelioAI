@@ -98,3 +98,31 @@ async def test_load_recipe_traversal_dotdot(recipes_dir):
 async def test_load_recipe_empty_name(recipes_dir):
     result = await _rcp.load_recipe("")
     assert "error" in result
+
+
+# ── Real recipes on disk ──────────────────────────────────────────────────────
+
+
+async def test_real_recipes_all_present():
+    """All six expected recipes must be loadable from the real data/recipes dir."""
+    expected = {
+        "theta_bn",
+        "mvab",
+        "walen_test",
+        "rankine_hugoniot",
+        "pressure_balance",
+        "pitch_angle_dist",
+    }
+    result = await _rcp.list_recipes()
+    assert "recipes" in result, result
+    names = {r["name"] for r in result["recipes"]}
+    missing = expected - names
+    assert not missing, f"Missing recipes: {missing}"
+
+
+async def test_real_recipes_have_valid_headers():
+    """Each real recipe must have a parseable name and description."""
+    result = await _rcp.list_recipes()
+    for entry in result.get("recipes", []):
+        assert "name" in entry and entry["name"], f"Missing name: {entry}"
+        assert "description" in entry and entry["description"], f"Missing description: {entry}"

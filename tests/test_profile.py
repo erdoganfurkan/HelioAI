@@ -1,0 +1,114 @@
+"""Tests for the user profile feature (4F).
+
+Covers:
+- _load_user_profile() helper in agent_loop
+- GET/PUT /api/profile endpoints in web app
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from starlette.testclient import TestClient
+
+
+# ── _load_user_profile ────────────────────────────────────────────────────────
+
+
+def test_load_user_profile_missing(tmp_path, monkeypatch):
+    from helioai.config import settings
+    monkeypatch.setattr(settings.profile, "profile_path", tmp_path / "profile.md")
+
+    from helioai.core.agent_loop import _load_user_profile
+    assert _load_user_profile() == ""
+
+
+def test_load_user_profile_present(tmp_path, monkeypatch):
+    from helioai.config import settings
+    p = tmp_path / "profile.md"
+    p.write_text("preferred missions: ACE, WIND\nunits: SI\n", encoding="utf-8")
+    monkeypatch.setattr(settings.profile, "profile_path", p)
+
+    from helioai.core.agent_loop import _load_user_profile
+    content = _load_user_profile()
+    assert "ACE" in content
+    assert "WIND" in content
+
+
+def test_load_user_profile_stripped(tmp_path, monkeypatch):
+    from helioai.config import settings
+    p = tmp_path / "profile.md"
+    p.write_text("  hello  \n\n", encoding="utf-8")
+    monkeypatch.setattr(settings.profile, "profile_path", p)
+
+    from helioai.core.agent_loop import _load_user_profile
+    assert _load_user_profile() == "hello"
+
+
+def test_load_user_profile_oserror(tmp_path, monkeypatch):
+    """An unreadable profile returns '' rather than raising."""
+    from helioai.config import settings
+
+    class _BadPath(Path):
+        _flavour = Path(".")._flavour  # type: ignore[attr-defined]
+
+        def exists(self):
+            return True
+
+        def read_text(self, **kwargs):
+            raise OSError("permission denied")
+
+    monkeypatch.setattr(settings.profile, "profile_path", _BadPath(tmp_path / "x.md"))
+
+    from helioai.core.agent_loop import _load_user_profile
+    assert _load_user_profile() == ""
+
+
+# ── Web endpoints ─────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def fake_stream():
+    async def _gen(_llm, _user, _sid, _msg):
+        yield {"event": "reply", "data": {"text": "ok"}}
+        yield {"event": "done", "data": {"n_iterations": 1}}
+    return _gen
+
+
+@pytest.fixture
+def web_client(monkeypatch, fake_stream, tmp_path):
+    from helioai.config import settings
+    from helioai.core.session import SessionStore
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr(settings.profile, "profile_path", tmp_path / "profile.md")
+    monkeypatch.setattr("helioai.interfaces.web.app.stream_chat", fake_stream)
+    monkeypatch.setattr("helioai.interfaces.web.app.build_llm_client", lambda provider=None: None)
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+
+    from helioai.interfaces.web.app import app
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_get_profile_empty(web_client):
+    r = web_client.get("/api/profile")
+    assert r.status_code == 200
+    assert r.json() == {"content": ""}
+
+
+def test_put_profile_then_get(web_client):
+    r = web_client.put("/api/profile", json={"content": "prefer ACE\nunit: km/s"})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+    r2 = web_client.get("/api/profile")
+    assert r2.status_code == 200
+    assert "ACE" in r2.json()["content"]
+
+
+def test_put_profile_overwrites(web_client):
+    web_client.put("/api/profile", json={"content": "first"})
+    web_client.put("/api/profile", json={"content": "second"})
+    r = web_client.get("/api/profile")
+    assert r.json()["content"] == "second"

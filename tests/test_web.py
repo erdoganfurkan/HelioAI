@@ -15,7 +15,7 @@ from starlette.testclient import TestClient
 def fake_stream():
     """Async generator that replays a scripted sequence of SSE events."""
 
-    async def _gen(_llm, _user, _sid, _msg):
+    async def _gen(_llm, _user, _sid, _msg, *, restricted=True):
         yield {
             "event": "tool_call",
             "data": {"turn": 1, "name": "search_parameters", "arguments": {"query": "solar wind"}},
@@ -402,3 +402,91 @@ def test_export_endpoint_unknown_session(monkeypatch, tmp_path):
     client = TestClient(app, raise_server_exceptions=False)
     r = client.get("/api/export?session_id=does-not-exist")
     assert r.status_code == 404
+
+
+# ── Scope guardrail / dev token ───────────────────────────────────────────────
+
+
+def _make_capturing_stream():
+    """Returns a fake stream_chat that records the `restricted` kwarg."""
+    captured = {}
+
+    async def _gen(_llm, _user, _sid, _msg, *, restricted=True):
+        captured["restricted"] = restricted
+        yield {"event": "reply", "data": {"text": "ok"}}
+        yield {"event": "done", "data": {"n_iterations": 1}}
+
+    return _gen, captured
+
+
+def test_chat_stream_restricted_by_default(monkeypatch, tmp_path):
+    """Without a dev-token header the request must be restricted."""
+    from helioai.core.session import SessionStore
+
+    gen, captured = _make_capturing_stream()
+    test_store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr("helioai.interfaces.web.app.stream_chat", gen)
+    monkeypatch.setattr("helioai.interfaces.web.app.build_llm_client", lambda provider=None: None)
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+
+    from helioai.interfaces.web.app import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    with client.stream(
+        "POST",
+        "/chat/stream",
+        json={"message": "hello", "session_id": "s1"},
+    ) as resp:
+        resp.read()
+
+    assert captured.get("restricted") is True
+
+
+def test_chat_stream_dev_token_unlocks(monkeypatch, tmp_path):
+    """A matching dev token must set restricted=False."""
+    from helioai.core.session import SessionStore
+
+    gen, captured = _make_capturing_stream()
+    test_store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr("helioai.interfaces.web.app.stream_chat", gen)
+    monkeypatch.setattr("helioai.interfaces.web.app.build_llm_client", lambda provider=None: None)
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+    monkeypatch.setattr("helioai.config.settings.dev.token", "secret123")
+
+    from helioai.interfaces.web.app import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    with client.stream(
+        "POST",
+        "/chat/stream",
+        json={"message": "hello", "session_id": "s2"},
+        headers={"X-Helio-Dev-Token": "secret123"},
+    ) as resp:
+        resp.read()
+
+    assert captured.get("restricted") is False
+
+
+def test_chat_stream_wrong_token_stays_restricted(monkeypatch, tmp_path):
+    """A wrong dev token must keep restricted=True."""
+    from helioai.core.session import SessionStore
+
+    gen, captured = _make_capturing_stream()
+    test_store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr("helioai.interfaces.web.app.stream_chat", gen)
+    monkeypatch.setattr("helioai.interfaces.web.app.build_llm_client", lambda provider=None: None)
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+    monkeypatch.setattr("helioai.config.settings.dev.token", "secret123")
+
+    from helioai.interfaces.web.app import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    with client.stream(
+        "POST",
+        "/chat/stream",
+        json={"message": "hello", "session_id": "s3"},
+        headers={"X-Helio-Dev-Token": "wrongtoken"},
+    ) as resp:
+        resp.read()
+
+    assert captured.get("restricted") is True

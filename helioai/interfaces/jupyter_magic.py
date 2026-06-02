@@ -13,6 +13,7 @@ Line magics:
     %helioai_history
     %helioai_resume <session_id>
     %helioai_export [session_id]
+    %helioai_dev on|off   — toggle dev mode (bypasses helio-only scope guardrail)
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from IPython.display import HTML, Image, Markdown, display
 _SESSION_ID = str(uuid.uuid4())
 _USER_ID = "jupyter"
 _llm = None
+_dev_restricted: bool = True  # True = helio-only (default); False = unlocked via dev token
 
 
 def _run_async(coro):
@@ -111,7 +113,9 @@ class HelioAIMagics(Magics):
         setup_logging("WARNING")
 
         async def _run():
-            async for ev in stream_chat(_get_llm(), _USER_ID, _SESSION_ID, cell.strip()):
+            async for ev in stream_chat(
+                _get_llm(), _USER_ID, _SESSION_ID, cell.strip(), restricted=_dev_restricted
+            ):
                 _render_jupyter_event(ev)
 
         _run_async(_run())
@@ -254,6 +258,25 @@ class HelioAIMagics(Magics):
         _SESSION_ID = matches[0]
         msgs = store.get_or_create(_USER_ID, _SESSION_ID)
         print(f"Resumed session {_SESSION_ID[:8]} ({len(msgs)} messages).")
+
+    @line_magic
+    def helioai_dev(self, line: str) -> None:
+        global _dev_restricted
+        from helioai.config import dev_unlock, settings
+
+        cmd = line.strip().lower()
+        if cmd == "on":
+            if not dev_unlock(settings.dev.token):
+                print("Dev token not configured or incorrect. Set HELIOAI_DEV_TOKEN in .env.")
+                return
+            _dev_restricted = False
+            print("Dev mode ON — scope guardrail disabled.")
+        elif cmd == "off":
+            _dev_restricted = True
+            print("Dev mode OFF — helio-only scope guardrail active.")
+        else:
+            status = "OFF (restricted)" if _dev_restricted else "ON (unrestricted)"
+            print(f"Dev mode: {status}. Usage: %helioai_dev on | off")
 
 
 def load_ipython_extension(ipython) -> None:

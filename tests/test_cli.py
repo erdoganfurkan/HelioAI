@@ -171,7 +171,7 @@ def test_main_history_command(monkeypatch):
 def test_main_session_flag_sets_id(monkeypatch):
     import helioai.interfaces.cli as cli
 
-    monkeypatch.setattr("helioai.interfaces.cli._interactive", lambda: None)
+    monkeypatch.setattr("helioai.interfaces.cli._interactive", lambda **kw: None)
     monkeypatch.setattr(sys, "argv", ["helioai", "--session", "my-session-id"])
     cli.main()
     assert cli._SESSION_ID == "my-session-id"
@@ -181,7 +181,7 @@ def test_main_resume_calls_interactive(monkeypatch):
     interactive_calls = []
     monkeypatch.setattr("helioai.interfaces.cli._pick_session", lambda: None)
     monkeypatch.setattr(
-        "helioai.interfaces.cli._interactive", lambda: interactive_calls.append(True)
+        "helioai.interfaces.cli._interactive", lambda **kw: interactive_calls.append(True)
     )
     monkeypatch.setattr(sys, "argv", ["helioai", "--resume"])
     from helioai.interfaces.cli import main
@@ -194,7 +194,7 @@ def test_main_resume_sets_session_when_picked(monkeypatch):
     import helioai.interfaces.cli as cli
 
     monkeypatch.setattr("helioai.interfaces.cli._pick_session", lambda: "picked-session-id")
-    monkeypatch.setattr("helioai.interfaces.cli._interactive", lambda: None)
+    monkeypatch.setattr("helioai.interfaces.cli._interactive", lambda **kw: None)
     monkeypatch.setattr(sys, "argv", ["helioai", "--resume"])
     cli.main()
     assert cli._SESSION_ID == "picked-session-id"

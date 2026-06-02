@@ -93,6 +93,13 @@ class RecipesConfig:
 
 
 @dataclass
+class DevConfig:
+    # Shared-secret that unlocks unrestricted LLM access (bypasses scope guardrail).
+    # Empty (default) → no token is valid → all requests stay restricted.
+    token: str = ""
+
+
+@dataclass
 class Settings:
     llm: LLMConfig = field(default_factory=LLMConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
@@ -100,6 +107,7 @@ class Settings:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     profile: ProfileConfig = field(default_factory=ProfileConfig)
     recipes: RecipesConfig = field(default_factory=RecipesConfig)
+    dev: DevConfig = field(default_factory=DevConfig)
 
 
 def _load() -> Settings:
@@ -112,11 +120,14 @@ def _load() -> Settings:
     recipes_dir = Path(os.environ.get("HELIOAI_RECIPES_DIR", str(_ROOT / "data" / "recipes")))
     hybrid_enabled = os.environ.get("HELIOAI_RAG_HYBRID", "1") != "0"
 
+    dev_token = os.environ.get("HELIOAI_DEV_TOKEN", "")
+
     s = Settings(
         workspace=WorkspaceConfig(workspace_dir=workspace_dir, ttl_seconds=workspace_ttl),
         profile=ProfileConfig(profile_path=profile_path),
         recipes=RecipesConfig(recipes_dir=recipes_dir),
         rag=RAGConfig(hybrid_enabled=hybrid_enabled),
+        dev=DevConfig(token=dev_token),
         llm=LLMConfig(
             provider=provider,
             azure=AzureOpenAIConfig(
@@ -149,3 +160,12 @@ def _load() -> Settings:
 
 
 settings = _load()
+
+
+def dev_unlock(supplied: str | None) -> bool:
+    """True iff the supplied token matches the configured dev secret.
+
+    Returns False when the server-side token is empty (guards against
+    accidentally unlocking an unconfigured instance).
+    """
+    return bool(settings.dev.token) and supplied == settings.dev.token

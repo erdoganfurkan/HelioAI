@@ -168,7 +168,7 @@ def _render_event(ev: dict) -> None:
         print(f"  \033[90m({n} iteration(s))\033[0m")
 
 
-async def _run_query(query: str) -> None:
+async def _run_query(query: str, *, restricted: bool = True) -> None:
     import helioai.tools.setup  # noqa: F401  registers all tools
     from helioai.core.agent_loop import stream_chat
     from helioai.logging_config import setup_logging
@@ -176,7 +176,7 @@ async def _run_query(query: str) -> None:
     setup_logging("WARNING")
 
     llm = _build_llm_client()
-    async for ev in stream_chat(llm, _USER_ID, _SESSION_ID, query):
+    async for ev in stream_chat(llm, _USER_ID, _SESSION_ID, query, restricted=restricted):
         _render_event(ev)
         if ev["event"] == "done":
             from helioai.workspace import get_session_dir
@@ -223,10 +223,11 @@ def _run_profile() -> None:
     subprocess.run([editor, str(p)])
 
 
-def _interactive() -> None:
+def _interactive(*, restricted: bool = True) -> None:
     import readline  # noqa: F401 — enables history & editing
 
-    print("\033[1mHelioAI\033[0m — type your query, Ctrl+D to exit\n")
+    mode = "" if restricted else " \033[33m[dev mode]\033[0m"
+    print(f"\033[1mHelioAI\033[0m{mode} — type your query, Ctrl+D to exit\n")
     while True:
         try:
             query = input("\033[1m> \033[0m").strip()
@@ -237,12 +238,20 @@ def _interactive() -> None:
             continue
         if query.lower() in ("exit", "quit"):
             break
-        asyncio.run(_run_query(query))
+        asyncio.run(_run_query(query, restricted=restricted))
 
 
 def main() -> None:
     global _SESSION_ID
+    from helioai.config import dev_unlock, settings
+
     args = sys.argv[1:]
+
+    # --dev: supply the configured dev token to bypass the scope guardrail
+    dev_flag = "--dev" in args
+    if dev_flag:
+        args = [a for a in args if a != "--dev"]
+    restricted = not dev_unlock(settings.dev.token if dev_flag else None)
 
     if "--session" in args:
         idx = args.index("--session")
@@ -251,7 +260,7 @@ def main() -> None:
             args = [a for i, a in enumerate(args) if i not in (idx, idx + 1)]
 
     if not args:
-        _interactive()
+        _interactive(restricted=restricted)
         return
 
     if args[0] == "history":
@@ -298,11 +307,11 @@ def main() -> None:
         session_id = _pick_session()
         if session_id:
             _SESSION_ID = session_id
-        _interactive()
+        _interactive(restricted=restricted)
         return
 
     query = " ".join(args)
-    asyncio.run(_run_query(query))
+    asyncio.run(_run_query(query, restricted=restricted))
 
 
 if __name__ == "__main__":

@@ -10,14 +10,14 @@ import json
 import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import helioai.tools.setup  # noqa: F401 — registers all tools at import time
 
-from helioai.config import settings
+from helioai.config import dev_unlock, settings
 from helioai.core.agent_loop import stream_chat
 from helioai.core.llm.factory import build_llm_client
 from helioai.core.session import store
@@ -54,11 +54,18 @@ async def health():
 
 
 @app.post("/chat/stream")
-async def chat_stream(req: _ChatRequest):
+async def chat_stream(
+    req: _ChatRequest,
+    x_helio_dev_token: str | None = Header(default=None),
+):
+    restricted = not dev_unlock(x_helio_dev_token)
+
     async def gen():
         try:
             llm = build_llm_client(req.provider)
-            async for ev in stream_chat(llm, _WEB_USER, req.session_id, req.message):
+            async for ev in stream_chat(
+                llm, _WEB_USER, req.session_id, req.message, restricted=restricted
+            ):
                 yield f"data: {json.dumps(ev)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'event': 'error', 'data': {'message': str(e)}})}\n\n"

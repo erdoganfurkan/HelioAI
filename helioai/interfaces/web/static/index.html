@@ -22,6 +22,14 @@
 
       <button class="btn-new" id="btn-new">+ New session</button>
 
+      <div class="dev-token-row">
+        <label for="dev-token-input">Dev token</label>
+        <div class="dev-token-wrap">
+          <input type="password" id="dev-token-input" placeholder="(restricted)" autocomplete="off" />
+          <span class="dev-indicator" id="dev-indicator" title="Dev mode off">●</span>
+        </div>
+      </div>
+
       <div>
         <label>Sessions</label>
         <div class="session-list" id="session-list">
@@ -32,6 +40,16 @@
 
     <main class="main">
       <div class="chat-area" id="chat-area"></div>
+
+      <div class="activity-dock collapsed" id="activity-dock">
+        <div class="ad-header" id="ad-header">
+          <span class="ad-toggle">▸</span>
+          <span class="ad-title">Activity</span>
+          <span class="ad-summary" id="ad-summary"></span>
+        </div>
+        <div class="ad-body" id="ad-body"></div>
+      </div>
+
       <div class="input-bar">
         <textarea id="input" placeholder="Ask a heliophysics question…" rows="1"></textarea>
         <button class="btn-send" id="btn-send">Send</button>

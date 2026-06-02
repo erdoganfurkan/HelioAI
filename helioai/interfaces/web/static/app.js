@@ -6,13 +6,18 @@ let sessionId = crypto.randomUUID();
 let isStreaming = false;
 let abortController = null;
 
-const chatArea = document.getElementById('chat-area');
-const input    = document.getElementById('input');
-const btnSend  = document.getElementById('btn-send');
-const btnCancel = document.getElementById('btn-cancel');
-const btnNew   = document.getElementById('btn-new');
-const provSel  = document.getElementById('provider-select');
-const sessList = document.getElementById('session-list');
+const chatArea      = document.getElementById('chat-area');
+const input         = document.getElementById('input');
+const btnSend       = document.getElementById('btn-send');
+const btnCancel     = document.getElementById('btn-cancel');
+const btnNew        = document.getElementById('btn-new');
+const provSel       = document.getElementById('provider-select');
+const sessList      = document.getElementById('session-list');
+const devTokenInput = document.getElementById('dev-token-input');
+const devIndicator  = document.getElementById('dev-indicator');
+const activityDock  = document.getElementById('activity-dock');
+const adBody        = document.getElementById('ad-body');
+const adSummary     = document.getElementById('ad-summary');
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -25,6 +30,10 @@ function el(tag, cls, text) {
 
 function scrollBottom() {
   chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function scrollDock() {
+  adBody.scrollTop = adBody.scrollHeight;
 }
 
 function setStreaming(on) {
@@ -46,6 +55,60 @@ function argsStr(args) {
     return `${k}=${s.length > 50 ? s.slice(0, 47) + '…' : s}`;
   }).join(', ');
 }
+
+// ── Dev token ────────────────────────────────────────────────────────────────
+
+const DEV_TOKEN_KEY = 'helioai_dev_token';
+
+function getDevToken() {
+  return localStorage.getItem(DEV_TOKEN_KEY) || '';
+}
+
+function updateDevIndicator() {
+  const token = devTokenInput.value.trim();
+  if (token) {
+    devIndicator.classList.add('unlocked');
+    devIndicator.title = 'Dev mode — scope guardrail bypassed';
+  } else {
+    devIndicator.classList.remove('unlocked');
+    devIndicator.title = 'Dev mode off (restricted)';
+  }
+}
+
+devTokenInput.value = getDevToken();
+updateDevIndicator();
+devTokenInput.addEventListener('input', () => {
+  localStorage.setItem(DEV_TOKEN_KEY, devTokenInput.value.trim());
+  updateDevIndicator();
+});
+
+// ── Activity dock ────────────────────────────────────────────────────────────
+
+let _dockSteps = 0;
+let _dockTools = 0;
+let _dockSubagents = 0;
+
+function resetDock() {
+  adBody.innerHTML = '';
+  adSummary.textContent = '';
+  _dockSteps = 0;
+  _dockTools = 0;
+  _dockSubagents = 0;
+  activityDock.classList.add('collapsed');
+}
+
+function openDock() {
+  activityDock.classList.remove('collapsed');
+}
+
+function closeDock(summary) {
+  adSummary.textContent = summary || '';
+  activityDock.classList.add('collapsed');
+}
+
+document.getElementById('ad-header').addEventListener('click', () => {
+  activityDock.classList.toggle('collapsed');
+});
 
 // ── Welcome screen ──────────────────────────────────────────────────────────
 
@@ -80,8 +143,9 @@ function appendTlEvent(iconText, text, extraClass) {
   const icon = el('span', 'tl-icon', iconText);
   const span = el('span', 'tl-text', text);
   row.append(icon, span);
-  chatArea.append(row);
-  scrollBottom();
+  adBody.append(row);
+  scrollDock();
+  _dockSteps++;
   return row;
 }
 
@@ -91,6 +155,7 @@ function renderEvent(ev) {
   const nestCls = nested ? ' tl-nested' : '';
 
   if (event === 'tool_call') {
+    _dockTools++;
     const args = argsStr(data.arguments);
     appendTlEvent('→', `${data.name}(${args})`, 'tl-tool-call' + nestCls);
 
@@ -98,6 +163,7 @@ function renderEvent(ev) {
     appendTlEvent('←', `${data.name}: ${data.summary || ''}`, 'tl-tool-result' + nestCls);
 
   } else if (event === 'sub_agent_start') {
+    _dockSubagents++;
     appendTlEvent('⚡', `spawning ${data.role}…`, 'tl-subagent');
 
   } else if (event === 'sub_agent_end') {
@@ -118,9 +184,10 @@ function renderEvent(ev) {
     scrollBottom();
 
   } else if (event === 'done') {
-    const badge = el('div', 'done-badge', `${data.n_iterations} iteration(s)`);
-    chatArea.append(badge);
-    scrollBottom();
+    const parts = [`✓ ${data.n_iterations} iter`];
+    if (_dockTools > 0) parts.push(`${_dockTools} tools`);
+    if (_dockSubagents > 0) parts.push(`${_dockSubagents} sub-agents`);
+    closeDock(parts.join(' · '));
     loadHistory();
 
   } else if (event === 'error') {
@@ -215,7 +282,7 @@ async function openCodePanel(path, name) {
   try {
     const r = await fetch(`/code?path=${encodeURIComponent(path)}`);
     content.textContent = r.ok ? await r.text() : `⚠ Code non accessible (${r.status})`;
-   if (r.ok) {
+    if (r.ok) {
       content.className = 'language-python';
       Prism.highlightElement(content);
     }
@@ -236,13 +303,19 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
   scrollBottom();
+  resetDock();
+  openDock();
   setStreaming(true);
+
+  const headers = { 'Content-Type': 'application/json' };
+  const devToken = getDevToken();
+  if (devToken) headers['X-Helio-Dev-Token'] = devToken;
 
   try {
     abortController = new AbortController();
     const resp = await fetch('/chat/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ message: text, session_id: sessionId, provider: provSel.value }),
       signal: abortController.signal,
     });
@@ -291,6 +364,7 @@ function newSession() {
   sessionId = crypto.randomUUID();
   chatArea.innerHTML = '';
   closeCodePanel();
+  resetDock();
   document.querySelectorAll('.session-item').forEach(i => i.classList.remove('active'));
   renderWelcome();
 }
@@ -350,6 +424,7 @@ async function resumeSession(sid, itemEl) {
   chatArea.innerHTML = '';
   document.querySelector('.welcome')?.remove();
   closeCodePanel();
+  resetDock();
   document.querySelectorAll('.session-item').forEach(i => i.classList.remove('active'));
   itemEl.classList.add('active');
 

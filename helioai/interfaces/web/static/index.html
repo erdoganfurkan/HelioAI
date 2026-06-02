@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HelioAI</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>Helio<span>AI</span></h1>
+
+      <div>
+        <label for="provider-select">LLM Provider</label>
+        <select id="provider-select">
+          <option value="azure">Azure OpenAI</option>
+          <option value="groq">Groq</option>
+          <option value="gemini">Gemini</option>
+        </select>
+      </div>
+
+      <button class="btn-new" id="btn-new">+ New session</button>
+
+      <div>
+        <label>Sessions</label>
+        <div class="session-list" id="session-list">
+          <span class="empty">No sessions yet</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="chat-area" id="chat-area"></div>
+      <div class="input-bar">
+        <textarea id="input" placeholder="Ask a heliophysics question…" rows="1"></textarea>
+        <button class="btn-send" id="btn-send">Send</button>
+        <button class="btn-cancel" id="btn-cancel" style="display:none">✕ Cancel</button>
+      </div>
+    </main>
+
+    <aside class="code-panel" id="code-panel">
+      <div class="cp-header">
+        <span class="cp-title">Generated code</span>
+        <button class="cp-close" id="cp-close">✕</button>
+      </div>
+      <pre class="cp-body"><code id="code-content"></code></pre>
+    </aside>
+  </div>
+
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

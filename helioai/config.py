@@ -18,6 +18,16 @@ load_dotenv(_ROOT / ".env")
 
 
 @dataclass
+class AzureOpenAIConfig:
+    deployment: str = "models-gpt-53-chat"
+    api_version: str = "2024-12-01-preview"
+    max_output_tokens: int = 2048
+    temperature: float | None = None
+    api_key: str = ""
+    endpoint: str = ""
+
+
+@dataclass
 class GeminiConfig:
     model: str = "gemini-2.5-flash"
     max_output_tokens: int = 4096
@@ -41,7 +51,8 @@ class OllamaConfig:
 
 @dataclass
 class LLMConfig:
-    provider: str = "groq"
+    provider: str = "azure"
+    azure: AzureOpenAIConfig = field(default_factory=AzureOpenAIConfig)
     gemini: GeminiConfig = field(default_factory=GeminiConfig)
     groq: GroqConfig = field(default_factory=GroqConfig)
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
@@ -60,6 +71,25 @@ class RAGConfig:
     rerank_enabled: bool = False
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_fetch_k: int = 20
+    hybrid_enabled: bool = True
+    hybrid_fetch_k: int = 50
+    rrf_k: int = 60
+
+
+@dataclass
+class WorkspaceConfig:
+    workspace_dir: Path = field(default_factory=lambda: _ROOT / "data" / "workspace")
+    ttl_seconds: int = 86400 * 7  # 7 days
+
+
+@dataclass
+class ProfileConfig:
+    profile_path: Path = field(default_factory=lambda: _ROOT / "data" / "profile.md")
+
+
+@dataclass
+class RecipesConfig:
+    recipes_dir: Path = field(default_factory=lambda: _ROOT / "data" / "recipes")
 
 
 @dataclass
@@ -67,15 +97,34 @@ class Settings:
     llm: LLMConfig = field(default_factory=LLMConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     rag: RAGConfig = field(default_factory=RAGConfig)
+    workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
+    profile: ProfileConfig = field(default_factory=ProfileConfig)
+    recipes: RecipesConfig = field(default_factory=RecipesConfig)
 
 
 def _load() -> Settings:
-    provider = os.environ.get("HELIOAI_LLM_PROVIDER", "groq").lower()
+    provider = os.environ.get("HELIOAI_LLM_PROVIDER", "azure").lower()
     max_iterations = int(os.environ.get("HELIOAI_MAX_ITERATIONS", "10"))
 
+    workspace_dir = Path(os.environ.get("HELIOAI_WORKSPACE", str(_ROOT / "data" / "workspace")))
+    workspace_ttl = int(os.environ.get("HELIOAI_WORKSPACE_TTL_S", str(86400 * 7)))
+    profile_path = Path(os.environ.get("HELIOAI_PROFILE", str(_ROOT / "data" / "profile.md")))
+    recipes_dir = Path(os.environ.get("HELIOAI_RECIPES_DIR", str(_ROOT / "data" / "recipes")))
+    hybrid_enabled = os.environ.get("HELIOAI_RAG_HYBRID", "1") != "0"
+
     s = Settings(
+        workspace=WorkspaceConfig(workspace_dir=workspace_dir, ttl_seconds=workspace_ttl),
+        profile=ProfileConfig(profile_path=profile_path),
+        recipes=RecipesConfig(recipes_dir=recipes_dir),
+        rag=RAGConfig(hybrid_enabled=hybrid_enabled),
         llm=LLMConfig(
             provider=provider,
+            azure=AzureOpenAIConfig(
+                deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT", "models-gpt-53-chat"),
+                api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
+                api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
+                endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT", ""),
+            ),
             gemini=GeminiConfig(
                 api_key=os.environ.get("GEMINI_API_KEY", ""),
             ),
@@ -86,14 +135,15 @@ def _load() -> Settings:
         agent=AgentConfig(max_iterations=max_iterations),
     )
 
-    if provider == "groq" and not s.llm.groq.api_key:
-        raise RuntimeError(
-            "GROQ_API_KEY is not set. Add it to .env (https://console.groq.com/keys)"
-        )
-    if provider == "gemini" and not s.llm.gemini.api_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY is not set. Add it to .env (https://aistudio.google.com/apikey)"
-        )
+    if provider == "azure":
+        if not s.llm.azure.api_key:
+            raise RuntimeError("AZURE_OPENAI_API_KEY is not set in .env")
+        if not s.llm.azure.endpoint:
+            raise RuntimeError("AZURE_OPENAI_ENDPOINT is not set in .env")
+    elif provider == "groq" and not s.llm.groq.api_key:
+        raise RuntimeError("GROQ_API_KEY is not set in .env (https://console.groq.com/keys)")
+    elif provider == "gemini" and not s.llm.gemini.api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set in .env (https://aistudio.google.com/apikey)")
 
     return s
 

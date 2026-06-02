@@ -1,21 +1,39 @@
-"""GroqClient: Groq's OpenAI-compatible API → neutral Message model."""
+"""AzureOpenAIClient: Azure-hosted OpenAI → neutral Message model.
+
+Wire format identique à Groq/OpenAI. Différences Azure :
+  - endpoint = {azure_endpoint}/openai/deployments/{deployment}/...
+  - `model` dans la requête = nom du deployment, pas le nom du modèle
+  - temperature=None → kwarg omis (requis pour GPT-5 et o-series)
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 
-from groq import AsyncGroq
+from openai import AsyncAzureOpenAI
 
 from .base import LLMClient, Message, ToolCall, ToolDef
 
 log = logging.getLogger(__name__)
 
 
-class GroqClient(LLMClient):
-    def __init__(self, api_key: str, model: str, max_output_tokens: int = 4096, temperature: float = 0.2):
-        self._client = AsyncGroq(api_key=api_key)
-        self._model = model
+class AzureOpenAIClient(LLMClient):
+    def __init__(
+        self,
+        api_key: str,
+        endpoint: str,
+        api_version: str,
+        deployment: str,
+        max_output_tokens: int = 4096,
+        temperature: float | None = None,
+    ):
+        self._client = AsyncAzureOpenAI(
+            api_key=api_key,
+            azure_endpoint=endpoint,
+            api_version=api_version,
+        )
+        self._deployment = deployment
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
 
@@ -28,16 +46,17 @@ class GroqClient(LLMClient):
     ) -> Message:
         openai_messages: list[dict] = []
         if system_prompt:
-            openai_messages.append({"role": "system", "content": system_prompt})
+            openai_messages.append({"role": "developer", "content": system_prompt})
         openai_messages.extend(self._to_openai_messages(messages))
         openai_tools = self._to_openai_tools(tools) if tools else None
 
         kwargs: dict = {
-            "model": self._model,
+            "model": self._deployment,
             "messages": openai_messages,
             "max_tokens": self._max_output_tokens,
-            "temperature": self._temperature,
         }
+        if self._temperature is not None:
+            kwargs["temperature"] = self._temperature
         if openai_tools:
             kwargs["tools"] = openai_tools
             kwargs["tool_choice"] = tool_choice
@@ -105,7 +124,7 @@ class GroqClient(LLMClient):
                 try:
                     args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                 except json.JSONDecodeError:
-                    log.warning("groq tool_call %s bad JSON args: %r", tc.function.name, tc.function.arguments)
+                    log.warning("azure tool_call %s bad JSON args: %r", tc.function.name, tc.function.arguments)
                     args = {}
                 tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
             return Message(role="assistant", tool_calls=tool_calls)

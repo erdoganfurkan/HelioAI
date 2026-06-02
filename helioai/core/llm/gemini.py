@@ -26,6 +26,7 @@ class GeminiClient(LLMClient):
         messages: list[Message],
         tools: list[ToolDef],
         system_prompt: str | None = None,
+        tool_choice: str = "auto",
     ) -> Message:
         contents = self._to_gemini_contents(messages)
         gemini_tools = self._to_gemini_tools(tools) if tools else None
@@ -33,10 +34,17 @@ class GeminiClient(LLMClient):
         if system_prompt is None:
             system_prompt = next((m.content for m in messages if m.role == "system"), None)
 
+        tool_config = None
+        if gemini_tools and tool_choice == "required":
+            tool_config = gt.ToolConfig(
+                function_calling_config=gt.FunctionCallingConfig(mode="ANY")
+            )
+
         config = gt.GenerateContentConfig(
             max_output_tokens=self._max_output_tokens,
             temperature=self._temperature,
             tools=gemini_tools,
+            tool_config=tool_config,
             system_instruction=system_prompt,
         )
 

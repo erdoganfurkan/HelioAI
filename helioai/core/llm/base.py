@@ -36,5 +36,6 @@ class LLMClient(ABC):
         messages: list[Message],
         tools: list[ToolDef],
         system_prompt: str | None = None,
+        tool_choice: str = "auto",
     ) -> Message:
         raise NotImplementedError

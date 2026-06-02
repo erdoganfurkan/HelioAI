@@ -15,10 +15,11 @@ DEFAULT_DB = Path(os.environ.get("HELIOAI_SESSION_DB", str(_SERVICE_ROOT / "data
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
-    user_id    TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    created_at REAL NOT NULL DEFAULT (julianday('now')),
-    updated_at REAL NOT NULL DEFAULT (julianday('now')),
+    user_id       TEXT NOT NULL,
+    session_id    TEXT NOT NULL,
+    created_at    REAL NOT NULL DEFAULT (julianday('now')),
+    updated_at    REAL NOT NULL DEFAULT (julianday('now')),
+    workspace_dir TEXT,
     PRIMARY KEY (user_id, session_id)
 );
 
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_session_seq
     ON messages(user_id, session_id, seq);
 """
+
+_MIGRATE = "ALTER TABLE sessions ADD COLUMN workspace_dir TEXT"
 
 
 def _dump_tool_calls(tcs: list[ToolCall] | None) -> str | None:
@@ -67,6 +70,10 @@ class SessionStore:
     def _init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            try:
+                conn.execute(_MIGRATE)
+            except Exception:
+                pass
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -129,6 +136,22 @@ class SessionStore:
             conn.commit()
         self._cache.pop((user_id, session_id), None)
 
+    def set_workspace_dir(self, user_id: str, session_id: str, workspace_dir: str) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "UPDATE sessions SET workspace_dir = ? WHERE user_id = ? AND session_id = ?",
+                (workspace_dir, user_id, session_id),
+            )
+            conn.commit()
+
+    def get_workspace_dir(self, user_id: str, session_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT workspace_dir FROM sessions WHERE user_id = ? AND session_id = ?",
+                (user_id, session_id),
+            ).fetchone()
+        return row[0] if row else None
+
     def all_sessions(self, user_id: str) -> list[str]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -147,7 +170,8 @@ class SessionStore:
                           AND session_id = s.session_id AND role = 'user'
                           ORDER BY seq LIMIT 1) AS first_user,
                        (SELECT COUNT(*) FROM messages WHERE user_id = s.user_id
-                          AND session_id = s.session_id) AS n_messages
+                          AND session_id = s.session_id) AS n_messages,
+                       s.workspace_dir
                 FROM sessions s
                 WHERE s.user_id = ?
                 ORDER BY s.updated_at DESC LIMIT ?
@@ -155,7 +179,7 @@ class SessionStore:
                 (user_id, limit),
             ).fetchall()
         out: list[dict] = []
-        for session_id, jd, first_user, n_messages in rows:
+        for session_id, jd, first_user, n_messages, workspace_dir in rows:
             preview = (first_user or "").strip().replace("\n", " ")
             if len(preview) > 80:
                 preview = preview[:77] + "..."
@@ -166,6 +190,7 @@ class SessionStore:
                 "first_message": preview,
                 "n_messages": n_messages,
                 "updated_at": iso,
+                "workspace_dir": workspace_dir,
             })
         return out
 

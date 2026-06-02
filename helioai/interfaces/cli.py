@@ -5,6 +5,7 @@ Usage:
     helioai "your query"     # one-shot query
     helioai index            # rebuild speasy catalog index
     helioai index --rebuild  # force full reindex
+    helioai export [id]      # export a session as a reproducible .ipynb
 """
 
 from __future__ import annotations
@@ -21,24 +22,92 @@ _SESSION_ID = str(uuid.uuid4())
 _USER_ID = "cli"
 
 
+def _delete_session(prefix: str) -> None:
+    import shutil
+    from helioai.core.session import store
+    from helioai.workspace import _root as _ws_root
+    all_ids = store.all_sessions(_USER_ID)
+    matches = [s for s in all_ids if s.startswith(prefix)]
+    if not matches:
+        print(f"No session matching {prefix!r}.")
+        return
+    sid = matches[0]
+    wdir = store.get_workspace_dir(_USER_ID, sid)
+    store.reset(_USER_ID, sid)
+    if wdir:
+        ws_path = _ws_root() / wdir
+        if ws_path.exists():
+            shutil.rmtree(ws_path, ignore_errors=True)
+    print(f"Session {sid[:8]} deleted.")
+
+
+def _show_history() -> None:
+    from helioai.core.session import store
+    summaries = store.list_summaries(_USER_ID)
+    if not summaries:
+        print("No sessions found.")
+        return
+    print(f"{'Session':<10}  {'Updated':<16}  {'Msgs':>4}  First message")
+    print("-" * 72)
+    for s in summaries:
+        sid = s["session_id"][:8]
+        ts = s["updated_at"][:16].replace("T", " ")
+        print(f"{sid:<10}  {ts:<16}  {s['n_messages']:>4}  {s['first_message']}")
+
+
+def _pick_session() -> str | None:
+    from helioai.core.session import store
+    summaries = store.list_summaries(_USER_ID, limit=10)
+    if not summaries:
+        print("No previous sessions found.")
+        return None
+    print("\nRecent sessions:")
+    for i, s in enumerate(summaries, 1):
+        ts = s["updated_at"][:16].replace("T", " ")
+        wdir = s.get("workspace_dir") or ""
+        winfo = f"  📂 {wdir}" if wdir else ""
+        print(f"  [{i}] {ts}  ({s['n_messages']} msgs)  {s['first_message']}{winfo}")
+    try:
+        choice = input(f"\nResume [1-{len(summaries)} or session id, Enter to skip]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    if not choice:
+        return None
+    if choice.isdigit():
+        idx = int(choice) - 1
+        if 0 <= idx < len(summaries):
+            return summaries[idx]["session_id"]
+    all_ids = store.all_sessions(_USER_ID)
+    matches = [s for s in all_ids if s.startswith(choice)]
+    return matches[0] if matches else None
+
+
 def _build_llm_client():
-    from helioai.config import settings
-    provider = settings.llm.provider
-    if provider == "groq":
-        from helioai.core.llm.groq import GroqClient
-        cfg = settings.llm.groq
-        return GroqClient(api_key=cfg.api_key, model=cfg.model,
-                          max_output_tokens=cfg.max_output_tokens, temperature=cfg.temperature)
-    if provider == "gemini":
-        from helioai.core.llm.gemini import GeminiClient
-        cfg = settings.llm.gemini
-        return GeminiClient(api_key=cfg.api_key, model=cfg.model,
-                            max_output_tokens=cfg.max_output_tokens, temperature=cfg.temperature)
-    raise RuntimeError(f"Unknown LLM provider: {provider!r}. Set HELIOAI_LLM_PROVIDER=groq|gemini")
+    from helioai.core.llm.factory import build_llm_client
+    return build_llm_client()
+
+
+def _open_file(path: str) -> None:
+    """Open a file in the OS default viewer, cross-platform."""
+    import subprocess
+    import sys
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif sys.platform == "win32":
+            import os
+            os.startfile(path)  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
 
 def _render_event(ev: dict) -> None:
     name, data = ev["event"], ev["data"]
+    nested = "sub_agent_ctx" in data
+    pad = "    " if nested else "  "
 
     if name == "reply":
         print(f"\n\033[92m{data['text']}\033[0m\n")
@@ -47,11 +116,11 @@ def _render_event(ev: dict) -> None:
         tool = data["name"]
         args = data.get("arguments") or {}
         args_str = ", ".join(f"{k}={repr(v)[:60]}" for k, v in args.items())
-        print(f"  \033[90m→ {tool}({args_str})\033[0m")
+        print(f"{pad}\033[90m→ {tool}({args_str})\033[0m")
 
     elif name == "tool_result":
         summary = data.get("summary", "")
-        print(f"  \033[90m← {data['name']}: {summary}\033[0m")
+        print(f"{pad}\033[90m← {data['name']}: {summary}\033[0m")
 
     elif name == "sub_agent_start":
         print(f"  \033[94m⚡ spawning {data['role']}...\033[0m")
@@ -59,25 +128,29 @@ def _render_event(ev: dict) -> None:
     elif name == "sub_agent_end":
         role = data.get("role", "")
         summary = (data.get("summary") or "")[:80]
-        print(f"  \033[94m✓ {role}: {summary}\033[0m")
+        icon = "✗" if data.get("error") else "✓"
+        print(f"  \033[94m{icon} {role}: {data.get('error') or summary}\033[0m")
 
     elif name == "skill_loaded":
-        print(f"  \033[95m📖 skill loaded: {data['name']}\033[0m")
+        print(f"{pad}\033[95m📖 skill: {data['name']}\033[0m")
 
     elif name == "artifact":
         kind = data.get("kind", "")
         if kind == "image":
-            n = len(data.get("figures", []))
-            print(f"  \033[93m📊 {n} figure(s) generated\033[0m")
+            paths = data.get("figure_paths", [])
+            print(f"{pad}\033[93m📊 {len(paths)} figure(s)\033[0m")
             if data.get("stdout"):
-                print(f"  \033[90m{data['stdout']}\033[0m")
+                print(f"{pad}\033[90m{data['stdout']}\033[0m")
+            for path in paths:
+                print(f"{pad}\033[93m  → {path}\033[0m")
+                _open_file(path)
         elif kind == "data_preview":
             param = data.get("param_id", "")
             n = data.get("n_points", 0)
-            print(f"  \033[93m📈 {param} — {n} points\033[0m")
+            print(f"{pad}\033[93m📈 {param} — {n} points\033[0m")
             if data.get("preview"):
                 for line in (data["preview"] or "").split("\n")[:5]:
-                    print(f"  \033[90m  {line}\033[0m")
+                    print(f"{pad}\033[90m  {line}\033[0m")
 
     elif name == "error":
         print(f"\n\033[91m✗ {data['message']}\033[0m\n")
@@ -96,11 +169,45 @@ async def _run_query(query: str) -> None:
     llm = _build_llm_client()
     async for ev in stream_chat(llm, _USER_ID, _SESSION_ID, query):
         _render_event(ev)
+        if ev["event"] == "done":
+            from helioai.workspace import get_session_dir
+            print(f"  \033[90m📂 workspace: {get_session_dir()}\033[0m")
 
 
 def _run_index(rebuild: bool = False) -> None:
     from helioai.indexer import build_index  # helioai/indexer.py
     build_index(rebuild=rebuild)
+
+
+def _run_export(prefix: str | None = None) -> None:
+    from helioai.core.session import store
+    from helioai.export import export_session_notebook
+    if prefix:
+        matches = [s for s in store.all_sessions(_USER_ID) if s.startswith(prefix)]
+        if not matches:
+            print(f"No session matching {prefix!r}.")
+            return
+        session_id = matches[0]
+    else:
+        sessions = store.all_sessions(_USER_ID)
+        if not sessions:
+            print("No sessions to export.")
+            return
+        session_id = sessions[0]
+    path = export_session_notebook(_USER_ID, session_id)
+    print(f"Exported session {session_id[:8]} → {path}")
+
+
+def _run_profile() -> None:
+    import os
+    import subprocess
+    from helioai.config import settings
+    p = settings.profile.profile_path
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if not p.exists():
+        p.touch()
+    editor = os.environ.get("EDITOR", "vi")
+    subprocess.run([editor, str(p)])
 
 
 def _interactive() -> None:
@@ -120,22 +227,64 @@ def _interactive() -> None:
 
 
 def main() -> None:
+    global _SESSION_ID
     args = sys.argv[1:]
+
+    if "--session" in args:
+        idx = args.index("--session")
+        if idx + 1 < len(args):
+            _SESSION_ID = args[idx + 1]
+            args = [a for i, a in enumerate(args) if i not in (idx, idx + 1)]
 
     if not args:
         _interactive()
         return
 
+    if args[0] == "history":
+        if len(args) >= 3 and args[1] == "delete":
+            _delete_session(args[2])
+        else:
+            _show_history()
+        return
+
     if args[0] == "index":
-        rebuild = "--rebuild" in args
-        _run_index(rebuild=rebuild)
+        _run_index(rebuild="--rebuild" in args)
+        return
+
+    if args[0] == "profile":
+        _run_profile()
+        return
+
+    if args[0] == "export":
+        _run_export(args[1] if len(args) > 1 else None)
         return
 
     if args[0] == "serve":
-        print("MCP server coming in Phase 3 — not yet implemented.")
+        if "--web" in args:
+            serve_args = args[1:]
+            host = "127.0.0.1"
+            port = 7890
+            if "--host" in serve_args:
+                idx = serve_args.index("--host")
+                host = serve_args[idx + 1]
+            if "--port" in serve_args:
+                idx = serve_args.index("--port")
+                port = int(serve_args[idx + 1])
+            from helioai.interfaces.web.app import serve_web
+            serve_web(host=host, port=port)
+        else:
+            from helioai.mcp_server import main as mcp_main
+            sys.argv = [sys.argv[0]] + args[1:]
+            mcp_main()
         return
 
-    # One-shot query
+    if "--resume" in args:
+        session_id = _pick_session()
+        if session_id:
+            _SESSION_ID = session_id
+        _interactive()
+        return
+
     query = " ".join(args)
     asyncio.run(_run_query(query))
 

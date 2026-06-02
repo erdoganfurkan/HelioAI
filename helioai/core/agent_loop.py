@@ -33,7 +33,13 @@ from helioai.core.llm.base import LLMClient, Message, ToolDef
 from helioai.core.session import store
 from helioai.core.skills_loader import SkillError, load_index as load_skills_index
 from helioai.core.skills_loader import load_skill as load_skill_body, list_skill_names
-from helioai.core.sub_agents import AGENT_ROLES, TASK_TOOL_NAME, run_subagent, task_tool_def
+from helioai.core.sub_agents import AGENT_ROLES, TASK_TOOL_NAME, stream_subagent, task_tool_def
+from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
+    _extract_artifact,
+    _summarize_tool_result,
+    emit_post_tool_events,
+    inject_run_python_args,
+)
 from helioai.logging_config import get_logger
 from helioai.tools.registry import registry
 
@@ -45,14 +51,22 @@ SYSTEM_PROMPT = """You are HelioAI, an expert scientific assistant for heliophys
 You have access to tools that let you explore and analyze data from 70+ space missions (MMS, Solar Orbiter, Cluster, WIND, ACE, Cassini, MEX, Parker Solar Probe, HelioSwarm…) via the speasy library, run Python code for scientific analysis, and search through 65 000+ parameters.
 
 Discovery tools:
-1. `search_parameters` — semantic search over 65k+ speasy parameters. Use English queries. If the user is vague (e.g. "solar wind density"), rewrite as matchable terms (e.g. "solar wind ion number density near Earth ACE WIND").
+1. `search_parameters` — semantic search over 65k+ speasy parameters. Use English queries. If the user is vague (e.g. "solar wind density"), rewrite as matchable terms (e.g. "solar wind ion number density near Earth ACE WIND"). For several parameters, pass `queries=[...]` to resolve them in one call.
 2. `list_missions` — list available data providers. Use when the user asks what data is available.
 
 Data tool:
 3. `get_timeseries(param_id, start, stop)` — download a time series from any speasy provider. Always resolve the parameter id via `search_parameters` first. Use ISO 8601 times.
 
-Analysis tool:
-4. `run_python(code)` — execute Python in an isolated sandbox. Pre-imported: speasy (as `spz`), numpy (as `np`), scipy, matplotlib (Agg, plt.show() captures PNG), plasmapy (as `pf`), astropy units (as `u`). Use for: FFTs, power spectra, plasma parameter calculations, event detection, custom visualizations.
+Plasma physics tools (direct, no code needed):
+4. `plasma_beta(B_nT, n_cm3, T_eV)` — plasma β with regime interpretation.
+5. `gyrofrequency(B_nT, particle)` — cyclotron frequency in Hz (proton/electron/alpha).
+6. `debye_length(n_cm3, T_eV)` — electron Debye length in m and km.
+7. `alfven_speed(B_nT, n_cm3)` — Alfvén speed in km/s.
+8. `inertial_length(n_cm3, particle)` — plasma skin depth in km.
+9. `power_spectrum(values, dt_s)` — PSD via Welch, returns peak frequency.
+
+Sandbox tool:
+10. `run_python(code)` — isolated Python. Pre-imported: speasy (spz), numpy (np), scipy, matplotlib (plt.show() saves to disk), plasmapy (pf), astropy units (u). Use for custom analysis not covered by tools above.
 
 Skills:
 5. `list_skills()` — index of available procedural skills.
@@ -62,17 +76,36 @@ Sub-agents:
 7. `task(description, agent_role)` — delegate to a specialist. Context is EMPTY in the sub — pre-resolve all facts (parameter ids, ISO times, missions) in `description`.
 
 Delegate (do NOT call underlying tools yourself) when:
-- User needs 2+ different parameters → spawn one `parameter_hunter` per parameter
-- User wants to compare multiple missions → spawn `cross_mission`
-- User asks for complex analysis (spectra, plasma params, event detection) → spawn `data_analyst`
+- Parameter ids are unknown → spawn ONE `parameter_hunter` for ALL parameters at once (list them in the description); it batches them in a single search
+- User wants analysis, plots, spectra, multi-mission comparison, or event detection → spawn `data_analyst`
+- User asks for plasma quantities (β, gyrofrequency, Debye length…) → spawn `plasma_physicist`
+
+Recommended orchestration order (skip a step if the info is already known):
+1. `parameter_hunter` — resolve vague names to speasy param_ids
+2. `data_analyst` — download, analyse, plot, compare missions, detect events
+3. `plasma_physicist` — plasma parameter computations
+4. You (main agent) — interpret and reply, always citing the param_ids used
 
 Workflow rules:
 - Always use ISO 8601 times: `2024-01-01T00:00:00`
 - Always resolve parameter ids via `search_parameters` before `get_timeseries`
-- When `run_python` returns figures (base64 PNG), report to the user that the plot was generated
+- When `run_python` returns figure_paths, tell the user the plot was saved and is being displayed
+- When `run_python` returns exports, interpret the numerical summaries (shape, min/max/mean/std) to answer the user
+- In run_python code, call export("name", array) to share numerical results; plt.show() saves the figure to disk
 - Reply in the user's language
 - Cite the parameter ids you used
 """
+
+
+def _load_user_profile() -> str:
+    """Return the user profile content, or '' when the file does not exist."""
+    p = settings.profile.profile_path
+    try:
+        if p.exists():
+            return p.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    return ""
 
 
 _INTERNAL_TOOLS: list[ToolDef] = [
@@ -124,61 +157,6 @@ class ChatResult:
     events: list[dict] = field(default_factory=list)
 
 
-def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
-    try:
-        data = json.loads(result_text)
-    except (ValueError, TypeError):
-        return result_text[:max_chars]
-    if not isinstance(data, dict):
-        return str(data)[:max_chars] if not isinstance(data, list) else f"[list, {len(data)} items]"
-    if "error" in data:
-        return f"error: {str(data['error'])[:max_chars]}"
-    keep = {}
-    for k, v in data.items():
-        if k in {"figures"}:
-            keep[k] = f"[{len(v)} PNG(s)]" if v else "[]"
-        elif isinstance(v, (str, int, float, bool, type(None))):
-            keep[k] = v if not isinstance(v, str) or len(v) <= 120 else v[:117] + "..."
-        elif isinstance(v, list):
-            keep[k] = f"[{len(v)} items]"
-        elif isinstance(v, dict):
-            keep[k] = f"{{{len(v)} keys}}"
-    return json.dumps(keep, ensure_ascii=False)[:max_chars]
-
-
-def _extract_artifact(tool_name: str, result_text: str) -> dict | None:
-    """Extract renderable artifacts from tool results (plots, data previews)."""
-    try:
-        data = json.loads(result_text)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(data, dict) or "error" in data:
-        return None
-
-    # Python sandbox figures
-    if tool_name == "run_python" and data.get("figures"):
-        return {
-            "tool": tool_name,
-            "kind": "image",
-            "mime": "image/png",
-            "figures": data["figures"],
-            "stdout": data.get("stdout", ""),
-        }
-
-    # Data preview
-    if tool_name == "get_timeseries" and "preview" in data:
-        return {
-            "tool": tool_name,
-            "kind": "data_preview",
-            "param_id": data.get("param_id"),
-            "n_points": data.get("n_points"),
-            "units": data.get("units"),
-            "preview": data.get("preview"),
-        }
-
-    return None
-
-
 async def stream_chat(
     llm_client: LLMClient,
     user_id: str,
@@ -186,18 +164,35 @@ async def stream_chat(
     user_text: str,
 ) -> AsyncIterator[dict]:
     """Async generator core of the agent loop."""
+    import helioai.workspace as _ws
+    _ws_token = _ws.set_session(session_id)
+
     history = store.get_or_create(user_id, session_id)
     history.append(Message(role="user", content=user_text))
 
+    existing_dir = store.get_workspace_dir(user_id, session_id)
+    if existing_dir:
+        _label_token = _ws.set_label(existing_dir)
+    else:
+        label = _ws.make_session_label(user_text, session_id)
+        store.save(user_id, session_id, history)
+        store.set_workspace_dir(user_id, session_id, label)
+        _label_token = _ws.set_label(label)
+
     tools = registry.list_tool_defs() + _INTERNAL_TOOLS + [task_tool_def()]
     log.info("agent_tools_listed", count=len(tools), tools=[t.name for t in tools])
+
+    effective_prompt = SYSTEM_PROMPT
+    profile = _load_user_profile()
+    if profile:
+        effective_prompt = f"{SYSTEM_PROMPT}\n\n## User profile\n{profile}"
 
     try:
         for i in range(settings.agent.max_iterations):
             turn = i + 1
             log.info("llm_call_start", turn=turn, n_messages=len(history))
             t0 = time.monotonic()
-            response = await llm_client.chat(history, tools, system_prompt=SYSTEM_PROMPT)
+            response = await llm_client.chat(history, tools, system_prompt=effective_prompt)
             log.info("llm_call_end", turn=turn, duration_ms=int((time.monotonic() - t0) * 1000),
                      has_tool_calls=bool(response.tool_calls))
             history.append(response)
@@ -212,7 +207,6 @@ async def stream_chat(
                 log.info("tool_call_issued", turn=turn, tool=tc.name)
                 yield {"event": "tool_call", "data": {"turn": turn, "name": tc.name, "arguments": tc.arguments}}
 
-                sub_artifacts: list[dict] = []
                 sub_end_event: dict | None = None
 
                 try:
@@ -224,58 +218,48 @@ async def stream_chat(
                             "event": "sub_agent_start",
                             "data": {"task_id": tc.id, "role": sub_role, "description": sub_desc[:200]},
                         }
-                        sub_result = await run_subagent(
+                        async for sub_ev in stream_subagent(
                             role=sub_role,
                             description=sub_desc,
                             parent_session_id=session_id,
                             user_id=user_id,
                             llm_client=llm_client,
                             task_id=tc.id,
-                        )
-                        sub_artifacts = sub_result.artifacts
-                        result = json.dumps({
-                            "summary": sub_result.summary,
-                            "n_iterations": sub_result.n_iterations,
-                            "artifacts": sub_result.artifacts,
-                            "error": sub_result.error,
-                        })
-                        sub_end_event = {
-                            "task_id": tc.id,
-                            "role": sub_role,
-                            "summary": (sub_result.summary or "")[:200],
-                            "n_iterations": sub_result.n_iterations,
-                            "error": sub_result.error,
-                        }
+                        ):
+                            if sub_ev["event"] == "sub_agent_end":
+                                end_data = sub_ev["data"]
+                                result = json.dumps({
+                                    "summary": end_data.get("summary", ""),
+                                    "n_iterations": end_data.get("n_iterations", 0),
+                                    "artifacts": end_data.get("artifacts", []),
+                                    "error": end_data.get("error"),
+                                })
+                                sub_end_event = {
+                                    "task_id": tc.id,
+                                    "role": sub_role,
+                                    "summary": end_data.get("summary", "")[:200],
+                                    "n_iterations": end_data.get("n_iterations", 0),
+                                    "error": end_data.get("error"),
+                                }
+                            else:
+                                yield sub_ev
                     elif tc.name in _INTERNAL_TOOL_NAMES:
                         result = _dispatch_internal_tool(tc.name, tc.arguments)
                     else:
-                        result = await registry.call_tool(tc.name, tc.arguments)
+                        result = await registry.call_tool(
+                            tc.name, inject_run_python_args(tc.name, tc.arguments)
+                        )
                 except Exception as e:
                     log.exception("tool_call_failed", turn=turn, tool=tc.name)
                     result = json.dumps({"error": str(e)})
                     if tc.name == TASK_TOOL_NAME:
                         sub_end_event = {
-                            "task_id": tc.id, "role": "", "summary": "", "n_iterations": 0, "error": str(e),
+                            "task_id": tc.id, "role": sub_role if "sub_role" in locals() else "",
+                            "summary": "", "n_iterations": 0, "error": str(e),
                         }
 
-                yield {
-                    "event": "tool_result",
-                    "data": {"turn": turn, "name": tc.name, "summary": _summarize_tool_result(result)},
-                }
-
-                if tc.name == "load_skill":
-                    try:
-                        payload = json.loads(result)
-                        if payload.get("body") and not payload.get("error"):
-                            yield {"event": "skill_loaded", "data": {"name": payload.get("name", "")}}
-                    except (ValueError, TypeError):
-                        pass
-
-                artifact = _extract_artifact(tc.name, result)
-                if artifact:
-                    yield {"event": "artifact", "data": artifact}
-                for sub_art in sub_artifacts:
-                    yield {"event": "artifact", "data": sub_art}
+                for ev in emit_post_tool_events(tc.name, result, tool_result_extra={"turn": turn}):
+                    yield ev
                 if sub_end_event is not None:
                     yield {"event": "sub_agent_end", "data": sub_end_event}
 
@@ -288,6 +272,10 @@ async def stream_chat(
     except asyncio.CancelledError:
         store.save(user_id, session_id, history)
         raise
+
+    finally:
+        _ws.reset_session(_ws_token)
+        _ws.reset_label(_label_token)
 
 
 async def chat(llm_client: LLMClient, user_id: str, session_id: str, user_text: str) -> ChatResult:

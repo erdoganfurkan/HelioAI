@@ -28,6 +28,10 @@ async def get_timeseries(
         stop:  ISO 8601 stop time
         max_points: max samples to return (downsampled if needed)
 
+    The param_id should be in speasy format: "{provider}/{xmlid}"
+    e.g. "amda/ace_epam_ca60_he", "cda/ACE_H0_MFI/BGSEc"
+    (returned by search_parameters).
+
     Returns dict with: param_id, start, stop, units, shape, n_points, preview (first 10 rows as CSV)
     """
     try:
@@ -73,12 +77,52 @@ async def get_timeseries(
 
     shape = list(values.shape)
     units = getattr(var, "unit", "") or ""
+    name = getattr(var, "name", "") or ""
+    components = list(getattr(var, "columns", None) or [])
+
+    # Cadence: median of time deltas (provider-agnostic)
+    cadence = ""
+    try:
+        if n_points > 1:
+            deltas = np.diff(times.astype("datetime64[ms]").astype(float))
+            med_ms = float(np.median(deltas))
+            if med_ms >= 3_600_000:
+                cadence = f"{med_ms / 3_600_000:.4g} h"
+            elif med_ms >= 60_000:
+                cadence = f"{med_ms / 60_000:.4g} min"
+            elif med_ms >= 1_000:
+                cadence = f"{med_ms / 1_000:.4g} s"
+            else:
+                cadence = f"{med_ms:.4g} ms"
+    except Exception:
+        pass
+
+    # Mission / instrument: best-effort from param_id prefix + var.meta
+    mission = ""
+    instrument = ""
+    try:
+        parts = param_id.split("/")
+        dataset = parts[1] if len(parts) > 1 else parts[0]
+        # First token before '_'/'-' is the mission (cda/ACE_H0_MFI/.. → ACE, amda/ace_imf_all → ace)
+        mission = dataset.split("_")[0].split("-")[0]
+    except Exception:
+        pass
+    try:
+        meta = getattr(var, "meta", {}) or {}
+        instrument = str(meta.get("FIELDNAM", "") or meta.get("VAR_NOTES", "") or "")[:80]
+    except Exception:
+        pass
 
     return {
         "param_id": param_id,
+        "name": name,
         "start": start,
         "stop": stop,
         "units": str(units),
+        "components": components,
+        "cadence": cadence,
+        "mission": mission,
+        "instrument": instrument,
         "shape": shape,
         "n_points": n_points,
         "preview": preview,
@@ -117,30 +161,56 @@ async def list_missions() -> dict:
     }
 
 
-async def search_parameters(query: str, top_k: int = 5) -> dict:
+async def search_parameters(query: str | None = None, top_k: int = 5,
+                            provider: str | None = None,
+                            queries: list[str] | None = None) -> dict:
     """Semantic search over the speasy catalog (65k+ products).
 
     Requires the index to be built first (run: helioai index).
     Falls back to a direct speasy text match if no index is found.
 
     Args:
-        query: free-text English query (e.g. 'ion density solar wind MMS')
-        top_k: number of results to return
+        query: free-text English query for a SINGLE parameter.
+        queries: list of queries to resolve SEVERAL parameters in ONE call
+                 (preferred when 2+ parameters are needed — much cheaper).
+        top_k: number of results per query.
+        provider: optional — restrict to one provider (amda/cda/csa/ssc).
 
-    Returns dict with a 'results' list of {id, name, description, score}.
+    Returns either {query, provider, results} (single) or
+    {provider, groups: [{query, results}]} (batch).
     """
+    if queries:
+        try:
+            from helioai.tools.rag import search_batch as rag_search_batch
+            batch = rag_search_batch(queries, top_k=top_k, provider=provider)
+            return {"provider": provider,
+                    "groups": [{"query": q, "results": r} for q, r in zip(queries, batch)]}
+        except Exception as e:
+            log.warning("RAG batch search failed (%s), falling back to text scan", e)
+        try:
+            import speasy as spz
+            groups = [{"query": q, "results": _fallback_search(spz, q, top_k)} for q in queries]
+            return {"provider": provider, "groups": groups,
+                    "note": "RAG index not built — using text fallback (provider filter ignored)"}
+        except Exception as e2:
+            return {"error": f"Search failed: {e2}"}
+
+    if not query:
+        return {"error": "provide query (string) or queries (list of strings)"}
+
     try:
         from helioai.tools.rag import search as rag_search
-        results = rag_search(query, top_k=top_k)
-        return {"query": query, "results": results}
+        results = rag_search(query, top_k=top_k, provider=provider)
+        return {"query": query, "provider": provider, "results": results}
     except Exception as e:
         log.warning("RAG search failed (%s), falling back to speasy inventory scan", e)
 
-    # Fallback: naive text search on speasy inventory
+    # Fallback: naive text search on speasy inventory (provider filter ignored — best effort)
     try:
         import speasy as spz
         results = _fallback_search(spz, query, top_k)
-        return {"query": query, "results": results, "note": "RAG index not built — using text fallback"}
+        return {"query": query, "results": results,
+                "note": "RAG index not built — using text fallback (provider filter ignored)"}
     except Exception as e2:
         return {"error": f"Search failed: {e2}"}
 

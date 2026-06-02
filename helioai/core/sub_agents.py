@@ -11,12 +11,13 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, AsyncIterator
 
 import structlog
 
 from helioai.core.llm.base import LLMClient, Message, ToolDef
 from helioai.core.skills_loader import SkillError, load_skill as load_skill_body
+from helioai.core.tool_exec import emit_post_tool_events, inject_run_python_args
 from helioai.logging_config import get_logger
 from helioai.tools.registry import registry
 
@@ -40,8 +41,9 @@ SUB_SYSTEM_PROMPT_BASE = """You are a focused sub-agent inside HelioAI. The lead
 - Do exactly what the description asks, nothing more.
 - You have NO access to the lead agent's conversation. Everything you need is in the description.
 - Reply with a short final summary of what you did and the facts the lead needs (parameter ids, key values, findings).
-- Never ask clarifying questions — make a reasonable assumption and proceed.
+- Make a reasonable assumption when something is unclear, then proceed.
 - Always cite the speasy parameter ids you used.
+- Use your tools to complete the task. If a tool call fails, retry with a corrected argument before concluding.
 """
 
 
@@ -50,25 +52,39 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
         name="parameter_hunter",
         description="Resolve a vague parameter description into one or more speasy parameter ids.",
         system_addon=(
-            "You specialise in parameter discovery. Given a description "
-            "(mission, quantity, region…), find the matching speasy parameter id(s) "
-            "via search_parameters. Reply with the id(s), units, mission, and "
-            "available time range. Do not download or analyze data — that is the lead's job."
+            "You specialise in parameter discovery. Given a description that may list "
+            "SEVERAL parameters, resolve them all in ONE batched call: "
+            "search_parameters(queries=[...]). Pass provider= (amda/cda/csa/ssc) to scope "
+            "when a provider is named. Re-query only the weak results. Reply with each "
+            "id, units, mission, and available time range. "
+            "Do not download or analyze data — that is the lead's job."
         ),
         allowed_tools=("search_parameters", "list_missions"),
         max_turns=4,
+        auto_load_skills=("parameter_hunter",),
     ),
     "data_analyst": SubAgentRole(
         name="data_analyst",
-        description="Analyze already-retrieved data with Python: spectra, statistics, plasma params.",
-        system_addon=(
-            "You specialise in quantitative analysis. The lead has already resolved "
-            "parameter ids and time intervals. Use get_timeseries to load data then "
-            "run_python for analysis (FFT, power spectrum, statistics, PlasmaPy calculations). "
-            "Return key numerical results and figures."
+        description=(
+            "Download and analyze heliophysics data: plots, spectra, statistics, "
+            "multi-mission comparison, and event detection (shocks, reconnection, CMEs…)."
         ),
-        allowed_tools=("get_timeseries", "run_python"),
-        max_turns=6,
+        system_addon=(
+            "You specialise in data analysis, visualisation, multi-mission comparison, "
+            "and plasma event detection. "
+            "Use search_parameters if any parameter id is missing or unclear. "
+            "Then call run_python — download data with spz.get_data() inside the sandbox, "
+            "compute what is needed, and call plt.show() to save the figure. "
+            "run_python is the ONLY tool that produces figures. "
+            "A text description of a plot is not a plot. Always call run_python. "
+            "For multi-mission work: resolve param ids per mission, download into the same "
+            "sandbox, align on a common time grid, and produce a combined comparison plot. "
+            "For event detection: implement threshold / derivative / boundary criteria in "
+            "run_python; report event times, key signatures, and SPASE PhenomenonType if applicable."
+        ),
+        allowed_tools=("search_parameters", "run_python"),
+        max_turns=8,
+        auto_load_skills=("data_analyst",),
     ),
     "plasma_physicist": SubAgentRole(
         name="plasma_physicist",
@@ -81,30 +97,7 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
         ),
         allowed_tools=("run_python", "search_parameters"),
         max_turns=4,
-    ),
-    "cross_mission": SubAgentRole(
-        name="cross_mission",
-        description="Compare the same physical quantity across 2+ missions or time intervals.",
-        system_addon=(
-            "You specialise in multi-mission comparison. The lead has specified which "
-            "quantities and missions to compare. Resolve parameter ids per mission via "
-            "search_parameters, then download via get_timeseries. Summarise differences "
-            "and commonalities. Use run_python for aligned comparison plots when useful."
-        ),
-        allowed_tools=("search_parameters", "get_timeseries", "run_python"),
-        max_turns=6,
-    ),
-    "event_detector": SubAgentRole(
-        name="event_detector",
-        description="Identify plasma events: shocks, reconnection, magnetopause crossings, CMEs.",
-        system_addon=(
-            "You specialise in event detection. Use get_timeseries to fetch relevant "
-            "parameters, then run_python to implement detection criteria. "
-            "Common markers: B rotation (reconnection), density jump + B compression (shocks), "
-            "velocity reversal (current sheets). Report event times and key signatures."
-        ),
-        allowed_tools=("search_parameters", "get_timeseries", "run_python"),
-        max_turns=6,
+        auto_load_skills=("plasma_physicist",),
     ),
 }
 
@@ -123,11 +116,9 @@ def task_tool_def() -> ToolDef:
         name=TASK_TOOL_NAME,
         description=(
             "Spawn a specialist sub-agent for ONE focused subtask. "
-            "Required when: (1) user needs 2+ parameters → one `parameter_hunter` per parameter; "
-            "(2) user wants complex analysis → spawn `data_analyst`; "
-            "(3) user wants plasma physics calculations → spawn `plasma_physicist`; "
-            "(4) multi-mission comparison → `cross_mission`; "
-            "(5) event detection → `event_detector`. "
+            "Required when: (1) param ids are unknown → spawn ONE `parameter_hunter` for ALL the parameters at once (list them in the description); "
+            "(2) user wants analysis, plots, spectra, multi-mission comparison, or event detection → spawn `data_analyst`; "
+            "(3) user wants plasma physics calculations (β, gyrofrequency, Debye length…) → spawn `plasma_physicist`. "
             "The sub runs in isolation (empty context) — pre-resolve every fact "
             "(param ids, ISO times, missions) inside `description`.\n\nRoles:\n" + role_lines
         ),
@@ -165,7 +156,7 @@ def _build_system_prompt(role: SubAgentRole) -> tuple[str, list[str]]:
     return prompt, loaded
 
 
-async def run_subagent(
+async def stream_subagent(
     role: str,
     description: str,
     *,
@@ -173,17 +164,31 @@ async def run_subagent(
     user_id: str,
     llm_client: LLMClient,
     task_id: str | None = None,
-) -> SubAgentResult:
-    if role not in AGENT_ROLES:
-        known = ", ".join(sorted(AGENT_ROLES))
-        return SubAgentResult(error=f"unknown agent_role {role!r}. Known: {known}")
+) -> AsyncIterator[dict]:
+    """Async generator that runs a sub-agent and yields progress events.
 
-    role_cfg = AGENT_ROLES[role]
-
-    from helioai.core.agent_loop import _extract_artifact
+    Yields the same event types as stream_chat (tool_call, tool_result,
+    skill_loaded, artifact) enriched with sub_agent_ctx={role, task_id},
+    then a final sub_agent_end event carrying summary/artifacts/n_iterations/error.
+    """
+    import helioai.workspace as _ws
 
     if task_id is None:
         task_id = uuid.uuid4().hex[:8]
+    ctx = {"role": role, "task_id": task_id}
+
+    _ws_token = _ws.set_session(parent_session_id)
+
+    if role not in AGENT_ROLES:
+        known = ", ".join(sorted(AGENT_ROLES))
+        yield {"event": "sub_agent_end", "data": {
+            "task_id": task_id, "role": role, "summary": "",
+            "n_iterations": 0, "error": f"unknown agent_role {role!r}. Known: {known}",
+            "artifacts": [],
+        }}
+        return
+
+    role_cfg = AGENT_ROLES[role]
 
     structlog.contextvars.bind_contextvars(
         parent_session_id=parent_session_id,
@@ -193,6 +198,8 @@ async def run_subagent(
 
     try:
         system_prompt, skills_loaded = _build_system_prompt(role_cfg)
+        for skill_name in skills_loaded:
+            yield {"event": "skill_loaded", "data": {"name": skill_name, "sub_agent_ctx": ctx}}
 
         allowed = set(role_cfg.allowed_tools)
         tools = registry.list_tool_defs(only=allowed)
@@ -209,7 +216,8 @@ async def run_subagent(
 
         for i in range(role_cfg.max_turns):
             n_iters = i + 1
-            response = await llm_client.chat(history, tools, system_prompt=system_prompt)
+            tc_choice = "required" if i == 0 else "auto"
+            response = await llm_client.chat(history, tools, system_prompt=system_prompt, tool_choice=tc_choice)
             history.append(response)
 
             if not response.tool_calls:
@@ -217,17 +225,30 @@ async def run_subagent(
                 break
 
             for tc in response.tool_calls:
+                log.info("tool_call_issued", turn=n_iters, tool=tc.name, sub_role=role)
+                yield {"event": "tool_call", "data": {
+                    "turn": n_iters, "name": tc.name, "arguments": tc.arguments,
+                    "sub_agent_ctx": ctx,
+                }}
+
                 if tc.name not in allowed:
                     log.warning("subagent_tool_denied", role=role, tool=tc.name)
                     result = json.dumps({
                         "error": f"tool {tc.name!r} not available to {role!r}. Allowed: {sorted(allowed)}"
                     })
                 else:
-                    result = await registry.call_tool(tc.name, tc.arguments)
+                    result = await registry.call_tool(
+                        tc.name, inject_run_python_args(tc.name, tc.arguments)
+                    )
 
-                art = _extract_artifact(tc.name, result)
-                if art:
-                    artifacts.append(art)
+                for ev in emit_post_tool_events(
+                    tc.name, result,
+                    tool_result_extra={"turn": n_iters, "sub_agent_ctx": ctx},
+                    common_extra={"sub_agent_ctx": ctx},
+                ):
+                    if ev["event"] == "artifact":
+                        artifacts.append({k: v for k, v in ev["data"].items() if k != "sub_agent_ctx"})
+                    yield ev
 
                 history.append(Message(role="tool", tool_call_id=tc.id, content=result))
         else:
@@ -237,7 +258,47 @@ async def run_subagent(
         log.info("subagent_end", role=role, n_iterations=n_iters,
                  duration_ms=int((time.monotonic() - t0) * 1000),
                  capped=capped, n_artifacts=len(artifacts))
-        return SubAgentResult(summary=final_text, artifacts=artifacts, n_iterations=n_iters)
+
+        yield {"event": "sub_agent_end", "data": {
+            "task_id": task_id, "role": role,
+            "summary": final_text[:200], "n_iterations": n_iters,
+            "error": None, "artifacts": artifacts,
+        }}
+
+    except Exception as e:
+        log.exception("subagent_error", role=role, task_id=task_id)
+        yield {"event": "sub_agent_end", "data": {
+            "task_id": task_id, "role": role, "summary": "",
+            "n_iterations": n_iters if "n_iters" in dir() else 0,
+            "error": str(e), "artifacts": [],
+        }}
 
     finally:
+        _ws.reset_session(_ws_token)
         structlog.contextvars.unbind_contextvars("parent_session_id", "sub_role", "sub_task_id")
+
+
+async def run_subagent(
+    role: str,
+    description: str,
+    *,
+    parent_session_id: str,
+    user_id: str,
+    llm_client: LLMClient,
+    task_id: str | None = None,
+) -> SubAgentResult:
+    """Backward-compat wrapper — consumes stream_subagent and returns SubAgentResult."""
+    async for ev in stream_subagent(
+        role=role, description=description,
+        parent_session_id=parent_session_id, user_id=user_id,
+        llm_client=llm_client, task_id=task_id,
+    ):
+        if ev["event"] == "sub_agent_end":
+            d = ev["data"]
+            return SubAgentResult(
+                summary=d.get("summary", ""),
+                artifacts=d.get("artifacts", []),
+                n_iterations=d.get("n_iterations", 0),
+                error=d.get("error"),
+            )
+    return SubAgentResult(error="stream_subagent yielded no sub_agent_end")

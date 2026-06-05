@@ -75,6 +75,23 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
                 }
             )
 
+    # get_catalog result
+    if tool_name == "get_catalog" and data.get("_kind") == "catalog_preview":
+        artifacts.append(
+            {
+                "tool": tool_name,
+                "kind": "catalog_preview",
+                "catalog_id": data.get("catalog_id"),
+                "name": data.get("name"),
+                "type": data.get("type"),
+                "nb_events_total": data.get("nb_events_total"),
+                "columns": data.get("columns", []),
+                "sample": (data.get("sample") or [])[:5],
+                "survey_start": data.get("survey_start"),
+                "survey_stop": data.get("survey_stop"),
+            }
+        )
+
     # get_timeseries called directly by main agent
     if tool_name == "get_timeseries" and "preview" in data:
         artifacts.append(

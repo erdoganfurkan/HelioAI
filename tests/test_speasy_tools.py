@@ -88,6 +88,7 @@ async def test_get_timeseries_returns_preview(monkeypatch) -> None:
     fake_var = _make_fake_var(5)
     mock_spz = MagicMock()
     mock_spz.get_data = MagicMock(return_value=fake_var)
+    mock_spz.amda.parameter_range.return_value = None  # skip coverage guard
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_timeseries("amda/ace_b_gse", "2005-01-17T12:00:00", "2005-01-17T12:10:00")
@@ -99,6 +100,7 @@ async def test_get_timeseries_returns_preview(monkeypatch) -> None:
 async def test_get_timeseries_no_data_returns_error(monkeypatch) -> None:
     mock_spz = MagicMock()
     mock_spz.get_data = MagicMock(return_value=None)
+    mock_spz.amda.parameter_range.return_value = None  # skip coverage guard
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_timeseries("amda/fake", "2024-01-01T00:00:00", "2024-01-01T01:00:00")
@@ -108,7 +110,24 @@ async def test_get_timeseries_no_data_returns_error(monkeypatch) -> None:
 async def test_get_timeseries_exception_returns_error(monkeypatch) -> None:
     mock_spz = MagicMock()
     mock_spz.get_data = MagicMock(side_effect=RuntimeError("network error"))
+    mock_spz.amda.parameter_range.return_value = None  # skip coverage guard
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_timeseries("amda/fake", "2024-01-01T00:00:00", "2024-01-01T01:00:00")
     assert "error" in result
+
+
+async def test_get_timeseries_parameter_range_guard(monkeypatch) -> None:
+    mock_spz = MagicMock()
+    mock_rng = MagicMock()
+    mock_rng.start = "2005-01-01T00:00:00"
+    mock_rng.stop  = "2005-12-31T23:59:59"
+    mock_spz.amda.parameter_range.return_value = mock_rng
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+
+    # request entirely outside the available range → warning, no download attempted
+    result = await get_timeseries("amda/imf", "2020-01-01T00:00:00", "2020-01-02T00:00:00")
+    assert "warning" in result
+    assert "suggestion" in result
+    assert "available_start" in result
+    mock_spz.get_data.assert_not_called()

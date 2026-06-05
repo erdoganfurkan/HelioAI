@@ -161,3 +161,29 @@ def test_extract_non_dict_returns_empty() -> None:
 def test_extract_unknown_tool_returns_empty() -> None:
     payload = json.dumps({"result": "ok"})
     assert _extract_artifact("list_missions", payload) == []
+
+
+def test_extract_catalog_preview() -> None:
+    payload = json.dumps({
+        "_kind": "catalog_preview",
+        "catalog_id": "amda/c1",
+        "name": "ICME list",
+        "type": "catalog",
+        "nb_events_total": 341,
+        "columns": ["start", "stop", "shock_type"],
+        "sample": [{"start": "2005-01-17", "stop": "2005-01-18", "shock_type": "FF"}],
+        "survey_start": "1996-01-01",
+        "survey_stop": "2022-12-31",
+    })
+    arts = _extract_artifact("get_catalog", payload)
+    assert len(arts) == 1
+    art = arts[0]
+    assert art["kind"] == "catalog_preview"
+    assert art["catalog_id"] == "amda/c1"
+    assert art["nb_events_total"] == 341
+    assert len(art["sample"]) == 1
+
+
+def test_extract_catalog_no_marker_returns_empty() -> None:
+    payload = json.dumps({"catalog_id": "amda/c1", "nb_events_total": 10})
+    assert _extract_artifact("get_catalog", payload) == []

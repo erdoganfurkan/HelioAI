@@ -323,6 +323,62 @@ def search_batch(
     return results
 
 
+def search_catalogs(
+    query: str,
+    top_k: int = 5,
+    *,
+    product_type: str | None = None,
+) -> list[dict]:
+    """Semantic search over the AMDA catalog/timetable index.
+
+    `product_type` can be 'catalog', 'timetable', or None (both).
+    Returns {id, name, description, score, nb_events, product_type}.
+    Requires `helioai index` to have been run at least once.
+    Falls back to an empty list if the catalog collection is absent.
+    """
+    if not query or not query.strip():
+        return []
+    try:
+        from sentence_transformers import SentenceTransformer
+        import chromadb
+
+        model, _ = _load()  # reuse the already-loaded embedding model
+        client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
+        col = client.get_collection(name=settings.rag.catalogs_collection_name)
+    except Exception as e:
+        log.debug("catalog collection unavailable (%s)", e)
+        return []
+
+    try:
+        vec = model.encode(
+            [query], normalize_embeddings=True, convert_to_numpy=True
+        ).tolist()
+        where: dict | None = {"product_type": product_type} if product_type else None
+        res = col.query(
+            query_embeddings=vec,
+            n_results=min(top_k, col.count() or 1),
+            where=where,
+            include=["documents", "metadatas", "distances"],
+        )
+        results: list[dict] = []
+        for pid, doc, meta, dist in zip(
+            res["ids"][0], res["documents"][0], res["metadatas"][0], res["distances"][0]
+        ):
+            score = round(max(0.0, min(1.0, (1.0 - float(dist) + 1.0) / 2.0)), 4)
+            results.append({
+                "id": pid,
+                "name": (meta or {}).get("name", pid),
+                "description": _truncate(doc or ""),
+                "score": score,
+                "nb_events": (meta or {}).get("nb_events", 0),
+                "product_type": (meta or {}).get("product_type", ""),
+            })
+        return results
+    except Exception as e:
+        log.warning("catalog search failed: %s", e)
+        return []
+
+
 def search(
     query: str,
     top_k: int = 5,

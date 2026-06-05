@@ -111,6 +111,14 @@ export('val', 42.0)
     assert "val" in result["exports"]
 
 
+async def test_stdout_truncated_at_4000_chars() -> None:
+    code = "print('x' * 10000)"
+    result = await run_python(code)
+    assert result.get("error") is None
+    assert len(result["stdout"]) <= 4100
+    assert "truncated" in result["stdout"]
+
+
 async def test_clean_masks_fill_values() -> None:
     code = """
 import numpy as np

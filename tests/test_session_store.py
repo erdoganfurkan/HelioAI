@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from helioai.core.llm.base import Message, ToolCall
-from helioai.core.session import SessionStore
+from helioai.core.session import SessionStore, strip_orphan_tool_calls
 
 
 @pytest.fixture
@@ -153,3 +153,59 @@ def test_list_summaries_respects_limit(db: Path) -> None:
         h.append(Message(role="user", content=f"msg {i}"))
         s.save("alice", f"s{i}", h)
     assert len(s.list_summaries("alice", limit=3)) == 3
+
+
+# ── strip_orphan_tool_calls ──────────────────────────────────────────────────
+
+def test_strip_clean_history_unchanged() -> None:
+    history = [
+        Message(role="user", content="hello"),
+        Message(role="assistant", tool_calls=[ToolCall(id="tc1", name="search", arguments={})]),
+        Message(role="tool", tool_call_id="tc1", content="result"),
+        Message(role="assistant", content="Done."),
+    ]
+    result = strip_orphan_tool_calls(history)
+    assert len(result) == 4
+    assert result[1].tool_calls is not None
+
+
+def test_strip_drops_fully_orphaned_assistant_message() -> None:
+    history = [
+        Message(role="user", content="hi"),
+        Message(role="assistant", tool_calls=[ToolCall(id="orphan", name="search", arguments={})]),
+        # No tool response — simulates cancelled generation
+    ]
+    result = strip_orphan_tool_calls(history)
+    assert len(result) == 1
+    assert result[0].role == "user"
+
+
+def test_strip_keeps_content_when_orphaned_tool_calls() -> None:
+    history = [
+        Message(
+            role="assistant",
+            content="I'll search for that.",
+            tool_calls=[ToolCall(id="orphan", name="search", arguments={})],
+        ),
+    ]
+    result = strip_orphan_tool_calls(history)
+    assert len(result) == 1
+    assert result[0].content == "I'll search for that."
+    assert not result[0].tool_calls
+
+
+def test_strip_partial_orphan_keeps_answered() -> None:
+    history = [
+        Message(
+            role="assistant",
+            tool_calls=[
+                ToolCall(id="tc1", name="search", arguments={}),
+                ToolCall(id="orphan", name="get_data", arguments={}),
+            ],
+        ),
+        Message(role="tool", tool_call_id="tc1", content="result"),
+    ]
+    result = strip_orphan_tool_calls(history)
+    assert len(result) == 2
+    assert len(result[0].tool_calls) == 1
+    assert result[0].tool_calls[0].id == "tc1"

@@ -97,3 +97,26 @@ def test_export_custom_out_path(wired, tmp_path) -> None:
     path = export_session_notebook(_USER, _SESSION, out_path=out)
     assert path == out
     assert out.exists()
+
+
+def test_setup_cell_defines_clean() -> None:
+    from helioai.export import _SETUP_CELL
+    assert "def clean" in _SETUP_CELL
+
+
+def test_exported_notebook_clean_shim_is_callable(wired, tmp_path) -> None:
+    """A code cell using clean() should execute without NameError."""
+    from helioai.export import _SETUP_CELL
+
+    # Execute setup cell to populate namespace, then call clean()
+    ns: dict = {}
+    exec(_SETUP_CELL, ns)  # noqa: S102
+    import numpy as np
+
+    result = ns["clean"](np.array([1.0, 1e31, -1e31, float("inf"), float("-inf"), 2.0]))
+    assert np.isnan(result[1])
+    assert np.isnan(result[2])
+    assert np.isnan(result[3])
+    assert np.isnan(result[4])
+    assert result[0] == pytest.approx(1.0)
+    assert result[5] == pytest.approx(2.0)

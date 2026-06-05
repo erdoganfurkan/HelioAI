@@ -30,7 +30,7 @@ from typing import AsyncIterator
 
 from helioai.config import settings
 from helioai.core.llm.base import LLMClient, Message, ToolDef
-from helioai.core.session import store
+from helioai.core.session import store, strip_orphan_tool_calls
 from helioai.core.skills_loader import SkillError, load_index as load_skills_index
 from helioai.core.skills_loader import load_skill as load_skill_body, list_skill_names
 from helioai.core.sub_agents import TASK_TOOL_NAME, stream_subagent, task_tool_def
@@ -67,6 +67,14 @@ Plasma physics tools (direct, no code needed):
 
 Sandbox tool:
 10. `run_python(code)` — isolated Python. Pre-imported: speasy (spz), numpy (np), scipy, matplotlib (plt.show() saves to disk), plasmapy (pf), astropy units (u). Helpers: export(name, array), param_card(var, param_id), clean(values) — converts CDF fill values (|x|≥1e30) and ±inf to NaN before plotting. Use for custom analysis not covered by tools above.
+
+Catalog tools (event-driven analysis):
+10. `list_catalogs(type, region)` — list AMDA catalogs + timetables (29 catalogs, 188 timetables: ICMEs, bow-shock crossings, substorms, reconnections…). Filter by keyword (e.g. region='ICME').
+11. `get_catalog(catalog_id, start, stop)` — download a catalog and inspect its events (start/stop + metadata columns).
+12. `get_events_timeseries(catalog_id, param_id, start, stop)` — download a parameter for every catalog event in one speasy call. Use for superposed epoch analysis and statistical surveys across events.
+
+Catalog workflow: list_catalogs → get_catalog (inspect events) → get_events_timeseries (download) → run_python (plot/statistics).
+Catalog safety: NEVER print or iterate raw catalog events in run_python — even a small catalog can be thousands of rows. Use get_catalog() to inspect the structure, get_events_timeseries() for statistics, and export() for numerical summaries.
 
 Skills:
 5. `list_skills()` — index of available procedural skills.
@@ -239,6 +247,7 @@ async def stream_chat(
             turn = i + 1
             log.info("llm_call_start", turn=turn, n_messages=len(history))
             t0 = time.monotonic()
+            history[:] = strip_orphan_tool_calls(history)
             response = await llm_client.chat(history, tools, system_prompt=effective_prompt)
             log.info(
                 "llm_call_end",
@@ -336,7 +345,7 @@ async def stream_chat(
         }
 
     except asyncio.CancelledError:
-        store.save(user_id, session_id, history)
+        store.save(user_id, session_id, strip_orphan_tool_calls(history))
         raise
 
     finally:

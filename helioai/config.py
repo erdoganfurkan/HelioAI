@@ -67,6 +67,7 @@ class AgentConfig:
 class RAGConfig:
     chroma_dir: Path = field(default_factory=lambda: _ROOT / "data" / "chroma")
     collection_name: str = "speasy_catalog"
+    catalogs_collection_name: str = "speasy_catalogs"
     embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     rerank_enabled: bool = False
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"

@@ -208,4 +208,34 @@ class SessionStore:
         return out
 
 
+def strip_orphan_tool_calls(history: list[Message]) -> list[Message]:
+    """Remove assistant tool_calls that have no matching tool response.
+
+    An interrupted generation (e.g. client disconnect mid-tool) can leave an
+    assistant message with tool_calls but no corresponding tool messages in the
+    history.  Sending such a sequence to the LLM API causes a 400 error.
+
+    For each orphaned tool_call id:
+    - If the assistant message has content too, keep the message but drop the
+      orphaned tool_calls list entry (or clear it entirely if all are orphaned).
+    - If the assistant message has no content and all its tool_calls are
+      orphaned, drop the message entirely.
+    """
+    answered: set[str] = {m.tool_call_id for m in history if m.tool_call_id}
+    cleaned: list[Message] = []
+    for m in history:
+        if not m.tool_calls:
+            cleaned.append(m)
+            continue
+        live_tcs = [tc for tc in m.tool_calls if tc.id in answered]
+        if len(live_tcs) == len(m.tool_calls):
+            cleaned.append(m)
+        elif live_tcs:
+            cleaned.append(Message(role=m.role, content=m.content, tool_calls=live_tcs))
+        elif m.content:
+            cleaned.append(Message(role=m.role, content=m.content))
+        # else: drop the message entirely (no content, no answered tool_calls)
+    return cleaned
+
+
 store = SessionStore()

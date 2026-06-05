@@ -88,6 +88,7 @@ async def get_session_messages(session_id: str):
     out: list[dict] = []
     pending_figures: list[str] = []
     pending_cards: list[dict] = []
+    pending_catalogs: list[dict] = []
     pending_code: list[dict] = []
     for m in history:
         if m.role == "user":
@@ -100,6 +101,9 @@ async def get_session_messages(session_id: str):
             if pending_cards:
                 entry["cards"] = pending_cards[:]
                 pending_cards = []
+            if pending_catalogs:
+                entry["catalogs"] = pending_catalogs[:]
+                pending_catalogs = []
             if pending_code:
                 entry["code"] = pending_code[:]
                 pending_code = []
@@ -120,6 +124,20 @@ async def get_session_messages(session_id: str):
                                 "code_path": data["code_path"],
                                 "name": Path(data["code_path"]).name,
                                 "n_lines": data.get("n_lines"),
+                            }
+                        )
+                    if data.get("_kind") == "catalog_preview":  # get_catalog
+                        pending_catalogs.append(
+                            {
+                                "kind": "catalog_preview",
+                                "catalog_id": data.get("catalog_id"),
+                                "name": data.get("name"),
+                                "type": data.get("type"),
+                                "nb_events_total": data.get("nb_events_total"),
+                                "columns": data.get("columns", []),
+                                "sample": (data.get("sample") or [])[:5],
+                                "survey_start": data.get("survey_start"),
+                                "survey_stop": data.get("survey_stop"),
                             }
                         )
                     if data.get("param_id") and "preview" in data:  # get_timeseries direct
@@ -145,6 +163,8 @@ async def get_session_messages(session_id: str):
                             pending_figures.extend(art["figure_paths"])
                         if art.get("kind") == "parameter_card":
                             pending_cards.append(art)
+                        if art.get("kind") == "catalog_preview":
+                            pending_catalogs.append(art)
                         if art.get("kind") == "code":
                             pending_code.append(art)
             except (ValueError, TypeError):

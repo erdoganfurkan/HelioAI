@@ -38,6 +38,27 @@ async def get_timeseries(
     except ImportError:
         return {"error": "speasy is not installed. Run: pip install speasy"}
 
+    # Pre-flight: check data coverage for AMDA params (best-effort, safe to skip)
+    try:
+        if param_id.startswith("amda/"):
+            xmlid = param_id.split("/", 1)[1]
+            rng = spz.amda.parameter_range(xmlid)
+            if rng is not None:
+                rng_start = str(rng.start)[:19]
+                rng_stop = str(rng.stop)[:19]
+                if start < rng_start or stop > rng_stop:
+                    return {
+                        "warning": (
+                            f"Requested [{start}, {stop}] is outside the available range "
+                            f"[{rng_start}, {rng_stop}] for {param_id!r}."
+                        ),
+                        "suggestion": f"Try a time range within {rng_start} → {rng_stop}.",
+                        "available_start": rng_start,
+                        "available_stop": rng_stop,
+                    }
+    except Exception:
+        pass  # provider doesn't support parameter_range → proceed anyway
+
     try:
         var = spz.get_data(param_id, start, stop)
     except Exception as e:

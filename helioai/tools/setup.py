@@ -11,6 +11,7 @@ from helioai.tools import sandbox as _sb
 from helioai.tools import speasy_tools as _spz
 from helioai.tools import plasmapy_tools as _ppy
 from helioai.tools import recipes as _rcp
+from helioai.tools import catalog_tools as _cat
 
 
 registry.register(
@@ -252,6 +253,105 @@ registry.register(
     ),
     parameters={"type": "object", "properties": {}},
 )(_rcp.list_recipes)
+
+
+registry.register(
+    name="list_catalogs",
+    description=(
+        "List available AMDA event catalogs and timetables (29 catalogs + 188 timetables). "
+        "Returns id, name, type, number of events, survey range and description. "
+        "Use the `id` with get_catalog() to inspect events or get_events_timeseries() to download data. "
+        "Filter by type ('catalog'/'timetable'/'all') and region keyword (e.g. 'ICME', 'MMS', 'shock')."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "type": {
+                "type": "string",
+                "enum": ["all", "catalog", "timetable"],
+                "description": "Filter by product type (default: all).",
+            },
+            "region": {
+                "type": "string",
+                "description": "Optional keyword filter on name/description (e.g. 'ICME', 'bow shock', 'MMS').",
+            },
+        },
+        "required": [],
+    },
+)(_cat.list_catalogs)
+
+
+registry.register(
+    name="get_catalog",
+    description=(
+        "Download and summarize an AMDA event catalog or timetable. "
+        "Returns event count, columns and a sample of events (start, stop + metadata). "
+        "Use list_catalogs() first to find the catalog id. "
+        "Use get_events_timeseries() to download a parameter over all events."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "catalog_id": {
+                "type": "string",
+                "description": "Speasy catalog uid from list_catalogs (e.g. 'amda/sharedcatalog_41').",
+            },
+            "start": {
+                "type": "string",
+                "description": "Optional ISO 8601 start — filter events beginning after this time.",
+            },
+            "stop": {
+                "type": "string",
+                "description": "Optional ISO 8601 stop — filter events beginning before this time.",
+            },
+            "max_events": {
+                "type": "integer",
+                "description": "Max events to include in the sample (default 50).",
+                "default": 50,
+            },
+        },
+        "required": ["catalog_id"],
+    },
+)(_cat.get_catalog)
+
+
+registry.register(
+    name="get_events_timeseries",
+    description=(
+        "Download a parameter for every event in an AMDA catalog (superposed epoch analysis). "
+        "Uses speasy's native multi-interval API — one call for N events. "
+        "Returns per-event statistics (mean/std/min/max) and the data for plotting. "
+        "Use for: stack-plots across ICMEs/shocks, statistical surveys, epoch analysis. "
+        "Workflow: list_catalogs → get_catalog (inspect) → get_events_timeseries (download)."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "catalog_id": {
+                "type": "string",
+                "description": "Speasy catalog uid (e.g. 'amda/sharedcatalog_41').",
+            },
+            "param_id": {
+                "type": "string",
+                "description": "Speasy parameter id (e.g. 'amda/imf_gsm') — resolve via search_parameters first.",
+            },
+            "start": {
+                "type": "string",
+                "description": "ISO 8601 start — restrict to events in this window.",
+            },
+            "stop": {
+                "type": "string",
+                "description": "ISO 8601 stop — restrict to events in this window.",
+            },
+            "max_events": {
+                "type": "integer",
+                "description": "Max events to download (default 20).",
+                "default": 20,
+            },
+        },
+        "required": ["catalog_id", "param_id", "start", "stop"],
+    },
+)(_cat.get_events_timeseries)
 
 
 registry.register(

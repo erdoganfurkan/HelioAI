@@ -252,7 +252,13 @@ async def run_python(
             else:
                 clean_stdout_lines.append(line)
 
+        _MAX_STDOUT = 4000
         clean_stdout = "\n".join(clean_stdout_lines).strip()
+        if len(clean_stdout) > _MAX_STDOUT:
+            clean_stdout = (
+                clean_stdout[:_MAX_STDOUT]
+                + f"\n[stdout truncated — {len(clean_stdout)} chars total; use export() for numerical data]"
+            )
 
         if proc.returncode != 0:
             return {

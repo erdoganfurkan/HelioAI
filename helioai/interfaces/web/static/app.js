@@ -206,6 +206,7 @@ function renderArtifact(data) {
       const img = document.createElement('img');
       img.src = url;
       img.alt = 'Figure';
+      img.addEventListener('click', () => openLightbox(url));
       img.onerror = () => {
         const fallback = el('div', 'figure-fallback');
         fallback.innerHTML = `⚠ Figure non accessible dans le navigateur.<br>`
@@ -213,7 +214,12 @@ function renderArtifact(data) {
           + ` · <code>${path}</code>`;
         wrap.replaceChildren(fallback);
       };
-      wrap.append(img);
+      const dlBtn = document.createElement('a');
+      dlBtn.className = 'img-dl';
+      dlBtn.href = url;
+      dlBtn.download = 'figure.png';
+      dlBtn.textContent = '↓ PNG';
+      wrap.append(img, dlBtn);
       chatArea.append(wrap);
     });
     scrollBottom();
@@ -263,12 +269,78 @@ function renderArtifact(data) {
     chatArea.append(chip);
     scrollBottom();
 
+  } else if (data.kind === 'catalog_preview') {
+    const card = el('div', 'catalog-card');
+
+    const header = el('div', 'cc-header');
+    const nameSpan = el('span', 'cc-name', data.name || data.catalog_id || '');
+    const typeSpan = el('span', 'cc-type', data.type || 'catalog');
+    header.append(nameSpan, typeSpan);
+    card.append(header);
+
+    const chips = el('div', 'cc-chips');
+    const chipDefs = [
+      { label: 'Events', value: data.nb_events_total != null ? String(data.nb_events_total) : null },
+      { label: 'From', value: data.survey_start || null },
+      { label: 'To', value: data.survey_stop || null },
+    ];
+    chipDefs.forEach(({ label, value }) => {
+      if (!value) return;
+      const chip = document.createElement('span');
+      chip.className = 'param-chip';
+      chip.innerHTML = `<span class="chip-label">${label}</span>${value}`;
+      chips.append(chip);
+    });
+    if (chips.children.length) card.append(chips);
+
+    const sample = data.sample || [];
+    if (sample.length > 0) {
+      const cols = Object.keys(sample[0]).slice(0, 5);
+      const table = el('table', 'cc-table');
+      const thead = document.createElement('thead');
+      const hrow = document.createElement('tr');
+      cols.forEach(c => { const th = el('th', null, c); hrow.append(th); });
+      thead.append(hrow);
+      table.append(thead);
+      const tbody = document.createElement('tbody');
+      sample.forEach(row => {
+        const tr = document.createElement('tr');
+        cols.forEach(c => {
+          const val = row[c] != null ? String(row[c]) : '';
+          tr.append(el('td', null, val.length > 20 ? val.slice(0, 18) + '…' : val));
+        });
+        tbody.append(tr);
+      });
+      table.append(tbody);
+      card.append(table);
+    }
+
+    chatArea.append(card);
+    scrollBottom();
+
   } else if (data.kind === 'data_preview' && data.preview) {
     const pre = el('div', 'artifact-preview',
       `${data.param_id} — ${data.n_points} pts\n${data.preview}`);
     chatArea.append(pre);
     scrollBottom();
   }
+}
+
+// ── Lightbox ─────────────────────────────────────────────────────────────────
+
+const lightbox   = document.getElementById('lightbox');
+const lbImg      = document.getElementById('lb-img');
+const lbDownload = document.getElementById('lb-download');
+
+function openLightbox(url) {
+  lbImg.src = url;
+  lbDownload.href = url;
+  lightbox.classList.add('open');
+}
+
+function closeLightbox() {
+  lightbox.classList.remove('open');
+  lbImg.src = '';
 }
 
 // ── Code panel ───────────────────────────────────────────────────────────────
@@ -437,6 +509,7 @@ async function resumeSession(sid, itemEl) {
         chatArea.append(el('div', 'msg-user', m.content));
       } else if (m.role === 'assistant' && m.content) {
         (m.cards || []).forEach(c => renderArtifact(c));
+        (m.catalogs || []).forEach(c => renderArtifact(c));
         (m.code || []).forEach(c => renderArtifact(c));
         if (m.figures && m.figures.length > 0) {
           renderArtifact({ kind: 'image', figure_paths: m.figures });
@@ -457,6 +530,9 @@ btnCancel.addEventListener('click', cancelStreaming);
 btnNew.addEventListener('click', newSession);
 document.getElementById('cp-close').addEventListener('click',
   () => document.getElementById('code-panel').classList.remove('open'));
+document.getElementById('lb-close').addEventListener('click', closeLightbox);
+document.getElementById('lb-backdrop').addEventListener('click', closeLightbox);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {

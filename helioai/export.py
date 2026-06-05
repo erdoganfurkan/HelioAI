@@ -6,8 +6,8 @@ those runs plus the conversation into a self-contained, re-executable `.ipynb`
 with a provenance header (parameter ids, time, library versions).
 
 The exported notebook opens with a setup cell that provides the same imports
-and the `export()` / `param_card()` shims the sandbox defines, so each saved
-run cell executes standalone in a normal Jupyter kernel.
+and the `export()` / `clean()` / `param_card()` shims the sandbox defines, so
+each saved run cell executes standalone in a normal Jupyter kernel.
 """
 
 from __future__ import annotations
@@ -42,6 +42,14 @@ def export(name, data):
     arr = np.asarray(data, dtype=float)
     print(f"{name}: shape={arr.shape} min={np.nanmin(arr):.4g} "
           f"max={np.nanmax(arr):.4g} mean={np.nanmean(arr):.4g}")
+
+
+def clean(values):
+    """Shim for the sandbox clean(): convert CDF fill values (|x|>=1e30) and infinities to NaN."""
+    arr = np.asarray(values, dtype=float)
+    arr[~np.isfinite(arr)] = np.nan
+    arr[np.abs(arr) >= 1e30] = np.nan
+    return arr
 
 
 def param_card(var, param_id):

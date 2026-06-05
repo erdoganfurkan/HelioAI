@@ -257,7 +257,10 @@ def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = Tr
         print(f"[indexer] done: {total} params in {elapsed:.1f}s")
         print(f"[indexer] collection total: {collection.count()}")
 
-    return total
+    # Index catalogs + timetables into a separate collection
+    cat_total = _build_catalog_index(model, client, settings, rebuild=rebuild, verbose=verbose)
+
+    return total + cat_total
 
 
 def _walk(
@@ -384,3 +387,100 @@ def _build_text(
     if region:
         parts.append(f"Region: {region}.")
     return " ".join(parts)
+
+
+def _build_catalog_index(model, client, settings, rebuild: bool, verbose: bool) -> int:
+    """Index AMDA catalogs + timetables into a dedicated ChromaDB collection."""
+    try:
+        import speasy as spz
+    except ImportError:
+        return 0
+
+    collection_name = settings.rag.catalogs_collection_name
+    collection = client.get_or_create_collection(
+        name=collection_name,
+        metadata={"hnsw:space": "cosine"},
+    )
+
+    if rebuild:
+        existing = set()
+    else:
+        try:
+            existing = set(collection.get(include=[])["ids"])
+        except Exception:
+            existing = set()
+
+    docs: list[dict] = []
+    try:
+        flat = spz.inventories.flat_inventories.amda
+        for product_type, src in (
+            ("catalog", getattr(flat, "catalogs", None) or {}),
+            ("timetable", getattr(flat, "timetables", None) or {}),
+        ):
+            for uid, idx in src.items():
+                doc_id = f"amda/{uid}"
+                if doc_id in existing:
+                    continue
+                name = str(getattr(idx, "__spz_name__", "") or getattr(idx, "name", "") or uid)
+                desc = str(getattr(idx, "desc", "") or getattr(idx, "description", "") or "")[:300]
+                nb = 0
+                try:
+                    nb = int(getattr(idx, "nbIntervals", 0) or 0)
+                except (TypeError, ValueError):
+                    pass
+                s_start = str(getattr(idx, "surveyStart", "") or "")[:10]
+                s_stop  = str(getattr(idx, "surveyStop", "") or "")[:10]
+                region = _get_region(doc_id)
+
+                text_parts = [f"{name}.", f"{product_type}."]
+                if region:
+                    text_parts.append(f"Region: {region}.")
+                if s_start and s_stop:
+                    text_parts.append(f"Survey: {s_start} to {s_stop}.")
+                if nb:
+                    text_parts.append(f"Events: {nb}.")
+                if desc:
+                    text_parts.append(desc)
+                text = " ".join(text_parts)
+
+                meta: dict = {
+                    "name": name,
+                    "product_type": product_type,
+                    "provider": "amda",
+                    "nb_events": nb,
+                }
+                if region:
+                    meta["region"] = region
+                docs.append({"id": doc_id, "text": text, "meta": meta})
+    except Exception as e:
+        if verbose:
+            print(f"[indexer] catalog walk error: {e}")
+        return 0
+
+    if not docs:
+        if verbose:
+            print("[indexer] catalogs: up to date — nothing to index")
+        return 0
+
+    if verbose:
+        print(f"[indexer] indexing {len(docs)} catalogs/timetables…")
+
+    embeddings = model.encode(
+        [d["text"] for d in docs],
+        batch_size=128,
+        show_progress_bar=False,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+    ).tolist()
+
+    collection.upsert(
+        ids=[d["id"] for d in docs],
+        embeddings=embeddings,
+        documents=[d["text"] for d in docs],
+        metadatas=[d["meta"] for d in docs],
+    )
+
+    if verbose:
+        print(f"[indexer] catalogs done: {len(docs)} entries (collection total: {collection.count()})")
+
+    return len(docs)

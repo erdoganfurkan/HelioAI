@@ -9,9 +9,12 @@ in one speasy call, opening the door to superposed epoch analysis.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+_catalog_cache: dict = {"ts": 0.0, "entries": []}
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -60,7 +63,10 @@ def _spz_type(index) -> str:
 
 
 def _walk_catalogs(spz) -> list[dict]:
-    """Return a flat list of all AMDA catalog + timetable entries."""
+    """Return a flat list of all AMDA catalog + timetable entries (TTL-cached 1h)."""
+    if _catalog_cache["entries"] and time.monotonic() - _catalog_cache["ts"] < 3600:
+        return _catalog_cache["entries"]
+
     entries: list[dict] = []
     try:
         flat = spz.inventories.flat_inventories.amda
@@ -92,6 +98,9 @@ def _walk_catalogs(spz) -> list[dict]:
             )
     except Exception as e:
         log.warning("catalog walk failed: %s", e)
+
+    _catalog_cache["entries"] = entries
+    _catalog_cache["ts"] = time.monotonic()
     return entries
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
 
@@ -25,6 +27,9 @@ def isolated_rag(monkeypatch, fake_embed_model, tmp_path):
     # Reset the BM25 cache so each test rebuilds from its own collection
     monkeypatch.setattr(rag_module, "_bm25", None)
     monkeypatch.setattr(rag_module, "_bm25_loaded", False)
+    # Reset search & catalog caches so tests are independent
+    monkeypatch.setattr(rag_module, "_search_cache", {})
+    monkeypatch.setattr(rag_module, "_catalog_collection", None)
 
     yield collection
 
@@ -206,6 +211,73 @@ def test_search_batch_empty_slot(isolated_rag) -> None:
     assert len(groups) == 3
     assert groups[1] == []
     assert groups[0] and groups[2]
+
+
+# ──────────────────────────── reranker composition ──────────────────────────
+
+
+# ─────────────────────────── search cache ──────────────────────────────────
+
+
+def test_search_cache_skips_encode_on_repeat(isolated_rag, monkeypatch) -> None:
+    _seed(isolated_rag)
+    calls = {"n": 0}
+    real_encode = rag_module._model.encode
+
+    def counting_encode(texts, **kwargs):
+        calls["n"] += 1
+        return real_encode(texts, **kwargs)
+
+    monkeypatch.setattr(rag_module._model, "encode", counting_encode)
+    r1 = search("solar wind density", top_k=3)
+    r2 = search("solar wind density", top_k=3)
+
+    assert calls["n"] == 1
+    assert [r["id"] for r in r1] == [r["id"] for r in r2]
+
+
+def test_search_batch_partial_cache(isolated_rag, monkeypatch) -> None:
+    _seed(isolated_rag)
+    encoded_batches: list[list] = []
+    real_encode = rag_module._model.encode
+
+    def tracking_encode(texts, **kwargs):
+        encoded_batches.append(list(texts))
+        return real_encode(texts, **kwargs)
+
+    monkeypatch.setattr(rag_module._model, "encode", tracking_encode)
+
+    search_batch(["q_a", "q_b"], top_k=2)
+    assert encoded_batches[-1] == ["q_a", "q_b"]
+
+    search_batch(["q_a", "q_new"], top_k=2)  # q_a is now cached
+    assert encoded_batches[-1] == ["q_new"]  # only the uncached query was encoded
+
+
+def test_search_catalogs_memoizes_collection(isolated_rag, monkeypatch) -> None:
+    import chromadb
+    from helioai.tools.rag import search_catalogs
+
+    fake_col = MagicMock()
+    fake_col.count.return_value = 0
+    fake_col.query.return_value = {
+        "ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]
+    }
+    fake_client = MagicMock()
+    fake_client.get_collection.return_value = fake_col
+    client_call_count = [0]
+
+    def fake_persistent_client(*args, **kwargs):
+        client_call_count[0] += 1
+        return fake_client
+
+    monkeypatch.setattr(chromadb, "PersistentClient", fake_persistent_client)
+
+    search_catalogs("ICME solar wind")
+    search_catalogs("bow shock MMS")
+
+    assert client_call_count[0] == 1
+    assert fake_client.get_collection.call_count == 1
 
 
 # ──────────────────────────── reranker composition ──────────────────────────

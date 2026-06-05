@@ -7,7 +7,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from helioai.tools.catalog_tools import list_catalogs, get_catalog, get_events_timeseries
+import helioai.tools.catalog_tools as ct_module
+from helioai.tools.catalog_tools import _walk_catalogs, list_catalogs, get_catalog, get_events_timeseries
+
+
+# ── fixtures ──────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def reset_catalog_cache():
+    ct_module._catalog_cache["ts"] = 0.0
+    ct_module._catalog_cache["entries"] = []
+    yield
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -44,6 +55,45 @@ def _make_spz(catalogs=None, timetables=None):
     mock_spz = MagicMock()
     mock_spz.inventories.flat_inventories.amda = _make_flat(catalogs or {}, timetables or {})
     return mock_spz
+
+
+# ── _walk_catalogs TTL cache ──────────────────────────────────────────────────
+
+
+def test_walk_catalogs_ttl_cache() -> None:
+    # Reset the module-level cache so this test starts fresh.
+    ct_module._catalog_cache["ts"] = 0.0
+    ct_module._catalog_cache["entries"] = []
+
+    access_log: list[int] = []
+
+    class FakeAmda:
+        catalogs = {"c1": _make_catalog_index("c1", "ICME", "", 10, "2005-01-01", "2022-01-01")}
+        timetables: dict = {}
+
+    class FakeFlat:
+        @property
+        def amda(self):
+            access_log.append(1)
+            return FakeAmda()
+
+    class FakeInv:
+        flat_inventories = FakeFlat()
+
+    class FakeSpz:
+        inventories = FakeInv()
+
+    fake_spz = FakeSpz()
+
+    _walk_catalogs(fake_spz)  # first call — walks the inventory
+    _walk_catalogs(fake_spz)  # second call — TTL hit, returns cache
+
+    assert len(access_log) == 1, "inventory accessed more than once within TTL"
+
+    # Reset cache timestamp to force a re-walk
+    ct_module._catalog_cache["ts"] = 0.0
+    _walk_catalogs(fake_spz)
+    assert len(access_log) == 2, "expired cache should trigger a re-walk"
 
 
 # ── list_catalogs ─────────────────────────────────────────────────────────────

@@ -28,6 +28,11 @@ _bm25_meta: list[dict] = []
 _bm25_docs: list[str] = []
 _bm25_loaded = False
 
+_search_cache: dict[tuple, list[dict]] = {}
+_SEARCH_CACHE_MAX = 256
+
+_catalog_collection = None
+
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -278,6 +283,22 @@ def search_batch(
     if not active:
         return results
 
+    # Check per-query cache; only encode/query Chroma for cache misses.
+    def _cache_key(q: str) -> tuple:
+        return (q, provider, region, measurement_type, top_k)
+
+    uncached = []
+    for i, q in active:
+        hit = _search_cache.get(_cache_key(q))
+        if hit is not None:
+            results[i] = hit
+        else:
+            uncached.append((i, q))
+
+    if not uncached:
+        return results
+
+    active = uncached
     model, collection = _load()
     hybrid = settings.rag.hybrid_enabled
     if hybrid:
@@ -311,7 +332,7 @@ def search_batch(
             all_metas[j] if j < len(all_metas) else [],
             all_dists[j] if j < len(all_dists) else [],
         )
-        results[i] = _fuse_query(
+        res = _fuse_query(
             q,
             dense_hit,
             top_k,
@@ -320,6 +341,11 @@ def search_batch(
             measurement_type=measurement_type,
             hybrid=hybrid,
         )
+        results[i] = res
+        key = _cache_key(q)
+        if len(_search_cache) >= _SEARCH_CACHE_MAX:
+            _search_cache.pop(next(iter(_search_cache)))
+        _search_cache[key] = res
     return results
 
 
@@ -339,11 +365,18 @@ def search_catalogs(
     if not query or not query.strip():
         return []
     try:
-        import chromadb
-
+        global _catalog_collection
         model, _ = _load()  # reuse the already-loaded embedding model
-        client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
-        col = client.get_collection(name=settings.rag.catalogs_collection_name)
+        if _catalog_collection is None:
+            with _lock:
+                if _catalog_collection is None:
+                    import chromadb
+
+                    client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
+                    _catalog_collection = client.get_collection(
+                        name=settings.rag.catalogs_collection_name
+                    )
+        col = _catalog_collection
     except Exception as e:
         log.debug("catalog collection unavailable (%s)", e)
         return []

@@ -31,6 +31,7 @@ No API key required for data access. No manual parameter hunting.
 ## Features
 
 - **Hybrid RAG** — semantic (MiniLM) + lexical (BM25) search over 83k parameters, fused by Reciprocal Rank Fusion. Finds both vague descriptions *and* exact codes (`BGSEc`, `FGM`, `igrf_8sec_gse`).
+- **Event catalogs & timetables** — access 217 curated AMDA catalogs (ICMEs, bow-shock crossings, reconnection events, substorms, …). Download a parameter across every event in one call — the foundation for superposed epoch analysis and statistical surveys.
 - **PlasmaPy tools** — plasma β, gyrofrequency, Debye length, Alfvén speed, inertial length, power spectrum — ready-made for the agent.
 - **Sandboxed Python** — the agent writes and runs analysis code safely (subprocess, timeout). All scripts are saved for reproducibility.
 - **5 specialised skills** — `parameter_hunter`, `data_analyst`, `plasma_physicist`, `plotting`, `helioai_helper` — loaded as markdown, zero coupling to the agent loop.
@@ -105,6 +106,8 @@ helioai
 helioai> solar wind density from ACE in January 2005
 helioai> compare MMS and Cluster magnetic field during 2017-07-11 reconnection event
 helioai> compute plasma beta in the magnetosheath — B=20nT, n=20cm-3, T=200eV
+helioai> show me the IMF Bz for all ICMEs in the Richardson & Cane catalog between 2003 and 2005
+helioai> superposed epoch analysis of MMS bow-shock crossings — proton density, 2017
 ```
 
 One-shot mode:
@@ -178,17 +181,35 @@ Mount `./data` for persistent index and sessions. Set your LLM keys in `.env`.
 | **CDAWeb** (NASA) | MMS, THEMIS, Van Allen Probes, Parker Solar Probe, Ulysses, Voyager | ~68k |
 | **CSA** (ESA) | Cluster, Double Star, Solar Orbiter, Mars Express | ~1.9k |
 
-Full catalogue via `list_missions()` or `helioai "what missions are available"`.
+In addition, **217 AMDA event catalogs and timetables** are accessible as first-class tools: ICMEs (Richardson & Cane — 341 events, ICME multi-catalog — 2003 events), bow-shock crossings (MMS 2797, THEMIS ~60k), magnetic reconnection EDR events (72), substorm onsets (2437), flux transfer events, MAVEN shock crossings (3837), and monthly MMS burst-mode timetables (2015–present).
+
+Full parameter catalogue via `list_missions()` or `helioai "what missions are available"`.
+Full catalog catalogue via `list_catalogs()` or `helioai "what event catalogs are available"`.
 
 ---
 
 ## Agent tools
+
+### Data access
 
 | Tool | Description |
 |---|---|
 | `search_parameters` | Hybrid RAG search — single query or batch `queries=[...]` |
 | `get_timeseries` | Download a parameter via speasy (returns cadence, mission, components) |
 | `list_missions` | Live catalogue of providers and missions |
+
+### Event catalogs
+
+| Tool | Description |
+|---|---|
+| `list_catalogs` | Browse 217 AMDA catalogs/timetables — filter by type and region keyword |
+| `get_catalog` | Download and inspect a catalog: event count, columns, time-filtered sample |
+| `get_events_timeseries` | Download a parameter across **every event** in a catalog (one speasy call) — core tool for superposed epoch analysis |
+
+### Analysis
+
+| Tool | Description |
+|---|---|
 | `run_python` | Sandboxed Python — speasy + plasmapy + numpy + matplotlib available |
 | `plasma_beta` | β = nkT / (B²/2μ₀) |
 | `gyrofrequency` | Ion/electron gyrofrequency for a given B |
@@ -247,7 +268,7 @@ helioai/
 
 ```bash
 uv sync --extra dev
-uv run pytest                          # 230 tests, 65% coverage
+uv run pytest                          # 254 tests, 65% coverage
 uv run ruff check helioai/ tests/      # lint
 uv run ruff format helioai/ tests/     # format
 ```

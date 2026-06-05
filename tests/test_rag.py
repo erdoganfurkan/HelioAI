@@ -261,7 +261,10 @@ def test_search_catalogs_memoizes_collection(isolated_rag, monkeypatch) -> None:
     fake_col = MagicMock()
     fake_col.count.return_value = 0
     fake_col.query.return_value = {
-        "ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]
+        "ids": [[]],
+        "documents": [[]],
+        "metadatas": [[]],
+        "distances": [[]],
     }
     fake_client = MagicMock()
     fake_client.get_collection.return_value = fake_col

@@ -70,6 +70,25 @@ User: "compare solar wind at L1 and at Saturn"
 → data_analyst: get both time series, resample to common cadence, plot side-by-side
 ```
 
+### 3.6 Statistical study with an event catalog
+```
+User: "IMF Bz during all ICMEs in 2005 — Richardson & Cane catalog"
+→ list_catalogs(region="ICME") → find id for Richardson & Cane list
+→ get_catalog(id, start="2005-01-01", stop="2005-12-31") → inspect events
+→ parameter_hunter: resolve IMF Bz param id for ACE or WIND
+→ get_events_timeseries(catalog_id, param_id, "2005-01-01", "2005-12-31")
+  → returns per-event stats (mean/std/min/max) + saves data
+→ run_python: stack plot, epoch-aligned superposition, histogram
+```
+
+### 3.7 Superposed epoch analysis
+```
+User: "proton density at MMS bow-shock crossings in 2017"
+→ list_catalogs(region="bow shock") → MMS_Lalti_BScrossings (2797 events)
+→ get_events_timeseries(id, "amda/mms1_dis_ni_fast", "2017-01-01", "2017-12-31", max_events=50)
+→ run_python: epoch-align on crossing time, stack-plot, compute mean profile
+```
+
 ## 4. Formulating effective queries
 
 | Instead of | Try |
@@ -81,7 +100,40 @@ User: "compare solar wind at L1 and at Saturn"
 
 **Rule**: always give mission, parameter type, and time range (ISO 8601). The more specific, the fewer disambiguation rounds.
 
-## 5. Derived recipes
+## 5. Event catalogs & timetables
+
+AMDA exposes **29 catalogs** and **188 timetables** — curated lists of space physics events. HelioAI exposes them as first-class tools.
+
+**Workflow:**
+```
+list_catalogs(region="ICME")           → browse available catalogs
+get_catalog(id, start, stop)           → inspect events + columns
+get_events_timeseries(id, param, ...)  → download param for every event (one speasy call)
+```
+
+**Key catalogs:**
+
+| Catalog | Events | Coverage |
+|---|---|---|
+| Richardson & Cane ICME list | 341 ICMEs | 1996–2022 |
+| ICME multi-catalog | 2003 ICMEs, 141 params/event | 1975–2022 |
+| THEMIS magnetopause crossings | ~60k events | THEMIS era |
+| MMS bow-shock crossings | 2797 events | 2015–present |
+| MMS EDR (electron diffusion regions) | 72 events | MMS burst |
+| Substorm onsets (Frey) | 2437 events | 2000–2010 |
+| Flux Transfer Events Cluster | hundreds | Cluster era |
+| MAVEN shock crossings (Mars) | 3837 events | 2014–present |
+
+**Example queries:**
+```
+"show IMF Bz for all ICMEs in 2005 — use the Richardson & Cane catalog"
+"superposed epoch analysis of MMS bow-shock crossings, proton density, 2017"
+"how many substorm onsets are there in the Frey catalog?"
+```
+
+**Note:** `get_events_timeseries` caps at `max_events=20` by default — raise it for large statistical surveys. The data is saved to the workspace for `run_python` post-processing.
+
+## 6. Derived recipes
 
 HelioAI includes reusable Python scientific recipes accessible via two tools:
 - `list_recipes()` — show the full catalogue with name, description, inputs, outputs
@@ -93,6 +145,9 @@ HelioAI includes reusable Python scientific recipes accessible via two tools:
 | `theta_bn` | Shock normal angle θ_Bn (upstream/downstream B) |
 | `walen_test` | Walén test — slope ≈ ±1 indicates rotational discontinuity / reconnection |
 | `mvab` | Minimum Variance Analysis of B (MVA) — normal to current sheet |
+| `rankine_hugoniot` | Rankine-Hugoniot jump conditions across a shock |
+| `pressure_balance` | Total pressure balance (thermal + magnetic + dynamic) |
+| `pitch_angle_dist` | Pitch angle distribution from particle flux data |
 
 ## Output format
 

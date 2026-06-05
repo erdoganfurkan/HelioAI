@@ -95,8 +95,10 @@ def test_walk_catalogs_ttl_cache() -> None:
 
     assert len(access_log) == 1, "inventory accessed more than once within TTL"
 
-    # Reset cache timestamp to force a re-walk
-    ct_module._catalog_cache["ts"] = 0.0
+    # Backdate the timestamp past the TTL to force a re-walk
+    import time
+
+    ct_module._catalog_cache["ts"] = time.monotonic() - 3601
     _walk_catalogs(fake_spz)
     assert len(access_log) == 2, "expired cache should trigger a re-walk"
 

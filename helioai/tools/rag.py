@@ -339,7 +339,6 @@ def search_catalogs(
     if not query or not query.strip():
         return []
     try:
-        from sentence_transformers import SentenceTransformer
         import chromadb
 
         model, _ = _load()  # reuse the already-loaded embedding model

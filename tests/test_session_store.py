@@ -157,6 +157,7 @@ def test_list_summaries_respects_limit(db: Path) -> None:
 
 # ── strip_orphan_tool_calls ──────────────────────────────────────────────────
 
+
 def test_strip_clean_history_unchanged() -> None:
     history = [
         Message(role="user", content="hello"),

@@ -101,6 +101,7 @@ def test_export_custom_out_path(wired, tmp_path) -> None:
 
 def test_setup_cell_defines_clean() -> None:
     from helioai.export import _SETUP_CELL
+
     assert "def clean" in _SETUP_CELL
 
 

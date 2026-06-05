@@ -429,7 +429,7 @@ def _build_catalog_index(model, client, settings, rebuild: bool, verbose: bool) 
                 except (TypeError, ValueError):
                     pass
                 s_start = str(getattr(idx, "surveyStart", "") or "")[:10]
-                s_stop  = str(getattr(idx, "surveyStop", "") or "")[:10]
+                s_stop = str(getattr(idx, "surveyStop", "") or "")[:10]
                 region = _get_region(doc_id)
 
                 text_parts = [f"{name}.", f"{product_type}."]
@@ -481,6 +481,8 @@ def _build_catalog_index(model, client, settings, rebuild: bool, verbose: bool) 
     )
 
     if verbose:
-        print(f"[indexer] catalogs done: {len(docs)} entries (collection total: {collection.count()})")
+        print(
+            f"[indexer] catalogs done: {len(docs)} entries (collection total: {collection.count()})"
+        )
 
     return len(docs)

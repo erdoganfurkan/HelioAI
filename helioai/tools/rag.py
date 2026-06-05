@@ -349,9 +349,7 @@ def search_catalogs(
         return []
 
     try:
-        vec = model.encode(
-            [query], normalize_embeddings=True, convert_to_numpy=True
-        ).tolist()
+        vec = model.encode([query], normalize_embeddings=True, convert_to_numpy=True).tolist()
         where: dict | None = {"product_type": product_type} if product_type else None
         res = col.query(
             query_embeddings=vec,
@@ -364,14 +362,16 @@ def search_catalogs(
             res["ids"][0], res["documents"][0], res["metadatas"][0], res["distances"][0]
         ):
             score = round(max(0.0, min(1.0, (1.0 - float(dist) + 1.0) / 2.0)), 4)
-            results.append({
-                "id": pid,
-                "name": (meta or {}).get("name", pid),
-                "description": _truncate(doc or ""),
-                "score": score,
-                "nb_events": (meta or {}).get("nb_events", 0),
-                "product_type": (meta or {}).get("product_type", ""),
-            })
+            results.append(
+                {
+                    "id": pid,
+                    "name": (meta or {}).get("name", pid),
+                    "description": _truncate(doc or ""),
+                    "score": score,
+                    "nb_events": (meta or {}).get("nb_events", 0),
+                    "product_type": (meta or {}).get("product_type", ""),
+                }
+            )
         return results
     except Exception as e:
         log.warning("catalog search failed: %s", e)

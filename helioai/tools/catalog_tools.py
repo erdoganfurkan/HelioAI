@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 def _get_spz():
     try:
         import speasy as spz
+
         return spz
     except ImportError:
         return None
@@ -65,26 +66,30 @@ def _walk_catalogs(spz) -> list[dict]:
         flat = spz.inventories.flat_inventories.amda
         for uid, idx in (getattr(flat, "catalogs", None) or {}).items():
             start, stop = _survey(idx)
-            entries.append({
-                "id": f"amda/{uid}",
-                "name": _name(idx) or uid,
-                "type": "catalog",
-                "nb_events": _nb(idx),
-                "survey_start": start,
-                "survey_stop": stop,
-                "description": _desc(idx)[:200],
-            })
+            entries.append(
+                {
+                    "id": f"amda/{uid}",
+                    "name": _name(idx) or uid,
+                    "type": "catalog",
+                    "nb_events": _nb(idx),
+                    "survey_start": start,
+                    "survey_stop": stop,
+                    "description": _desc(idx)[:200],
+                }
+            )
         for uid, idx in (getattr(flat, "timetables", None) or {}).items():
             start, stop = _survey(idx)
-            entries.append({
-                "id": f"amda/{uid}",
-                "name": _name(idx) or uid,
-                "type": "timetable",
-                "nb_events": _nb(idx),
-                "survey_start": start,
-                "survey_stop": stop,
-                "description": _desc(idx)[:200],
-            })
+            entries.append(
+                {
+                    "id": f"amda/{uid}",
+                    "name": _name(idx) or uid,
+                    "type": "timetable",
+                    "nb_events": _nb(idx),
+                    "survey_start": start,
+                    "survey_stop": stop,
+                    "description": _desc(idx)[:200],
+                }
+            )
     except Exception as e:
         log.warning("catalog walk failed: %s", e)
     return entries
@@ -117,10 +122,7 @@ async def list_catalogs(
 
     if region:
         kw = region.lower()
-        entries = [
-            e for e in entries
-            if kw in e["name"].lower() or kw in e["description"].lower()
-        ]
+        entries = [e for e in entries if kw in e["name"].lower() or kw in e["description"].lower()]
 
     entries.sort(key=lambda e: e["nb_events"], reverse=True)
 
@@ -194,7 +196,7 @@ async def get_catalog(
     rows: list[dict] = []
     for ev in sample:
         ev_start = str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
-        ev_stop  = str(getattr(ev, "stop_time",  "") or getattr(ev, "stop",  "") or "")[:19]
+        ev_stop = str(getattr(ev, "stop_time", "") or getattr(ev, "stop", "") or "")[:19]
         row: dict[str, Any] = {"start": ev_start, "stop": ev_stop}
         meta = getattr(ev, "meta", None)
         if meta and isinstance(meta, dict):
@@ -306,7 +308,7 @@ async def get_events_timeseries(
     stats: list[dict] = []
     for i, (ev, ts) in enumerate(zip(selected, timeseries_list)):
         ev_start = str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
-        ev_stop  = str(getattr(ev, "stop_time",  "") or getattr(ev, "stop",  "") or "")[:19]
+        ev_stop = str(getattr(ev, "stop_time", "") or getattr(ev, "stop", "") or "")[:19]
         if ts is None or len(ts.time) == 0:
             stats.append({"event": i, "start": ev_start, "stop": ev_stop, "status": "no_data"})
             continue
@@ -314,16 +316,18 @@ async def get_events_timeseries(
         vals[~np.isfinite(vals)] = np.nan
         vals[np.abs(vals) >= 1e30] = np.nan
         with np.errstate(all="ignore"):
-            stats.append({
-                "event": i,
-                "start": ev_start,
-                "stop": ev_stop,
-                "n_points": int(len(ts.time)),
-                "mean": _fmt(np.nanmean(vals)),
-                "std":  _fmt(np.nanstd(vals)),
-                "min":  _fmt(np.nanmin(vals)),
-                "max":  _fmt(np.nanmax(vals)),
-            })
+            stats.append(
+                {
+                    "event": i,
+                    "start": ev_start,
+                    "stop": ev_stop,
+                    "n_points": int(len(ts.time)),
+                    "mean": _fmt(np.nanmean(vals)),
+                    "std": _fmt(np.nanstd(vals)),
+                    "min": _fmt(np.nanmin(vals)),
+                    "max": _fmt(np.nanmax(vals)),
+                }
+            )
 
     good = [s for s in stats if s.get("status") != "no_data"]
     units = str(getattr(timeseries_list[0], "unit", "") or "") if timeseries_list else ""

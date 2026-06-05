@@ -121,7 +121,7 @@ async def test_get_timeseries_parameter_range_guard(monkeypatch) -> None:
     mock_spz = MagicMock()
     mock_rng = MagicMock()
     mock_rng.start = "2005-01-01T00:00:00"
-    mock_rng.stop  = "2005-12-31T23:59:59"
+    mock_rng.stop = "2005-12-31T23:59:59"
     mock_spz.amda.parameter_range.return_value = mock_rng
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 

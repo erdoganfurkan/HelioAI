@@ -306,8 +306,40 @@ registry.register(
             },
             "max_events": {
                 "type": "integer",
-                "description": "Max events to include in the sample (default 50).",
-                "default": 50,
+                "description": "Max events to include in the sample (default 10).",
+                "default": 10,
+            },
+            "columns": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Restrict returned metadata columns per event.",
+            },
+            "where": {
+                "type": "object",
+                "properties": {
+                    "column": {"type": "string"},
+                    "op": {
+                        "type": "string",
+                        "enum": ["eq", "ne", "gt", "gte", "lt", "lte", "contains"],
+                    },
+                    "value": {},
+                },
+                "required": ["column", "op", "value"],
+                "description": "Agent-side row filter — use instead of iterating raw events in run_python.",
+            },
+            "sort_by": {
+                "type": "string",
+                "description": "Column to sort events by before slicing.",
+            },
+            "descending": {
+                "type": "boolean",
+                "default": False,
+                "description": "Sort direction (default ascending).",
+            },
+            "offset": {
+                "type": "integer",
+                "default": 0,
+                "description": "Pagination offset into the filtered+sorted events.",
             },
         },
         "required": ["catalog_id"],

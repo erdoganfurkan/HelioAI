@@ -41,11 +41,11 @@ def _make_catalog_index(uid, name, desc, nb, s_start, s_stop, spz_type="CatalogI
     return idx
 
 
-def _make_event(start, stop):
+def _make_event(start, stop, meta=None):
     ev = MagicMock()
     ev.start_time = start
     ev.stop_time = stop
-    ev.meta = {"shock_type": "FF"}
+    ev.meta = meta if meta is not None else {"shock_type": "FF"}
     return ev
 
 
@@ -283,7 +283,8 @@ async def test_get_events_timeseries_returns_stats(monkeypatch) -> None:
     assert "error" not in result
     assert result["n_events_downloaded"] == 2
     assert len(result["per_event_stats"]) == 2
-    assert "mean" in result["per_event_stats"][0]
+    stat = result["per_event_stats"][0]
+    assert "components" in stat or "mean" in stat
 
 
 @pytest.mark.asyncio
@@ -307,3 +308,182 @@ async def test_get_events_timeseries_no_events_in_window(monkeypatch) -> None:
     )
     assert "warning" in result
     assert "suggestion" in result
+
+
+# ── QW2: agent-side filters ───────────────────────────────────────────────────
+
+
+def _setup_catalog_mock(monkeypatch, events, catalog_uid="c1"):
+    cat_idx = _make_catalog_index(
+        catalog_uid, "Test catalog", "", len(events), "2000-01-01", "2030-01-01"
+    )
+    mock_cat = MagicMock()
+    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+    mock_spz = _make_spz({catalog_uid: cat_idx}, {})
+    mock_spz.get_data.return_value = mock_cat
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+    return f"amda/{catalog_uid}"
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_where_filter_gt(monkeypatch) -> None:
+    events = [
+        _make_event("2005-01-01T00:00:00", "2005-01-02T00:00:00", meta={"speed": 400}),
+        _make_event("2005-02-01T00:00:00", "2005-02-02T00:00:00", meta={"speed": 700}),
+        _make_event("2005-03-01T00:00:00", "2005-03-02T00:00:00", meta={"speed": 550}),
+    ]
+    cid = _setup_catalog_mock(monkeypatch, events)
+    result = await get_catalog(cid, where={"column": "speed", "op": "gt", "value": 500})
+    assert "error" not in result
+    assert result["nb_events_filtered"] == 2
+    speeds = [row["speed"] for row in result["sample"]]
+    assert all(s > 500 for s in speeds)
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_where_filter_contains(monkeypatch) -> None:
+    events = [
+        _make_event("2005-01-01T00:00:00", "2005-01-02T00:00:00", meta={"type": "FF shock"}),
+        _make_event("2005-02-01T00:00:00", "2005-02-02T00:00:00", meta={"type": "RR shock"}),
+        _make_event("2005-03-01T00:00:00", "2005-03-02T00:00:00", meta={"type": "FF shock"}),
+    ]
+    cid = _setup_catalog_mock(monkeypatch, events)
+    result = await get_catalog(cid, where={"column": "type", "op": "contains", "value": "FF"})
+    assert result["nb_events_filtered"] == 2
+    assert all("FF" in row["type"] for row in result["sample"])
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_sort_and_pagination(monkeypatch) -> None:
+    events = [
+        _make_event("2005-01-01T00:00:00", "2005-01-02T00:00:00", meta={"speed": 400}),
+        _make_event("2005-02-01T00:00:00", "2005-02-02T00:00:00", meta={"speed": 700}),
+        _make_event("2005-03-01T00:00:00", "2005-03-02T00:00:00", meta={"speed": 550}),
+        _make_event("2005-04-01T00:00:00", "2005-04-02T00:00:00", meta={"speed": 300}),
+    ]
+    cat_idx = _make_catalog_index("c1", "Test", "", 4, "2000-01-01", "2030-01-01")
+    mock_cat = MagicMock()
+    mock_cat.__iter__ = MagicMock(side_effect=lambda: iter(events))
+    mock_spz = _make_spz({"c1": cat_idx}, {})
+    mock_spz.get_data.return_value = mock_cat
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+    cid = "amda/c1"
+    page1 = await get_catalog(cid, sort_by="speed", descending=True, max_events=2, offset=0)
+    page2 = await get_catalog(cid, sort_by="speed", descending=True, max_events=2, offset=2)
+    speeds1 = [row["speed"] for row in page1["sample"]]
+    speeds2 = [row["speed"] for row in page2["sample"]]
+    assert speeds1 == [700, 550]
+    assert speeds2 == [400, 300]
+    assert set(speeds1).isdisjoint(set(speeds2))
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_columns_projection(monkeypatch) -> None:
+    events = [
+        _make_event(
+            "2005-01-01T00:00:00",
+            "2005-01-02T00:00:00",
+            meta={"speed": 500, "type": "FF", "mach": 3.5},
+        ),
+    ]
+    cid = _setup_catalog_mock(monkeypatch, events)
+    result = await get_catalog(cid, columns=["speed"])
+    row = result["sample"][0]
+    assert "speed" in row
+    assert "type" not in row
+    assert "mach" not in row
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_nb_events_filtered_differs_from_total(monkeypatch) -> None:
+    events = [
+        _make_event("2005-01-01T00:00:00", "2005-01-02T00:00:00", meta={"speed": 400}),
+        _make_event("2005-02-01T00:00:00", "2005-02-02T00:00:00", meta={"speed": 700}),
+    ]
+    cid = _setup_catalog_mock(monkeypatch, events)
+    result = await get_catalog(cid, where={"column": "speed", "op": "gt", "value": 600})
+    assert result["nb_events_total"] == 2
+    assert result["nb_events_filtered"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_offset_beyond_end(monkeypatch) -> None:
+    events = [_make_event("2005-01-01T00:00:00", "2005-01-02T00:00:00")]
+    cid = _setup_catalog_mock(monkeypatch, events)
+    result = await get_catalog(cid, offset=100)
+    assert "error" not in result
+    assert result["sample"] == []
+    assert result["returned"] == 0
+
+
+# ── QW3: per-component stats ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_events_timeseries_vector_stats(monkeypatch) -> None:
+    import numpy as np
+
+    cat_idx = _make_catalog_index("c1", "ICME list", "", 1, "2005-01-01", "2005-12-31")
+    events = [_make_event("2005-01-17T00:00:00", "2005-01-18T00:00:00")]
+    mock_cat = MagicMock()
+    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+
+    fake_ts = MagicMock()
+    fake_ts.time = np.array(["2005-01-17T01:00:00", "2005-01-17T02:00:00"], dtype="datetime64[s]")
+    fake_ts.values = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    fake_ts.columns = ["bx", "by", "bz"]
+    fake_ts.unit = "nT"
+
+    def get_data_side_effect(arg, intervals=None):
+        if intervals is not None:
+            return [fake_ts]
+        return mock_cat
+
+    mock_spz = _make_spz({"c1": cat_idx}, {})
+    mock_spz.get_data.side_effect = get_data_side_effect
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+
+    result = await get_events_timeseries(
+        "amda/c1", "amda/imf_gsm", "2005-01-01T00:00:00", "2005-12-31T23:59:59"
+    )
+    assert "error" not in result
+    stat = result["per_event_stats"][0]
+    assert "components" in stat
+    assert "bx" in stat["components"]
+    assert "bz" in stat["components"]
+    assert stat["components"]["bx"]["mean"] == pytest.approx(2.5)
+    assert stat["components"]["bz"]["mean"] == pytest.approx(4.5)
+    assert "magnitude" in stat
+    assert "mean" not in stat
+
+
+@pytest.mark.asyncio
+async def test_get_events_timeseries_scalar_stats_unchanged(monkeypatch) -> None:
+    import numpy as np
+
+    cat_idx = _make_catalog_index("c1", "Test", "", 1, "2005-01-01", "2005-12-31")
+    events = [_make_event("2005-01-17T00:00:00", "2005-01-18T00:00:00")]
+    mock_cat = MagicMock()
+    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+
+    fake_ts = MagicMock()
+    fake_ts.time = np.array(["2005-01-17T01:00:00"], dtype="datetime64[s]")
+    fake_ts.values = np.array([5.0])
+    fake_ts.columns = []
+    fake_ts.unit = "km/s"
+
+    def get_data_side_effect(arg, intervals=None):
+        if intervals is not None:
+            return [fake_ts]
+        return mock_cat
+
+    mock_spz = _make_spz({"c1": cat_idx}, {})
+    mock_spz.get_data.side_effect = get_data_side_effect
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+
+    result = await get_events_timeseries(
+        "amda/c1", "amda/vsw", "2005-01-01T00:00:00", "2005-12-31T23:59:59"
+    )
+    stat = result["per_event_stats"][0]
+    assert "mean" in stat
+    assert "components" not in stat

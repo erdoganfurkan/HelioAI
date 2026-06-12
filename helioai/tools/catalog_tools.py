@@ -14,6 +14,43 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+
+def _event_value(ev, column: str):
+    """Extract a column value from an event (start/stop are virtual columns)."""
+    if column == "start":
+        return str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
+    if column == "stop":
+        return str(getattr(ev, "stop_time", "") or getattr(ev, "stop", "") or "")[:19]
+    meta = getattr(ev, "meta", None)
+    if meta and isinstance(meta, dict):
+        return meta.get(column)
+    return None
+
+
+def _match(op: str, a, b) -> bool:
+    """Apply comparison operator op between event value a and filter value b."""
+    try:
+        a_f, b_f = float(a), float(b)
+        a, b = a_f, b_f
+    except (TypeError, ValueError):
+        pass
+    if op == "eq":
+        return a == b
+    if op == "ne":
+        return a != b
+    if op == "gt":
+        return a is not None and a > b
+    if op == "gte":
+        return a is not None and a >= b
+    if op == "lt":
+        return a is not None and a < b
+    if op == "lte":
+        return a is not None and a <= b
+    if op == "contains":
+        return b.lower() in str(a).lower() if a is not None else False
+    return False
+
+
 _catalog_cache: dict = {"ts": 0.0, "entries": []}
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -148,17 +185,27 @@ async def get_catalog(
     start: str | None = None,
     stop: str | None = None,
     max_events: int = 10,
+    columns: list[str] | None = None,
+    where: dict | None = None,
+    sort_by: str | None = None,
+    descending: bool = False,
+    offset: int = 0,
 ) -> dict:
     """Download and summarize an AMDA event catalog or timetable.
 
     Args:
         catalog_id: speasy uid from list_catalogs (e.g. 'amda/sharedcatalog_41').
-        start: optional ISO 8601 start — filter events that begin after this time.
-        stop:  optional ISO 8601 stop  — filter events that begin before this time.
-        max_events: maximum events to include in the sample (default 50).
+        start:      optional ISO 8601 start — filter events beginning after this time.
+        stop:       optional ISO 8601 stop  — filter events beginning before this time.
+        max_events: maximum events to include in the sample (default 10).
+        columns:    restrict the metadata columns returned per event.
+        where:      server-side row filter — {"column": str, "op": "eq|ne|gt|gte|lt|lte|contains", "value": any}.
+        sort_by:    column name to sort events by before slicing.
+        descending: sort direction (default ascending).
+        offset:     pagination offset into the filtered+sorted events.
 
     Returns catalog metadata + a sample of events (start, stop, key columns).
-    Use with get_events_timeseries to download a parameter over all events.
+    Use get_events_timeseries() to download a parameter over all events.
     """
     spz = _get_spz()
     if spz is None:
@@ -186,9 +233,11 @@ async def get_catalog(
     except Exception as e:
         return {"error": f"Failed to iterate catalog events: {e}"}
 
-    # Filter by time window (client-side)
+    nb_total = len(events)
+
+    # 1. Time window filter
     if start or stop:
-        filtered = []
+        filtered: list = []
         for ev in events:
             ev_start = str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
             if start and ev_start < start:
@@ -198,38 +247,74 @@ async def get_catalog(
             filtered.append(ev)
         events = filtered
 
-    nb_total = len(events)
-    sample = events[:max_events]
+    # 2. where filter
+    if where and isinstance(where, dict):
+        col = where.get("column", "")
+        op = where.get("op", "eq")
+        val = where.get("value")
+        if col and op and val is not None:
+            events = [ev for ev in events if _match(op, _event_value(ev, col), val)]
 
-    # Build event rows
+    nb_filtered = len(events)
+
+    # 3. sort
+    if sort_by:
+
+        def _sort_key(ev):
+            v = _event_value(ev, sort_by)
+            try:
+                return (0, float(v))
+            except (TypeError, ValueError):
+                return (1, str(v) if v is not None else "")
+
+        events = sorted(events, key=_sort_key, reverse=descending)
+
+    # 4. pagination + slice
+    offset = max(0, offset)
+    page = events[offset : offset + max_events]
+
+    # 5. Build event rows
     rows: list[dict] = []
-    for ev in sample:
+    for ev in page:
         ev_start = str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
         ev_stop = str(getattr(ev, "stop_time", "") or getattr(ev, "stop", "") or "")[:19]
         row: dict[str, Any] = {"start": ev_start, "stop": ev_stop}
         meta = getattr(ev, "meta", None)
         if meta and isinstance(meta, dict):
-            for k, v in list(meta.items())[:8]:
-                row[k] = v
+            if columns:
+                for k in columns:
+                    row[k] = meta.get(k)
+            else:
+                for k, v in list(meta.items())[:8]:
+                    row[k] = v
         rows.append(row)
 
-    columns = list(rows[0].keys()) if rows else ["start", "stop"]
+    all_columns = list(rows[0].keys()) if rows else (["start", "stop"] + (columns or []))
 
     survey_start, survey_stop = _survey(index)
+    returned = len(rows)
     return {
         "_kind": "catalog_preview",
         "catalog_id": catalog_id,
         "name": _name(index),
         "type": _spz_type(index),
         "nb_events_total": nb_total,
-        "nb_events_filtered": nb_total,
-        "columns": columns,
+        "nb_events_filtered": nb_filtered,
+        "offset": offset,
+        "returned": returned,
+        "columns": all_columns,
         "sample": rows,
         "survey_start": survey_start,
         "survey_stop": survey_stop,
         "note": (
-            f"Showing {len(sample)} of {nb_total} events. "
-            "Use get_events_timeseries() to download a parameter over all events."
+            f"Showing rows {offset}–{offset + returned} of {nb_filtered} filtered "
+            f"({nb_total} total). "
+            + (
+                f"Use offset={offset + returned} for the next page. "
+                if offset + returned < nb_filtered
+                else ""
+            )
+            + "Use get_events_timeseries() to download a parameter over all events."
         ),
     }
 
@@ -325,18 +410,44 @@ async def get_events_timeseries(
         vals[~np.isfinite(vals)] = np.nan
         vals[np.abs(vals) >= 1e30] = np.nan
         with np.errstate(all="ignore"):
-            stats.append(
-                {
-                    "event": i,
-                    "start": ev_start,
-                    "stop": ev_stop,
-                    "n_points": int(len(ts.time)),
-                    "mean": _fmt(np.nanmean(vals)),
-                    "std": _fmt(np.nanstd(vals)),
-                    "min": _fmt(np.nanmin(vals)),
-                    "max": _fmt(np.nanmax(vals)),
+            entry: dict = {
+                "event": i,
+                "start": ev_start,
+                "stop": ev_stop,
+                "n_points": int(len(ts.time)),
+            }
+            if vals.ndim == 1 or vals.shape[1] == 1:
+                flat = vals.ravel()
+                entry.update(
+                    mean=_fmt(np.nanmean(flat)),
+                    std=_fmt(np.nanstd(flat)),
+                    min=_fmt(np.nanmin(flat)),
+                    max=_fmt(np.nanmax(flat)),
+                )
+            else:
+                col_names = list(getattr(ts, "columns", None) or [])
+                if len(col_names) != vals.shape[1]:
+                    col_names = [f"c{j}" for j in range(vals.shape[1])]
+                components = {}
+                for j, cname in enumerate(col_names):
+                    col = vals[:, j]
+                    components[cname] = {
+                        "mean": _fmt(np.nanmean(col)),
+                        "std": _fmt(np.nanstd(col)),
+                        "min": _fmt(np.nanmin(col)),
+                        "max": _fmt(np.nanmax(col)),
+                    }
+                entry["components"] = components
+                n_mag = min(vals.shape[1], 3)
+                mag = np.linalg.norm(vals[:, :n_mag], axis=1)
+                mag[~np.isfinite(mag)] = np.nan
+                entry["magnitude"] = {
+                    "mean": _fmt(np.nanmean(mag)),
+                    "std": _fmt(np.nanstd(mag)),
+                    "min": _fmt(np.nanmin(mag)),
+                    "max": _fmt(np.nanmax(mag)),
                 }
-            )
+            stats.append(entry)
 
     good = [s for s in stats if s.get("status") != "no_data"]
     units = str(getattr(timeseries_list[0], "unit", "") or "") if timeseries_list else ""

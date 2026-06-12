@@ -2,12 +2,45 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from helioai.core.llm.base import LLMClient, Message
+
+_SANDBOX_WARMUP = """\
+import os; os.environ['MPLBACKEND'] = 'Agg'
+import numpy, matplotlib; matplotlib.use('Agg')
+import matplotlib.pyplot
+import scipy, scipy.signal, scipy.stats, scipy.fft
+import astropy, astropy.units
+try:
+    import speasy
+except Exception:
+    pass
+try:
+    import plasmapy, plasmapy.formulary
+except Exception:
+    pass
+"""
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _warm_sandbox_imports():
+    """Pre-compile .pyc for all sandbox heavy imports.
+
+    Runs once per test session as a subprocess so that subsequent sandbox
+    subprocess calls find pre-compiled bytecode instead of compiling from scratch.
+    Without this, cold-start CI runners time out on trivial sandbox tests.
+    """
+    subprocess.run(
+        [sys.executable, "-c", _SANDBOX_WARMUP],
+        timeout=180,
+        capture_output=True,
+    )
 
 
 @pytest.fixture

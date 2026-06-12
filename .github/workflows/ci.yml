@@ -63,10 +63,22 @@ jobs:
             hf-minilm-
 
       - name: Warm up sandbox imports (.pyc cache)
-        run: >
-          uv run python -c
-          "import numpy, matplotlib, scipy, astropy, astropy.units,
-          scipy.signal, scipy.stats, scipy.fft"
+        run: |
+          uv run python - << 'PYEOF'
+          import os; os.environ['MPLBACKEND'] = 'Agg'
+          import numpy, matplotlib; matplotlib.use('Agg')
+          import matplotlib.pyplot
+          import scipy, scipy.signal, scipy.stats, scipy.fft
+          import astropy, astropy.units
+          try:
+              import speasy
+          except Exception:
+              pass
+          try:
+              import plasmapy, plasmapy.formulary
+          except Exception:
+              pass
+          PYEOF
 
       - name: Run tests
         env:

@@ -82,6 +82,24 @@ plt.show()
     assert figure_paths[0].endswith(".png")
 
 
+async def test_plt_show_creates_pdf_alongside_png() -> None:
+    code = """
+import matplotlib.pyplot as plt
+plt.plot([1, 2, 3])
+plt.show()
+"""
+    result = await run_python(code)
+    assert result.get("error") is None
+    figure_paths = result.get("figure_paths", [])
+    assert len(figure_paths) >= 1
+    png_path = figure_paths[0]
+    pdf_path = png_path[:-4] + ".pdf"
+    assert os.path.exists(png_path)
+    assert os.path.exists(pdf_path), f"PDF not found at {pdf_path}"
+    assert png_path.endswith(".png")
+    assert pdf_path.endswith(".pdf")
+
+
 async def test_multiple_plt_show_creates_multiple_files() -> None:
     code = """
 import matplotlib

@@ -253,6 +253,35 @@ def test_figure_valid(web_client, tmp_path, monkeypatch):
     assert r.headers["content-type"] == "image/png"
 
 
+def test_figure_pdf_served(web_client, tmp_path, monkeypatch):
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
+
+    fig_dir = tmp_path / "sess123" / "run001"
+    fig_dir.mkdir(parents=True)
+    pdf = fig_dir / "fig_0.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    r = web_client.get(f"/figure?path={pdf}")
+    assert r.status_code == 200
+    assert "application/pdf" in r.headers["content-type"]
+
+
+def test_figure_unsupported_type_rejected(web_client, tmp_path, monkeypatch):
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
+
+    fig_dir = tmp_path / "sess123"
+    fig_dir.mkdir(parents=True)
+    txt = fig_dir / "data.txt"
+    txt.write_text("not a figure")
+
+    r = web_client.get(f"/figure?path={txt}")
+    assert r.status_code == 404
+
+
 # ── Code endpoint ────────────────────────────────────────────────────────────
 
 

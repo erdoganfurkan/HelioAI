@@ -28,6 +28,63 @@ from IPython.display import HTML, Image, Markdown, display
 _SESSION_ID = str(uuid.uuid4())
 _USER_ID = "jupyter"
 _llm = None
+
+
+def _param_card_html(data: dict) -> str:
+    import html
+
+    chips = [
+        ("Mission", data.get("mission")),
+        ("Instrument", data.get("instrument")),
+        ("Units", data.get("units")),
+        ("Cadence", data.get("cadence")),
+        ("Frame", data.get("coord_sys") or None),
+        ("Components", ", ".join(data.get("components") or []) or None),
+        ("Points", str(data.get("n_points")) if data.get("n_points") is not None else None),
+    ]
+    chip_html = "".join(
+        f"<span style='background:#21262d;border-radius:4px;padding:2px 7px;"
+        f"margin:2px;font-size:0.78em;color:#c9d1d9'>"
+        f"<b style='color:#8b949e'>{html.escape(label)}</b> {html.escape(str(v))}</span>"
+        for label, v in chips
+        if v
+    )
+    name_html = (
+        '&nbsp;&nbsp;<span style="color:#c9d1d9">' + html.escape(data.get("name", "")) + "</span>"
+        if data.get("name")
+        else ""
+    )
+    return (
+        f"<div style='background:#161b22;border:1px solid #58a6ff;border-radius:6px;"
+        f"padding:8px 12px;margin:4px 0;font-family:monospace;font-size:0.9em'>"
+        f"<span style='color:#58a6ff;font-weight:bold'>{html.escape(data.get('param_id', ''))}</span>"
+        f"{name_html}"
+        f"<div style='margin-top:5px'>{chip_html}</div></div>"
+    )
+
+
+def _catalog_card_html(data: dict) -> str:
+    import html
+
+    nb = data.get("nb_events", data.get("nb_events_total", "?"))
+    nb_filt = data.get("nb_events_filtered")
+    nb_str = f"{nb_filt} / {nb} filtered" if nb_filt is not None and nb_filt != nb else str(nb)
+    columns = data.get("columns") or []
+    col_html = "".join(
+        f"<span style='background:#21262d;border-radius:4px;padding:2px 7px;"
+        f"margin:2px;font-size:0.78em;color:#c9d1d9'>{html.escape(str(c))}</span>"
+        for c in columns[:8]
+    )
+    cols_section = f'<div style="margin-top:5px">{col_html}</div>' if col_html else ""
+    return (
+        f"<div style='background:#161b22;border:1px solid #3fb950;border-radius:6px;"
+        f"padding:8px 12px;margin:4px 0;font-family:monospace;font-size:0.9em'>"
+        f"<span style='color:#3fb950;font-weight:bold'>{html.escape(data.get('catalog_id', ''))}</span>"
+        f"&nbsp;&nbsp;<span style='color:#8b949e'>{html.escape(nb_str)} events</span>"
+        f"{cols_section}</div>"
+    )
+
+
 _dev_restricted: bool = True  # True = helio-only (default); False = unlocked via dev token
 
 
@@ -81,6 +138,10 @@ def _render_jupyter_event(ev: dict) -> None:
         if kind == "image":
             for path in data.get("figure_paths", []):
                 display(Image(filename=path))
+        elif kind == "parameter_card":
+            display(HTML(_param_card_html(data)))
+        elif kind == "catalog_preview":
+            display(HTML(_catalog_card_html(data)))
         elif kind == "data_preview":
             param = data.get("param_id", "")
             n = data.get("n_points", 0)

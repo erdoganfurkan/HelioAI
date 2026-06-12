@@ -86,6 +86,7 @@ _orig_show = plt.show
 def _capture_show():
     path = os.path.join(__sandbox_plot_dir, f"fig_{__sandbox_run_idx}_{len(__sandbox_figure_paths)}.png")
     plt.savefig(path, dpi=100, bbox_inches='tight')
+    plt.savefig(path[:-4] + ".pdf", dpi=300, bbox_inches='tight')
     __sandbox_figure_paths.append(path)
     plt.clf()
 plt.show = _capture_show

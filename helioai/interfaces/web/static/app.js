@@ -214,12 +214,22 @@ function renderArtifact(data) {
           + ` · <code>${path}</code>`;
         wrap.replaceChildren(fallback);
       };
+      const fname = path.split('/').pop() || 'figure.png';
       const dlBtn = document.createElement('a');
       dlBtn.className = 'img-dl';
       dlBtn.href = url;
-      dlBtn.download = 'figure.png';
+      dlBtn.download = fname;
       dlBtn.textContent = '↓ PNG';
-      wrap.append(img, dlBtn);
+
+      const pdfPath = path.replace(/\.png$/, '.pdf');
+      const pdfUrl = `/figure?path=${encodeURIComponent(pdfPath)}`;
+      const pdfBtn = document.createElement('a');
+      pdfBtn.className = 'img-dl';
+      pdfBtn.href = pdfUrl;
+      pdfBtn.download = fname.replace(/\.png$/, '.pdf');
+      pdfBtn.textContent = '↓ PDF';
+
+      wrap.append(img, dlBtn, pdfBtn);
       chatArea.append(wrap);
     });
     scrollBottom();
@@ -331,10 +341,16 @@ function renderArtifact(data) {
 const lightbox   = document.getElementById('lightbox');
 const lbImg      = document.getElementById('lb-img');
 const lbDownload = document.getElementById('lb-download');
+const lbPdf      = document.getElementById('lb-pdf');
 
 function openLightbox(url) {
   lbImg.src = url;
   lbDownload.href = url;
+  const pdfUrl = url.replace(/\.png(\?|$)/, '.pdf$1').replace(/path=[^&]+/, m => {
+    const p = decodeURIComponent(m.slice(5)).replace(/\.png$/, '.pdf');
+    return 'path=' + encodeURIComponent(p);
+  });
+  lbPdf.href = pdfUrl;
   lightbox.classList.add('open');
 }
 

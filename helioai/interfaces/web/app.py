@@ -225,6 +225,9 @@ async def serve_code(path: str):
     return PlainTextResponse(p.read_text(encoding="utf-8"))
 
 
+_FIGURE_TYPES = {".png": "image/png", ".pdf": "application/pdf"}
+
+
 @app.get("/figure")
 async def serve_figure(path: str):
     path = path.strip()
@@ -232,10 +235,14 @@ async def serve_figure(path: str):
         log.warning("figure_rejected", path=path, reason="outside workspace")
         raise HTTPException(status_code=404, detail="Not found")
     p = Path(path).resolve()
+    media_type = _FIGURE_TYPES.get(p.suffix.lower())
+    if media_type is None:
+        log.warning("figure_rejected", path=path, reason="unsupported type")
+        raise HTTPException(status_code=404, detail="Not found")
     if not p.is_file():
         log.warning("figure_rejected", path=path, reason="file not found")
         raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(p, media_type="image/png")
+    return FileResponse(p, media_type=media_type)
 
 
 def serve_web(host: str = "127.0.0.1", port: int = 7890) -> None:

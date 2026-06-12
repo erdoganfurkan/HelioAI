@@ -153,3 +153,80 @@ def test_resume_exact_match(monkeypatch, capsys):
     _make_magic().helioai_resume(full_id)
     assert magic._SESSION_ID == full_id
     assert "2 messages" in capsys.readouterr().out
+
+
+# ── HTML card helpers ──────────────────────────────────────────────────────────
+
+
+def test_param_card_html_contains_param_id():
+    from helioai.interfaces.jupyter_magic import _param_card_html
+
+    data = {
+        "param_id": "amda/imf_gsm",
+        "name": "IMF B GSM",
+        "mission": "ACE",
+        "instrument": "MAG",
+        "units": "nT",
+        "cadence": "16 s",
+        "coord_sys": "GSM",
+        "components": ["Bx", "By", "Bz"],
+        "n_points": 3600,
+    }
+    html = _param_card_html(data)
+    assert "amda/imf_gsm" in html
+    assert "ACE" in html
+    assert "nT" in html
+    assert "#58a6ff" in html  # dark-theme border color
+
+
+def test_param_card_html_escapes_xss():
+    from helioai.interfaces.jupyter_magic import _param_card_html
+
+    data = {"param_id": "<script>alert(1)</script>", "name": "", "mission": "", "units": ""}
+    html = _param_card_html(data)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_catalog_card_html_contains_catalog_id():
+    from helioai.interfaces.jupyter_magic import _catalog_card_html
+
+    data = {
+        "catalog_id": "amda/Richardson_Cane_ICME_list",
+        "nb_events_total": 341,
+        "nb_events_filtered": 20,
+        "columns": ["start", "stop", "v_transit"],
+    }
+    html = _catalog_card_html(data)
+    assert "Richardson_Cane" in html
+    assert "20" in html
+    assert "#3fb950" in html  # dark-theme border color
+
+
+def test_render_jupyter_event_parameter_card_calls_display(monkeypatch):
+    from helioai.interfaces import jupyter_magic as magic
+
+    displayed = []
+    monkeypatch.setattr(magic, "display", lambda x: displayed.append(x))
+
+    magic._render_jupyter_event(
+        {
+            "event": "artifact",
+            "data": {
+                "kind": "parameter_card",
+                "param_id": "amda/vsw",
+                "name": "Solar wind speed",
+                "mission": "ACE",
+                "units": "km/s",
+                "cadence": "64 s",
+                "coord_sys": "",
+                "components": [],
+                "n_points": 100,
+                "instrument": "",
+            },
+        }
+    )
+    assert len(displayed) == 1
+    from IPython.display import HTML
+
+    assert isinstance(displayed[0], HTML)

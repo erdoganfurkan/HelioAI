@@ -13,7 +13,7 @@ import logging
 
 from openai import AsyncAzureOpenAI
 
-from .base import LLMClient, Message, ToolCall, ToolDef
+from .base import LLMClient, Message, ToolCall, ToolDef, call_with_retry
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ class AzureOpenAIClient(LLMClient):
             api_key=api_key,
             azure_endpoint=endpoint,
             api_version=api_version,
+            max_retries=0,
         )
         self._deployment = deployment
         self._max_output_tokens = max_output_tokens
@@ -61,7 +62,7 @@ class AzureOpenAIClient(LLMClient):
             kwargs["tools"] = openai_tools
             kwargs["tool_choice"] = tool_choice
 
-        response = await self._client.chat.completions.create(**kwargs)
+        response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
         return self._from_openai_response(response)
 
     @staticmethod

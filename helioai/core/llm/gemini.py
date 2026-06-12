@@ -9,7 +9,7 @@ import uuid
 from google import genai
 from google.genai import types as gt
 
-from .base import LLMClient, Message, ToolCall, ToolDef
+from .base import LLMClient, Message, ToolCall, ToolDef, call_with_retry
 
 log = logging.getLogger(__name__)
 
@@ -50,10 +50,12 @@ class GeminiClient(LLMClient):
             system_instruction=system_prompt,
         )
 
-        response = await self._client.aio.models.generate_content(
-            model=self._model,
-            contents=contents,
-            config=config,
+        response = await call_with_retry(
+            lambda: self._client.aio.models.generate_content(
+                model=self._model,
+                contents=contents,
+                config=config,
+            )
         )
         return self._from_gemini_response(response)
 

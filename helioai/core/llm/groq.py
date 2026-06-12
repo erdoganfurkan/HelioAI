@@ -7,7 +7,7 @@ import logging
 
 from groq import AsyncGroq
 
-from .base import LLMClient, Message, ToolCall, ToolDef
+from .base import LLMClient, Message, ToolCall, ToolDef, call_with_retry
 
 log = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class GroqClient(LLMClient):
     def __init__(
         self, api_key: str, model: str, max_output_tokens: int = 4096, temperature: float = 0.2
     ):
-        self._client = AsyncGroq(api_key=api_key)
+        self._client = AsyncGroq(api_key=api_key, max_retries=0)
         self._model = model
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
@@ -44,7 +44,7 @@ class GroqClient(LLMClient):
             kwargs["tools"] = openai_tools
             kwargs["tool_choice"] = tool_choice
 
-        response = await self._client.chat.completions.create(**kwargs)
+        response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
         return self._from_openai_response(response)
 
     @staticmethod

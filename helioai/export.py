@@ -22,10 +22,12 @@ from helioai.core.session import store
 
 _PARAM_ID_RE = re.compile(r"\b(?:amda|cda|csa|ssc)/[\w./-]+")
 
-_SETUP_CELL = '''\
+_SETUP_CELL_TEMPLATE = '''\
 # HelioAI export — environment setup (mirrors the sandbox preamble)
 import warnings
 warnings.filterwarnings("ignore")
+import json, types
+from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 import speasy as spz
@@ -36,12 +38,14 @@ try:
 except ImportError:
     pf = None
 
+_HELIOAI_DATA_DIR = Path("{data_dir}")
+
 
 def export(name, data):
     """Shim for the sandbox export(): prints a numeric summary."""
     arr = np.asarray(data, dtype=float)
-    print(f"{name}: shape={arr.shape} min={np.nanmin(arr):.4g} "
-          f"max={np.nanmax(arr):.4g} mean={np.nanmean(arr):.4g}")
+    print(f"{{name}}: shape={{arr.shape}} min={{np.nanmin(arr):.4g}} "
+          f"max={{np.nanmax(arr):.4g}} mean={{np.nanmean(arr):.4g}}")
 
 
 def clean(values):
@@ -54,9 +58,49 @@ def clean(values):
 
 def param_card(var, param_id):
     """Shim for the sandbox param_card(): prints parameter metadata."""
-    print(f"{param_id}: {getattr(var, 'name', '')} "
-          f"[{getattr(var, 'unit', '')}] n_points={len(var.time)}")
+    print(f"{{param_id}}: {{getattr(var, 'name', '')}} "
+          f"[{{getattr(var, 'unit', '')}}] n_points={{len(var.time)}}")
+
+
+def load_data(name):
+    """Load a dataset saved by get_timeseries / get_events_timeseries during the session."""
+    mfile = _HELIOAI_DATA_DIR / "manifest.json"
+    if not mfile.exists():
+        raise FileNotFoundError(
+            f"manifest not found at {{mfile}} — copy the session data/ folder next to this notebook"
+        )
+    manifest = json.loads(mfile.read_text())
+    entry = manifest.get("datasets", {{}}).get(name)
+    if entry is None:
+        available = sorted(manifest.get("datasets", {{}}).keys())
+        raise KeyError(f"unknown dataset {{name!r}} — available: {{available}}")
+    z = np.load(_HELIOAI_DATA_DIR / entry["file"], allow_pickle=False)
+    if entry["kind"] == "timeseries":
+        ns = types.SimpleNamespace()
+        ns.time = z["time"]
+        ns.values = z["values"]
+        ns.columns = entry.get("columns", [])
+        ns.units = entry.get("units", "")
+        ns.param_id = entry.get("param_id", "")
+        return ns
+    elif entry["kind"] == "event_collection":
+        result = []
+        for em in entry.get("events", []):
+            if em.get("status") != "ok":
+                continue
+            i = em["idx"]
+            ev = types.SimpleNamespace()
+            ev.time = z[f"t{{i}}"]
+            ev.values = z[f"v{{i}}"]
+            ev.start = em["start"]
+            ev.stop = em["stop"]
+            ev.units = entry.get("units", "")
+            result.append(ev)
+        return result
+    raise ValueError(f"unknown dataset kind {{entry['kind']!r}}")
 '''
+
+_SETUP_CELL = _SETUP_CELL_TEMPLATE.format(data_dir="data")
 
 
 def _version(pkg: str) -> str:
@@ -119,7 +163,9 @@ def build_notebook(user_id: str, session_id: str):
     prov.append("\n> Run all cells top-to-bottom to reproduce the analysis.")
     cells.append(nbf.v4.new_markdown_cell("\n".join(prov)))
 
-    cells.append(nbf.v4.new_code_cell(_SETUP_CELL))
+    data_dir = (workspace_dir / "data") if workspace_dir else Path("data")
+    setup_cell = _SETUP_CELL_TEMPLATE.format(data_dir=str(data_dir))
+    cells.append(nbf.v4.new_code_cell(setup_cell))
 
     # Conversation narrative
     convo: list[str] = ["## Conversation"]

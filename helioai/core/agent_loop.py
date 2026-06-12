@@ -97,6 +97,7 @@ Recommended orchestration order (skip a step if the info is already known):
 Workflow rules:
 - Always use ISO 8601 times: `2024-01-01T00:00:00`
 - Always resolve parameter ids via `search_parameters` before `get_timeseries`
+- When a tool result contains a `dataset` key, access it in run_python via load_data("name") — do NOT re-download with spz.get_data
 - When `run_python` returns figure_paths, tell the user the plot was saved and is being displayed
 - When `run_python` returns exports, interpret the numerical summaries (shape, min/max/mean/std) to answer the user
 - In run_python code, call export("name", array) to share numerical results; plt.show() saves the figure to disk

@@ -75,6 +75,21 @@ async def get_timeseries(
     if n_points == 0:
         return {"error": f"Empty dataset for {param_id!r}"}
 
+    # Persist full-resolution data before downsampling
+    from helioai.datastore import save_timeseries
+
+    saved = save_timeseries(
+        param_id,
+        time=times,
+        values=values,
+        param_id=param_id,
+        units=str(getattr(var, "unit", "") or ""),
+        start=start,
+        stop=stop,
+        columns=list(getattr(var, "columns", None) or []),
+        source="get_timeseries",
+    )
+
     # Downsample if needed
     if n_points > max_points:
         step = n_points // max_points
@@ -132,7 +147,7 @@ async def get_timeseries(
     except Exception:
         pass
 
-    return {
+    result: dict = {
         "param_id": param_id,
         "name": name,
         "start": start,
@@ -146,6 +161,15 @@ async def get_timeseries(
         "n_points": n_points,
         "preview": preview,
     }
+    if saved:
+        ds_name = saved["dataset"]
+        result["dataset"] = ds_name
+        result["dataset_note"] = (
+            f"In run_python: data = load_data({ds_name!r}) — "
+            "fields: .time (datetime64), .values, .columns, .units, .param_id. "
+            "Do NOT re-download with spz.get_data."
+        )
+    return result
 
 
 async def list_missions() -> dict:

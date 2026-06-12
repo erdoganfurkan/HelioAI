@@ -120,6 +120,48 @@ def clean(values):
     return arr
 
 
+def load_data(name):
+    \"\"\"Load a dataset previously saved by get_timeseries or get_events_timeseries.\"\"\"
+    import json as _json, types as _types
+    if not _re.fullmatch(r"[a-z0-9_]+", str(name)):
+        raise ValueError(f"invalid dataset name {name!r} — use only lowercase letters, digits and underscores")
+    _ddir = os.path.join(__sandbox_plot_dir, "data")
+    _mfile = os.path.join(_ddir, "manifest.json")
+    if not os.path.exists(_mfile):
+        raise FileNotFoundError("no dataset manifest found — run get_timeseries or get_events_timeseries first")
+    _manifest = _json.loads(open(_mfile).read())
+    _entry = _manifest.get("datasets", {}).get(name)
+    if _entry is None:
+        _available = sorted(_manifest.get("datasets", {}).keys())
+        raise KeyError(f"unknown dataset {name!r} — available: {_available}")
+    _fpath = os.path.join(_ddir, _entry["file"])
+    _z = np.load(_fpath, allow_pickle=False)
+    if _entry["kind"] == "timeseries":
+        _ns = _types.SimpleNamespace()
+        _ns.time = _z["time"]
+        _ns.values = _z["values"]
+        _ns.columns = _entry.get("columns", [])
+        _ns.units = _entry.get("units", "")
+        _ns.param_id = _entry.get("param_id", "")
+        return _ns
+    elif _entry["kind"] == "event_collection":
+        _events_meta = _entry.get("events", [])
+        _result = []
+        for _em in _events_meta:
+            if _em.get("status") != "ok":
+                continue
+            _i = _em["idx"]
+            _ev = _types.SimpleNamespace()
+            _ev.time = _z[f"t{_i}"]
+            _ev.values = _z[f"v{_i}"]
+            _ev.start = _em["start"]
+            _ev.stop = _em["stop"]
+            _ev.units = _entry.get("units", "")
+            _result.append(_ev)
+        return _result
+    raise ValueError(f"unknown dataset kind {_entry['kind']!r}")
+
+
 def param_card(var, param_id: str) -> None:
     \"\"\"Emit a parameter metadata card for display in the UI. Call after spz.get_data().\"\"\"
     try:

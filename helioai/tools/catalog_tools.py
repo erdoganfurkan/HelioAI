@@ -452,7 +452,24 @@ async def get_events_timeseries(
     good = [s for s in stats if s.get("status") != "no_data"]
     units = str(getattr(timeseries_list[0], "unit", "") or "") if timeseries_list else ""
 
-    return {
+    # Persist event collection for reuse in run_python via load_data()
+    from helioai.datastore import save_event_collection
+
+    series = []
+    for ev, ts in zip(selected, timeseries_list):
+        ev_start = str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
+        ev_stop = str(getattr(ev, "stop_time", "") or getattr(ev, "stop", "") or "")[:19]
+        series.append((ev_start, ev_stop, ts if (ts is not None and len(ts.time) > 0) else None))
+
+    saved = save_event_collection(
+        param_id,
+        series=series,
+        param_id=param_id,
+        units=units,
+        source="get_events_timeseries",
+    )
+
+    result: dict = {
         "catalog_id": catalog_id,
         "param_id": param_id,
         "time_window": [start, stop],
@@ -461,11 +478,21 @@ async def get_events_timeseries(
         "n_events_with_data": len(good),
         "units": units,
         "per_event_stats": stats,
-        "note": (
+    }
+    if saved:
+        ds_name = saved["dataset"]
+        result["dataset"] = ds_name
+        result["note"] = (
+            f"In run_python: events = load_data({ds_name!r}) — "
+            "a list of objects with .time, .values, .start, .stop, .units per event. "
+            "Use the superposed_epoch recipe: load_recipe('superposed_epoch')."
+        )
+    else:
+        result["note"] = (
             "Use run_python with spz.get_data(param_id, events) for custom plots. "
             "The catalog events are speasy DateTimeRange objects iterable from the catalog."
-        ),
-    }
+        )
+    return result
 
 
 def _fmt(val) -> float | None:

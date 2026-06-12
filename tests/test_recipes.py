@@ -104,7 +104,7 @@ async def test_load_recipe_empty_name(recipes_dir):
 
 
 async def test_real_recipes_all_present():
-    """All six expected recipes must be loadable from the real data/recipes dir."""
+    """All seven expected recipes must be loadable from the real data/recipes dir."""
     expected = {
         "theta_bn",
         "mvab",
@@ -112,6 +112,7 @@ async def test_real_recipes_all_present():
         "rankine_hugoniot",
         "pressure_balance",
         "pitch_angle_dist",
+        "superposed_epoch",
     }
     result = await _rcp.list_recipes()
     assert "recipes" in result, result

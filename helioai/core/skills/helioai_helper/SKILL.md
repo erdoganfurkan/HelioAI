@@ -77,8 +77,9 @@ User: "IMF Bz during all ICMEs in 2005 — Richardson & Cane catalog"
 → get_catalog(id, start="2005-01-01", stop="2005-12-31") → inspect events
 → parameter_hunter: resolve IMF Bz param id for ACE or WIND
 → get_events_timeseries(catalog_id, param_id, "2005-01-01", "2005-12-31")
-  → returns per-event stats (mean/std/min/max) + saves data
-→ run_python: stack plot, epoch-aligned superposition, histogram
+  → returns per-event stats (mean/std/min/max per component) + dataset key
+→ run_python: events = load_data("<param>_events")   # do NOT re-download
+→ run_python: stack plot, histogram of per-event means
 ```
 
 ### 3.7 Superposed epoch analysis
@@ -86,8 +87,14 @@ User: "IMF Bz during all ICMEs in 2005 — Richardson & Cane catalog"
 User: "proton density at MMS bow-shock crossings in 2017"
 → list_catalogs(region="bow shock") → MMS_Lalti_BScrossings (2797 events)
 → get_events_timeseries(id, "amda/mms1_dis_ni_fast", "2017-01-01", "2017-12-31", max_events=50)
-→ run_python: epoch-align on crossing time, stack-plot, compute mean profile
+  → returns dataset key, e.g. "mms1_dis_ni_fast_events"
+→ load_recipe("superposed_epoch") → copy source into run_python
+→ run_python:
+    events = load_data("mms1_dis_ni_fast_events")
+    # paste recipe source → median + IQR figure + export("epoch_median", ...)
 ```
+
+**Key rule:** when `get_events_timeseries` returns a `dataset` key, always access the data in `run_python` via `load_data("name")` instead of re-calling speasy.
 
 ## 4. Formulating effective queries
 
@@ -148,6 +155,7 @@ HelioAI includes reusable Python scientific recipes accessible via two tools:
 | `rankine_hugoniot` | Rankine-Hugoniot jump conditions across a shock |
 | `pressure_balance` | Total pressure balance (thermal + magnetic + dynamic) |
 | `pitch_angle_dist` | Pitch angle distribution from particle flux data |
+| `superposed_epoch` | Superposed epoch analysis: normalize, align, composite (median + IQR) over N events |
 
 ## Output format
 

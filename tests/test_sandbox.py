@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
+import numpy as np
 import pytest
 
 from helioai.tools.sandbox import run_python
@@ -132,3 +135,55 @@ export('cleaned', cleaned)
     assert stats["n_nan"] >= 4
     assert stats["max"] is not None and stats["max"] < 1e29
     assert stats["min"] is not None and stats["min"] > -1e29
+
+
+@pytest.mark.asyncio
+async def test_superposed_epoch_recipe_end_to_end(tmp_path) -> None:
+    """End-to-end: synthetic manifest + npz → superposed_epoch recipe → figure + exports."""
+    # Build synthetic events: 20 events, each a half-sine pulse in Bz
+    rng = np.random.default_rng(0)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    arrays: dict[str, object] = {}
+    events_meta = []
+    base_t = np.datetime64("2005-01-17T00:00:00", "s")
+    for i in range(20):
+        n = int(rng.integers(30, 60))
+        t = np.array([base_t + np.timedelta64(j * 60, "s") for j in range(n)])
+        v = np.sin(np.linspace(0, np.pi, n)) + rng.normal(0, 0.1, n)
+        arrays[f"t{i}"] = t
+        arrays[f"v{i}"] = v
+        events_meta.append({"idx": i, "start": str(t[0]), "stop": str(t[-1]), "status": "ok"})
+
+    npz_path = data_dir / "bz_events.npz"
+    np.savez_compressed(npz_path, **arrays)
+
+    manifest = {
+        "datasets": {
+            "bz_events": {
+                "kind": "event_collection",
+                "file": "bz_events.npz",
+                "param_id": "amda/imf_bz",
+                "units": "nT",
+                "n_events": 20,
+                "events": events_meta,
+                "source": "test",
+                "created": "0",
+            }
+        }
+    }
+    (data_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    # Load recipe source from data/recipes/superposed_epoch.py
+    recipe_path = Path(__file__).parent.parent / "data" / "recipes" / "superposed_epoch.py"
+    recipe_src = recipe_path.read_text(encoding="utf-8")
+
+    # Strip the standalone-demo comment block and append events loading
+    setup = "events = load_data('bz_events')\n"
+    code = setup + recipe_src
+
+    result = await run_python(code, _plot_dir=str(tmp_path))
+    assert result.get("error") is None, result.get("stderr", "")
+    assert "epoch_median" in result.get("exports", {}), result
+    assert result["exports"]["epoch_median"]["n_finite"] == 100  # n_grid default
+    assert result.get("n_figures", 0) >= 1

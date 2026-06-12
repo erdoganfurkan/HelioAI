@@ -13,6 +13,8 @@ allowed_tools: [search_parameters, run_python]
 A text description of a plot is not an actual figure. To produce a figure you must call run_python with plt.show().
 You have no get_timeseries tool. All data access happens inside run_python via spz.get_data().
 
+**RULE: never re-download a persisted dataset.** If the agent loop returned a `dataset` key (e.g. from `get_timeseries` or `get_events_timeseries`), access it in run_python via `load_data("name")` — never call `spz.get_data()` again for the same data. The sandbox already has `load_data` available; no import needed.
+
 ## 1. Resolve the parameter id (if needed)
 
 If the id is missing, vague, or looks malformed (e.g. extra path segments like `cda/ACE/MAG/AC_H0_MFI/...`),
@@ -162,6 +164,25 @@ export("propagation_delay_min", round(delay_s / 60, 1))
 - If one mission has no data, report it — never silently drop it.
 - Normalize units before cross-mission arithmetic.
 - For 4 MMS spacecraft: treat as tetrahedral configuration (curlometer), not independent missions.
+
+---
+
+## Superposed epoch analysis (catalog → SEA)
+
+**Full workflow:**
+1. `get_events_timeseries(catalog_id, param_id, start, stop)` — downloads + persists all events, returns `dataset` key.
+2. `load_recipe("superposed_epoch")` — retrieve the SEA recipe source.
+3. In run_python:
+```python
+events = load_data("<param_id_last_segment>_events")  # list of ns(time, values, start, stop)
+component = 2   # e.g. Bz for a 3-component field
+units = "nT"
+param_label = "Bz GSM"
+# ... paste recipe source below (epoch_median, IQR figure, export calls) ...
+```
+
+**Never re-fetch with spz.get_data()** — the events are already persisted from step 1.
+Multi-component data: set `component=0/1/2` for Bx/By/Bz; recipe handles both scalar and vector inputs.
 
 ---
 

@@ -69,19 +69,21 @@ Sandbox tool:
 10. `run_python(code)` — isolated Python. Pre-imported: speasy (spz), numpy (np), scipy, matplotlib (plt.show() saves to disk), plasmapy (pf), astropy units (u). Helpers: export(name, array), param_card(var, param_id), clean(values) — converts CDF fill values (|x|≥1e30) and ±inf to NaN before plotting. Use for custom analysis not covered by tools above.
 
 Catalog tools (event-driven analysis):
-11. `list_catalogs(type, region)` — list AMDA catalogs + timetables (29 catalogs, 188 timetables: ICMEs, bow-shock crossings, substorms, reconnections…). Filter by keyword (e.g. region='ICME').
-12. `get_catalog(catalog_id, start, stop)` — download a catalog and inspect its events. Supports agent-side filters: columns, where, sort_by, offset for pagination — use instead of iterating raw events in run_python.
-13. `get_events_timeseries(catalog_id, param_id, start, stop)` — download a parameter for every catalog event in one speasy call. Use for superposed epoch analysis and statistical surveys across events.
+11. `list_catalogs(type, region)` — list AMDA catalogs + timetables (29 catalogs, 188 timetables: ICMEs, bow-shock crossings, substorms, reconnections…). Also lists user-saved local/ catalogs.
+12. `get_catalog(catalog_id, start, stop)` — download a catalog and inspect its events. Supports agent-side filters: columns, where, sort_by, offset for pagination — use instead of iterating raw events in run_python. Works with both amda/ and local/ prefixes.
+13. `get_events_timeseries(catalog_id, param_id, start, stop)` — download a parameter for every catalog event in one speasy call. Use for superposed epoch analysis and statistical surveys across events. Works with both amda/ and local/ prefixes.
+14. `save_catalog(name, events, description)` — save detected events as a local catalog (local/<name>). Call after event detection in run_python: export ISO pairs, then save_catalog. The saved catalog is then usable with get_catalog/get_events_timeseries.
 
-Catalog workflow: list_catalogs → get_catalog (inspect events) → get_events_timeseries (download) → run_python (plot/statistics).
+Catalog workflow: list_catalogs → get_catalog (inspect) → get_events_timeseries (download) → run_python (plot/statistics).
+Detection → catalog workflow: run_python detects events → export ISO pairs → save_catalog → get_events_timeseries("local/<name>", ...) for statistical follow-up.
 Catalog safety: NEVER print or iterate raw catalog events in run_python — even a small catalog can be thousands of rows. Use get_catalog() with filters (where/columns/sort_by) to inspect, get_events_timeseries() for statistics, and export() for numerical summaries.
 
 Skills:
-14. `list_skills()` — index of available procedural skills.
-15. `load_skill(name)` — load a skill's procedure. Call before acting on matching requests.
+15. `list_skills()` — index of available procedural skills.
+16. `load_skill(name)` — load a skill's procedure. Call before acting on matching requests.
 
 Sub-agents:
-16. `task(description, agent_role)` — delegate to a specialist. Context is EMPTY in the sub — pre-resolve all facts (parameter ids, ISO times, missions) in `description`.
+17. `task(description, agent_role)` — delegate to a specialist. Context is EMPTY in the sub — pre-resolve all facts (parameter ids, ISO times, missions) in `description`.
 
 Delegate (do NOT call underlying tools yourself) when:
 - Parameter ids are unknown → spawn ONE `parameter_hunter` for ALL parameters at once (list them in the description); it batches them in a single search

@@ -94,6 +94,11 @@ class RecipesConfig:
 
 
 @dataclass
+class CatalogsConfig:
+    catalogs_dir: Path = field(default_factory=lambda: _ROOT / "data" / "catalogs")
+
+
+@dataclass
 class DevConfig:
     # Shared-secret that unlocks unrestricted LLM access (bypasses scope guardrail).
     # Empty (default) → no token is valid → all requests stay restricted.
@@ -108,6 +113,7 @@ class Settings:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     profile: ProfileConfig = field(default_factory=ProfileConfig)
     recipes: RecipesConfig = field(default_factory=RecipesConfig)
+    catalogs: CatalogsConfig = field(default_factory=CatalogsConfig)
     dev: DevConfig = field(default_factory=DevConfig)
 
 
@@ -119,6 +125,7 @@ def _load() -> Settings:
     workspace_ttl = int(os.environ.get("HELIOAI_WORKSPACE_TTL_S", str(86400 * 7)))
     profile_path = Path(os.environ.get("HELIOAI_PROFILE", str(_ROOT / "data" / "profile.md")))
     recipes_dir = Path(os.environ.get("HELIOAI_RECIPES_DIR", str(_ROOT / "data" / "recipes")))
+    catalogs_dir = Path(os.environ.get("HELIOAI_CATALOGS_DIR", str(_ROOT / "data" / "catalogs")))
     hybrid_enabled = os.environ.get("HELIOAI_RAG_HYBRID", "1") != "0"
 
     dev_token = os.environ.get("HELIOAI_DEV_TOKEN", "")
@@ -127,6 +134,7 @@ def _load() -> Settings:
         workspace=WorkspaceConfig(workspace_dir=workspace_dir, ttl_seconds=workspace_ttl),
         profile=ProfileConfig(profile_path=profile_path),
         recipes=RecipesConfig(recipes_dir=recipes_dir),
+        catalogs=CatalogsConfig(catalogs_dir=catalogs_dir),
         rag=RAGConfig(hybrid_enabled=hybrid_enabled),
         dev=DevConfig(token=dev_token),
         llm=LLMConfig(

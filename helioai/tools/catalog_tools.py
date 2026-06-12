@@ -8,19 +8,27 @@ in one speasy call, opening the door to superposed epoch analysis.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
 
 
+def _ev_iso(ev, attr_time: str, attr_plain: str) -> str:
+    raw = str(getattr(ev, attr_time, "") or getattr(ev, attr_plain, "") or "")[:19]
+    return raw.replace(" ", "T")
+
+
 def _event_value(ev, column: str):
     """Extract a column value from an event (start/stop are virtual columns)."""
     if column == "start":
-        return str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
+        return _ev_iso(ev, "start_time", "start")
     if column == "stop":
-        return str(getattr(ev, "stop_time", "") or getattr(ev, "stop", "") or "")[:19]
+        return _ev_iso(ev, "stop_time", "stop")
     meta = getattr(ev, "meta", None)
     if meta and isinstance(meta, dict):
         return meta.get(column)
@@ -163,6 +171,25 @@ async def list_catalogs(
 
     entries = _walk_catalogs(spz)
 
+    # Append local/ catalogs (direct disk read, bypasses TTL cache)
+    try:
+        for p in sorted(_catalogs_dir().glob("*.json")):
+            data = json.loads(p.read_text(encoding="utf-8"))
+            nb = len(data.get("events", []))
+            entries.append(
+                {
+                    "id": f"local/{p.stem}",
+                    "name": data.get("name", p.stem),
+                    "type": "catalog",
+                    "nb_events": nb,
+                    "survey_start": "",
+                    "survey_stop": "",
+                    "description": data.get("description", "")[:200],
+                }
+            )
+    except Exception as e:
+        log.warning("list_catalogs: local catalog scan failed: %s", e)
+
     if type in ("catalog", "timetable"):
         entries = [e for e in entries if e["type"] == type]
 
@@ -211,22 +238,13 @@ async def get_catalog(
     if spz is None:
         return {"error": "speasy is not installed"}
 
-    uid = catalog_id.removeprefix("amda/")
-
     try:
-        flat = spz.inventories.flat_inventories.amda
-        cats = getattr(flat, "catalogs", {}) or {}
-        tts = getattr(flat, "timetables", {}) or {}
-        index = cats.get(uid) or tts.get(uid)
-        if index is None:
-            return {"error": f"Catalog {catalog_id!r} not found in AMDA inventory"}
-
-        cat = spz.get_data(index)
+        cat, index = _resolve_catalog(catalog_id, spz)
     except Exception as e:
         return {"error": f"Failed to download catalog {catalog_id!r}: {e}"}
 
     if cat is None:
-        return {"error": f"No data returned for {catalog_id!r}"}
+        return {"error": f"Catalog {catalog_id!r} not found"}
 
     try:
         events = list(cat)
@@ -239,7 +257,7 @@ async def get_catalog(
     if start or stop:
         filtered: list = []
         for ev in events:
-            ev_start = str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
+            ev_start = _ev_iso(ev, "start_time", "start")
             if start and ev_start < start:
                 continue
             if stop and ev_start > stop:
@@ -276,8 +294,8 @@ async def get_catalog(
     # 5. Build event rows
     rows: list[dict] = []
     for ev in page:
-        ev_start = str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
-        ev_stop = str(getattr(ev, "stop_time", "") or getattr(ev, "stop", "") or "")[:19]
+        ev_start = _ev_iso(ev, "start_time", "start")
+        ev_stop = _ev_iso(ev, "stop_time", "stop")
         row: dict[str, Any] = {"start": ev_start, "stop": ev_stop}
         meta = getattr(ev, "meta", None)
         if meta and isinstance(meta, dict):
@@ -291,13 +309,15 @@ async def get_catalog(
 
     all_columns = list(rows[0].keys()) if rows else (["start", "stop"] + (columns or []))
 
-    survey_start, survey_stop = _survey(index)
+    survey_start, survey_stop = _survey(index) if index is not None else ("", "")
+    cat_name = _name(index) if index is not None else catalog_id.split("/")[-1]
+    cat_type = _spz_type(index) if index is not None else "catalog"
     returned = len(rows)
     return {
         "_kind": "catalog_preview",
         "catalog_id": catalog_id,
-        "name": _name(index),
-        "type": _spz_type(index),
+        "name": cat_name,
+        "type": cat_type,
         "nb_events_total": nb_total,
         "nb_events_filtered": nb_filtered,
         "offset": offset,
@@ -347,21 +367,14 @@ async def get_events_timeseries(
     if spz is None:
         return {"error": "speasy is not installed"}
 
-    # --- resolve catalog index ---
-    uid = catalog_id.removeprefix("amda/")
+    # --- resolve catalog ---
     try:
-        flat = spz.inventories.flat_inventories.amda
-        cats = getattr(flat, "catalogs", {}) or {}
-        tts = getattr(flat, "timetables", {}) or {}
-        index = cats.get(uid) or tts.get(uid)
-        if index is None:
-            return {"error": f"Catalog {catalog_id!r} not found"}
-        cat = spz.get_data(index)
+        cat, _ = _resolve_catalog(catalog_id, spz)
     except Exception as e:
         return {"error": f"Failed to download catalog {catalog_id!r}: {e}"}
 
     if cat is None:
-        return {"error": f"No data for catalog {catalog_id!r}"}
+        return {"error": f"Catalog {catalog_id!r} not found"}
 
     # --- filter events ---
     try:
@@ -371,7 +384,7 @@ async def get_events_timeseries(
 
     filtered = []
     for ev in events:
-        ev_start = str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
+        ev_start = _ev_iso(ev, "start_time", "start")
         if ev_start < start or ev_start > stop:
             continue
         filtered.append(ev)
@@ -401,8 +414,8 @@ async def get_events_timeseries(
 
     stats: list[dict] = []
     for i, (ev, ts) in enumerate(zip(selected, timeseries_list)):
-        ev_start = str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
-        ev_stop = str(getattr(ev, "stop_time", "") or getattr(ev, "stop", "") or "")[:19]
+        ev_start = _ev_iso(ev, "start_time", "start")
+        ev_stop = _ev_iso(ev, "stop_time", "stop")
         if ts is None or len(ts.time) == 0:
             stats.append({"event": i, "start": ev_start, "stop": ev_stop, "status": "no_data"})
             continue
@@ -457,8 +470,8 @@ async def get_events_timeseries(
 
     series = []
     for ev, ts in zip(selected, timeseries_list):
-        ev_start = str(getattr(ev, "start_time", "") or getattr(ev, "start", "") or "")[:19]
-        ev_stop = str(getattr(ev, "stop_time", "") or getattr(ev, "stop", "") or "")[:19]
+        ev_start = _ev_iso(ev, "start_time", "start")
+        ev_stop = _ev_iso(ev, "stop_time", "stop")
         series.append((ev_start, ev_stop, ts if (ts is not None and len(ts.time) > 0) else None))
 
     saved = save_event_collection(
@@ -501,3 +514,114 @@ def _fmt(val) -> float | None:
         return round(v, 4) if abs(v) < 1e10 else None
     except Exception:
         return None
+
+
+# ── local catalog storage (local/<name>) ──────────────────────────────────────
+
+_LOCAL_NAME_RE = re.compile(r"^[a-z0-9_\-]{1,40}$")
+_MAX_EVENTS_LOCAL = 5000
+
+
+def _catalogs_dir() -> Path:
+    from helioai.config import settings
+
+    d = Path(settings.catalogs.catalogs_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _load_local_catalog(name: str):
+    """Load a local catalog from JSON and reconstruct a speasy Catalog."""
+    from speasy.products import Catalog, Event
+
+    path = _catalogs_dir() / f"{name}.json"
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    events = [
+        Event(ev["start"], ev["stop"], meta=ev.get("meta") or {}) for ev in data.get("events", [])
+    ]
+    return Catalog(name=data.get("name", name), meta={}, events=events)
+
+
+def _resolve_catalog(catalog_id: str, spz):
+    """Return (speasy_catalog_object, index_or_None) for amda/ or local/ prefixes."""
+    if catalog_id.startswith("local/"):
+        name = catalog_id[len("local/") :]
+        cat = _load_local_catalog(name)
+        if cat is None:
+            return None, None
+        return cat, None
+
+    uid = catalog_id.removeprefix("amda/")
+    flat = spz.inventories.flat_inventories.amda
+    cats = getattr(flat, "catalogs", {}) or {}
+    tts = getattr(flat, "timetables", {}) or {}
+    index = cats.get(uid) or tts.get(uid)
+    if index is None:
+        return None, None
+    cat = spz.get_data(index)
+    return cat, index
+
+
+async def save_catalog(
+    name: str,
+    events: list[dict],
+    description: str = "",
+) -> dict:
+    """Save a list of events as a local catalog under the local/<name> prefix.
+
+    Args:
+        name:        Catalog name — lowercase letters, digits, hyphens, underscores (1-40 chars).
+        events:      List of dicts with 'start' and 'stop' ISO 8601 strings plus optional extra keys.
+        description: Short description (optional).
+
+    Returns {"catalog_id": "local/<name>", "nb_events": N, "note": "..."}.
+    Overwrites an existing catalog with the same name.
+    Use list_catalogs() then get_catalog("local/<name>") to inspect it.
+    """
+    if not _LOCAL_NAME_RE.fullmatch(name):
+        return {
+            "error": (
+                f"Invalid catalog name {name!r} — "
+                "use 1-40 lowercase letters, digits, hyphens or underscores"
+            )
+        }
+    if not events:
+        return {"error": "events list is empty — provide at least one event"}
+    if len(events) > _MAX_EVENTS_LOCAL:
+        return {"error": f"Too many events ({len(events)} > {_MAX_EVENTS_LOCAL} cap)"}
+
+    validated: list[dict] = []
+    for i, ev in enumerate(events):
+        s = str(ev.get("start", "")).strip()
+        e = str(ev.get("stop", "")).strip()
+        if not s or not e:
+            return {"error": f"Event {i}: 'start' and 'stop' are required"}
+        if s >= e:
+            return {"error": f"Event {i}: start >= stop ({s!r} >= {e!r})"}
+        meta = {k: v for k, v in ev.items() if k not in ("start", "stop")}
+        validated.append({"start": s, "stop": e, "meta": meta})
+
+    import datetime
+
+    payload = {
+        "name": name,
+        "description": description,
+        "created": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "events": validated,
+    }
+    path = _catalogs_dir() / f"{name}.json"
+    overwritten = path.exists()
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "catalog_id": f"local/{name}",
+        "nb_events": len(validated),
+        "overwritten": overwritten,
+        "note": (
+            f"Saved {len(validated)} events as local/{name}. "
+            "Use get_catalog('local/" + name + "') to inspect or "
+            "get_events_timeseries('local/" + name + "', param_id, ...) to analyse."
+        ),
+    }

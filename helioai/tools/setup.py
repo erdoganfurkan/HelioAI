@@ -387,6 +387,40 @@ registry.register(
 
 
 registry.register(
+    name="save_catalog",
+    description=(
+        "Save a list of detected events as a local catalog under the local/<name> prefix. "
+        "Use after detecting events in run_python (e.g. IP shocks, reconnection jets). "
+        "The saved catalog is then accessible via list_catalogs(), get_catalog('local/<name>'), "
+        "and get_events_timeseries('local/<name>', ...) — enabling full statistical follow-up."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Catalog name — 1-40 lowercase letters, digits, hyphens, underscores.",
+            },
+            "events": {
+                "type": "array",
+                "description": (
+                    "List of event dicts. Each must have 'start' and 'stop' (ISO 8601). "
+                    "Any extra keys become event metadata columns."
+                ),
+                "items": {"type": "object"},
+            },
+            "description": {
+                "type": "string",
+                "description": "Short description of the catalog (optional).",
+                "default": "",
+            },
+        },
+        "required": ["name", "events"],
+    },
+)(_cat.save_catalog)
+
+
+registry.register(
     name="load_recipe",
     description=(
         "Load the source code of a named derived recipe. "

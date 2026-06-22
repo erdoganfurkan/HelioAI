@@ -107,7 +107,10 @@ def test_walk_catalogs_ttl_cache() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_catalogs_returns_all(monkeypatch) -> None:
+async def test_list_catalogs_returns_all(monkeypatch, tmp_path) -> None:
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.catalogs, "catalogs_dir", str(tmp_path))
     cat_idx = _make_catalog_index(
         "sharedcatalog_41", "ICME list", "Richardson & Cane ICME", 341, "1996-01-01", "2022-12-31"
     )
@@ -131,7 +134,10 @@ async def test_list_catalogs_returns_all(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_catalogs_type_filter(monkeypatch) -> None:
+async def test_list_catalogs_type_filter(monkeypatch, tmp_path) -> None:
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.catalogs, "catalogs_dir", str(tmp_path))
     cat_idx = _make_catalog_index("c1", "Cat", "", 10, "", "")
     tt_idx = _make_catalog_index("t1", "TT", "", 5, "", "", "TimetableIndex")
     mock_spz = _make_spz({"c1": cat_idx}, {"t1": tt_idx})
@@ -455,6 +461,115 @@ async def test_get_events_timeseries_vector_stats(monkeypatch) -> None:
     assert stat["components"]["bz"]["mean"] == pytest.approx(4.5)
     assert "magnitude" in stat
     assert "mean" not in stat
+
+
+@pytest.mark.asyncio
+async def test_get_events_timeseries_cap_warning_present(monkeypatch) -> None:
+    """cap_warning is set when n_events_found > max_events."""
+    import numpy as np
+
+    cat_idx = _make_catalog_index("c1", "ICME list", "", 5, "2005-01-01", "2005-12-31")
+    events = [
+        _make_event(f"2005-0{i}-01T00:00:00", f"2005-0{i}-02T00:00:00") for i in range(1, 6)
+    ]
+    mock_cat = MagicMock()
+    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+
+    fake_ts = MagicMock()
+    fake_ts.time = np.array(["2005-01-01T01:00:00"], dtype="datetime64[s]")
+    fake_ts.values = np.array([5.0])
+    fake_ts.unit = "nT"
+
+    def get_data_side_effect(arg, intervals=None):
+        if intervals is not None:
+            return [fake_ts] * len(intervals)
+        return mock_cat
+
+    mock_spz = _make_spz({"c1": cat_idx}, {})
+    mock_spz.get_data.side_effect = get_data_side_effect
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+
+    result = await get_events_timeseries(
+        "amda/c1", "amda/imf_gsm", "2005-01-01T00:00:00", "2005-12-31T23:59:59",
+        max_events=3,
+    )
+    assert "error" not in result
+    assert result["n_events_found"] == 5
+    assert result["n_events_downloaded"] == 3
+    assert "cap_warning" in result
+    assert "3/5" in result["cap_warning"]
+
+
+@pytest.mark.asyncio
+async def test_get_events_timeseries_no_cap_warning_when_not_truncated(monkeypatch) -> None:
+    """cap_warning is absent when all events are downloaded."""
+    import numpy as np
+
+    cat_idx = _make_catalog_index("c1", "ICME list", "", 2, "2005-01-01", "2005-12-31")
+    events = [
+        _make_event("2005-01-01T00:00:00", "2005-01-02T00:00:00"),
+        _make_event("2005-02-01T00:00:00", "2005-02-02T00:00:00"),
+    ]
+    mock_cat = MagicMock()
+    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+
+    fake_ts = MagicMock()
+    fake_ts.time = np.array(["2005-01-01T01:00:00"], dtype="datetime64[s]")
+    fake_ts.values = np.array([5.0])
+    fake_ts.unit = "nT"
+
+    def get_data_side_effect(arg, intervals=None):
+        if intervals is not None:
+            return [fake_ts] * len(intervals)
+        return mock_cat
+
+    mock_spz = _make_spz({"c1": cat_idx}, {})
+    mock_spz.get_data.side_effect = get_data_side_effect
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+
+    result = await get_events_timeseries(
+        "amda/c1", "amda/imf_gsm", "2005-01-01T00:00:00", "2005-12-31T23:59:59",
+    )
+    assert "error" not in result
+    assert "cap_warning" not in result
+
+
+@pytest.mark.asyncio
+async def test_get_events_timeseries_per_event_stats_slimmed_above_10(monkeypatch) -> None:
+    """per_event_stats is trimmed to 10 representative events when > 10 are downloaded."""
+    import numpy as np
+
+    n = 12
+    cat_idx = _make_catalog_index("c1", "ICME list", "", n, "2005-01-01", "2005-12-31")
+    events = [
+        _make_event(f"2005-{i:02d}-01T00:00:00", f"2005-{i:02d}-02T00:00:00") for i in range(1, n + 1)
+    ]
+    mock_cat = MagicMock()
+    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+
+    fake_ts = MagicMock()
+    fake_ts.time = np.array(["2005-01-01T01:00:00"], dtype="datetime64[s]")
+    fake_ts.values = np.array([5.0])
+    fake_ts.unit = "nT"
+
+    def get_data_side_effect(arg, intervals=None):
+        if intervals is not None:
+            return [fake_ts] * len(intervals)
+        return mock_cat
+
+    mock_spz = _make_spz({"c1": cat_idx}, {})
+    mock_spz.get_data.side_effect = get_data_side_effect
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+
+    result = await get_events_timeseries(
+        "amda/c1", "amda/imf_gsm", "2005-01-01T00:00:00", "2005-12-31T23:59:59",
+        max_events=n,
+    )
+    assert "error" not in result
+    assert result["n_events_downloaded"] == n
+    assert len(result["per_event_stats"]) == 10
+    assert "stats_note" in result
+    assert str(n) in result["stats_note"]
 
 
 @pytest.mark.asyncio

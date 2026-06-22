@@ -164,11 +164,7 @@ async def get_timeseries(
     if saved:
         ds_name = saved["dataset"]
         result["dataset"] = ds_name
-        result["dataset_note"] = (
-            f"In run_python: data = load_data({ds_name!r}) — "
-            "fields: .time (datetime64), .values, .columns, .units, .param_id. "
-            "Do NOT re-download with spz.get_data."
-        )
+        result["dataset_note"] = f"use load_data({ds_name!r}) in run_python — never spz.get_data"
     return result
 
 

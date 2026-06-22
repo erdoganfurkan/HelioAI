@@ -30,7 +30,7 @@ def test_data_analyst_tools() -> None:
     role = AGENT_ROLES["data_analyst"]
     assert "run_python" in role.allowed_tools
     assert "search_parameters" in role.allowed_tools
-    assert "get_timeseries" not in role.allowed_tools
+    assert "get_timeseries" in role.allowed_tools
 
 
 def test_plasma_physicist_tools() -> None:
@@ -77,7 +77,7 @@ def test_task_tool_def_description_mentions_all_roles() -> None:
     "role_name,forbidden",
     [
         ("parameter_hunter", ["get_timeseries", "run_python"]),
-        ("data_analyst", ["get_timeseries", "list_missions"]),
+        ("data_analyst", ["list_missions"]),
         ("plasma_physicist", ["get_timeseries"]),
     ],
 )

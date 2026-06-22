@@ -73,16 +73,18 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "You specialise in data analysis, visualisation, multi-mission comparison, "
             "and plasma event detection. "
             "Use search_parameters if any parameter id is missing or unclear. "
-            "Then call run_python — download data with spz.get_data() inside the sandbox, "
-            "compute what is needed, and call plt.show() to save the figure. "
+            "CRITICAL — to avoid sandbox timeouts: always call get_timeseries BEFORE run_python "
+            "to download data outside the sandbox, then access it via load_data('name') inside run_python. "
+            "NEVER call spz.get_data() inside run_python for data you can download with get_timeseries first. "
             "run_python is the ONLY tool that produces figures. "
             "A text description of a plot is not a plot. Always call run_python. "
-            "For multi-mission work: resolve param ids per mission, download into the same "
-            "sandbox, align on a common time grid, and produce a combined comparison plot. "
+            "For multi-mission work: call get_timeseries once per mission, then load all datasets "
+            "in a single run_python call via load_data(). "
+            "For SEA: call get_events_timeseries first, then load_recipe('superposed_epoch'), then run_python. "
             "For event detection: implement threshold / derivative / boundary criteria in "
             "run_python; report event times, key signatures, and SPASE PhenomenonType if applicable."
         ),
-        allowed_tools=("search_parameters", "run_python"),
+        allowed_tools=("search_parameters", "get_timeseries", "get_events_timeseries", "load_recipe", "run_python"),
         max_turns=8,
         auto_load_skills=("data_analyst",),
     ),

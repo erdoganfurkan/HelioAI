@@ -377,8 +377,12 @@ registry.register(
             },
             "max_events": {
                 "type": "integer",
-                "description": "Max events to download (default 20).",
-                "default": 20,
+                "description": (
+                    "Max events to download (default 50). "
+                    "For a statistically valid SEA, use 50–100. "
+                    "Result includes cap_warning when events are truncated."
+                ),
+                "default": 50,
             },
         },
         "required": ["catalog_id", "param_id", "start", "stop"],

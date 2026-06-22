@@ -30,6 +30,10 @@ htmlcov/
 data/chroma/
 data/sessions.db
 data/workspace/
+data/catalogs/
+
+# Local MCP config
+.mcp.json
 
 # Demo recordings
 demo/
@@ -46,3 +50,8 @@ Thumbs.db
 
 # uv
 .uv/
+
+# Local workflow — not for the repo
+CLAUDE.md
+tasks/
+notes_bug.txt

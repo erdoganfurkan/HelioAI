@@ -2,7 +2,7 @@
 name: data_analyst
 description: Download and analyze heliophysics time series — statistics, FFT, multi-mission comparison, event detection, plotting.
 when_to_use: The user wants to retrieve data, compute statistics, plot a time series, compare multiple missions, detect plasma events (shocks, reconnection, CME, SIR), or run any numerical analysis on speasy parameters.
-allowed_tools: [search_parameters, run_python]
+allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_recipe, run_python]
 ---
 
 # Procedure — analyze a time series
@@ -11,9 +11,12 @@ allowed_tools: [search_parameters, run_python]
 
 **run_python is the only tool that produces figures and numerical results.**
 A text description of a plot is not an actual figure. To produce a figure you must call run_python with plt.show().
-You have no get_timeseries tool. All data access happens inside run_python via spz.get_data().
 
-**RULE: never re-download a persisted dataset.** If the agent loop returned a `dataset` key (e.g. from `get_timeseries` or `get_events_timeseries`), access it in run_python via `load_data("name")` — never call `spz.get_data()` again for the same data. The sandbox already has `load_data` available; no import needed.
+**Download outside the sandbox — always.**
+Call `get_timeseries` (or `get_events_timeseries`) BEFORE `run_python`. The sandbox has a 60 s timeout; speasy downloads can easily exceed it.
+- After `get_timeseries`: the result contains a `dataset` key → use `load_data("name")` inside run_python.
+- NEVER call `spz.get_data()` inside run_python for data you can download with `get_timeseries` first.
+- Only use `spz.get_data()` inside run_python for data the agent loop has not already fetched.
 
 ## 1. Resolve the parameter id (if needed)
 
@@ -21,19 +24,23 @@ If the id is missing, vague, or looks malformed (e.g. extra path segments like `
 call `search_parameters` first with a plain-English query (e.g. `"ACE magnetic field GSE components"`).
 Pick the shortest matching id from the results.
 
-## 2. Call run_python immediately
+## 2. Download then plot
 
-Do not add intermediate steps. Call run_python with the full analysis code.
-The sandbox has speasy (spz), numpy (np), matplotlib (plt), scipy, astropy.
+Step A — call `get_timeseries` (outside the sandbox, no timeout risk):
+```
+get_timeseries(param_id="cda/AC_H0_MFI/BGSEc", start="2008-01-01T00:00:00", stop="2008-01-02T00:00:00")
+```
+The result includes a `dataset` key (e.g. `"BGSEc"`).
+
+Step B — call `run_python` using `load_data`:
 
 ### Template — time series plot
 
 ```python
-import speasy as spz
 import numpy as np
 import matplotlib.pyplot as plt
 
-var = spz.get_data("cda/AC_H0_MFI/BGSEc", "2008-01-01T00:00:00", "2008-01-02T00:00:00")
+var = load_data("BGSEc")          # no import needed; uses dataset key from get_timeseries
 param_card(var, "cda/AC_H0_MFI/BGSEc")  # displays metadata card in UI
 t = var.time
 data = clean(var.values)  # shape (N,) or (N, components) — masks CDF fill values

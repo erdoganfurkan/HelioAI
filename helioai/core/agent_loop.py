@@ -36,6 +36,7 @@ from helioai.core.skills_loader import load_skill as load_skill_body, list_skill
 from helioai.core.sub_agents import TASK_TOOL_NAME, stream_subagent, task_tool_def
 from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
     _extract_artifact,
+    _history_tool_result,
     _summarize_tool_result,
     emit_post_tool_events,
     inject_run_python_args,
@@ -49,6 +50,11 @@ log = get_logger(__name__)
 SYSTEM_PROMPT = """You are HelioAI, an expert scientific assistant for heliophysics and space plasma research.
 
 You have access to tools that let you explore and analyze data from 70+ space missions (MMS, Solar Orbiter, Cluster, WIND, ACE, Cassini, MEX, Parker Solar Probe, HelioSwarm…) via the speasy library, run Python code for scientific analysis, and search through 83 000+ parameters.
+
+## CRITICAL RULES (read before every tool call)
+- NEVER call spz.get_data() inside run_python if a tool result has a `dataset` key — use load_data("name") instead. No import needed in the sandbox.
+- Always use ISO 8601 times: `2024-01-01T00:00:00`
+- Always resolve parameter ids via `search_parameters` before calling `get_timeseries`
 
 Discovery tools:
 1. `search_parameters` — semantic search over 83k+ speasy parameters. Use English queries. If the user is vague (e.g. "solar wind density"), rewrite as matchable terms (e.g. "solar wind ion number density near Earth ACE WIND"). For several parameters, pass `queries=[...]` to resolve them in one call.
@@ -97,9 +103,6 @@ Recommended orchestration order (skip a step if the info is already known):
 4. You (main agent) — interpret and reply, always citing the param_ids used
 
 Workflow rules:
-- Always use ISO 8601 times: `2024-01-01T00:00:00`
-- Always resolve parameter ids via `search_parameters` before `get_timeseries`
-- When a tool result contains a `dataset` key, access it in run_python via load_data("name") — do NOT re-download with spz.get_data
 - When `run_python` returns figure_paths, tell the user the plot was saved and is being displayed
 - When `run_python` returns exports, interpret the numerical summaries (shape, min/max/mean/std) to answer the user
 - In run_python code, call export("name", array) to share numerical results; plt.show() saves the figure to disk
@@ -338,7 +341,7 @@ async def stream_chat(
                 if sub_end_event is not None:
                     yield {"event": "sub_agent_end", "data": sub_end_event}
 
-                history.append(Message(role="tool", tool_call_id=tc.id, content=result))
+                history.append(Message(role="tool", tool_call_id=tc.id, content=_history_tool_result(tc.name, result)))
 
         log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
         store.save(user_id, session_id, history)

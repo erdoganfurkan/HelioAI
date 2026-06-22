@@ -17,6 +17,24 @@ from pathlib import Path
 from typing import Iterator
 
 
+# Tools whose results contain large lists (per_event_stats, sample rows) that would
+# flood the LLM context. All other tools pass through untouched so the LLM can reason
+# on their content (search results, mission lists, catalog ids, etc.).
+_HEAVY_TOOLS: frozenset[str] = frozenset({"get_events_timeseries", "get_catalog"})
+
+
+def _history_tool_result(tool_name: str, result_text: str) -> str:
+    """Return the string that gets appended to history for a completed tool call.
+
+    Heavy tools (SEA, catalog preview) are summarized to avoid flooding the context.
+    All other tools — especially search_parameters — are passed through verbatim so
+    the LLM can see the actual candidates and make an informed choice.
+    """
+    if tool_name in _HEAVY_TOOLS:
+        return _summarize_tool_result(result_text, max_chars=600)
+    return result_text
+
+
 def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
     try:
         data = json.loads(result_text)
@@ -24,7 +42,7 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
         return result_text[:max_chars]
     if not isinstance(data, dict):
         return str(data)[:max_chars] if not isinstance(data, list) else f"[list, {len(data)} items]"
-    if "error" in data:
+    if data.get("error"):
         return f"error: {str(data['error'])[:max_chars]}"
     keep = {}
     for k, v in data.items():

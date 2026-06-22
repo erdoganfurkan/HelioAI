@@ -344,7 +344,7 @@ async def get_events_timeseries(
     param_id: str,
     start: str,
     stop: str,
-    max_events: int = 20,
+    max_events: int = 50,
 ) -> dict:
     """Download a parameter for every event in a catalog window (superposed epoch).
 
@@ -396,6 +396,11 @@ async def get_events_timeseries(
         }
 
     selected = filtered[:max_events]
+    cap_warning = (
+        f"Showing first {max_events}/{len(filtered)} events. "
+        f"Pass max_events={len(filtered)} for full SEA."
+        if len(filtered) > max_events else None
+    )
 
     # --- batch download: ONE speasy call for all events ---
     try:
@@ -465,6 +470,16 @@ async def get_events_timeseries(
     good = [s for s in stats if s.get("status") != "no_data"]
     units = str(getattr(timeseries_list[0], "unit", "") or "") if timeseries_list else ""
 
+    if len(stats) > 10:
+        per_event_stats = stats[:5] + stats[-5:]
+        stats_note = (
+            f"per_event_stats shows first 5 + last 5 of {len(stats)} events. "
+            "Full data available via load_data()."
+        )
+    else:
+        per_event_stats = stats
+        stats_note = None
+
     # Persist event collection for reuse in run_python via load_data()
     from helioai.datastore import save_event_collection
 
@@ -490,8 +505,12 @@ async def get_events_timeseries(
         "n_events_downloaded": len(selected),
         "n_events_with_data": len(good),
         "units": units,
-        "per_event_stats": stats,
+        "per_event_stats": per_event_stats,
     }
+    if cap_warning:
+        result["cap_warning"] = cap_warning
+    if stats_note:
+        result["stats_note"] = stats_note
     if saved:
         ds_name = saved["dataset"]
         result["dataset"] = ds_name

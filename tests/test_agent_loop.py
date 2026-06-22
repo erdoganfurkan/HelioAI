@@ -196,17 +196,19 @@ def test_extract_catalog_no_marker_returns_empty() -> None:
 
 def test_summarize_tool_result_max_chars_600() -> None:
     """History uses max_chars=600 — enough to preserve key scalar fields."""
-    payload = json.dumps({
-        "catalog_id": "amda/c1",
-        "param_id": "amda/imf_gsm",
-        "n_events_found": 80,
-        "n_events_downloaded": 50,
-        "n_events_with_data": 48,
-        "units": "nT",
-        "per_event_stats": [{"event": i, "mean": float(i)} for i in range(50)],
-        "dataset": "imf_gsm_events",
-        "cap_warning": "Showing first 50/80 events. Pass max_events=80 for full SEA.",
-    })
+    payload = json.dumps(
+        {
+            "catalog_id": "amda/c1",
+            "param_id": "amda/imf_gsm",
+            "n_events_found": 80,
+            "n_events_downloaded": 50,
+            "n_events_with_data": 48,
+            "units": "nT",
+            "per_event_stats": [{"event": i, "mean": float(i)} for i in range(50)],
+            "dataset": "imf_gsm_events",
+            "cap_warning": "Showing first 50/80 events. Pass max_events=80 for full SEA.",
+        }
+    )
     summary = _summarize_tool_result(payload, max_chars=600)
     data = json.loads(summary)
     assert data["n_events_found"] == 80
@@ -217,12 +219,14 @@ def test_summarize_tool_result_max_chars_600() -> None:
 
 def test_summarize_dataset_key_preserved_short_string() -> None:
     """dataset key (short string) is always preserved in history summary."""
-    payload = json.dumps({
-        "dataset": "ace_bgse",
-        "dataset_note": "use load_data('ace_bgse') in run_python — never spz.get_data",
-        "n_points": 86400,
-        "units": "nT",
-    })
+    payload = json.dumps(
+        {
+            "dataset": "ace_bgse",
+            "dataset_note": "use load_data('ace_bgse') in run_python — never spz.get_data",
+            "n_points": 86400,
+            "units": "nT",
+        }
+    )
     summary = _summarize_tool_result(payload, max_chars=600)
     data = json.loads(summary)
     assert data["dataset"] == "ace_bgse"
@@ -234,14 +238,20 @@ def test_summarize_dataset_key_preserved_short_string() -> None:
 
 def test_history_search_parameters_passed_verbatim() -> None:
     """search_parameters results must reach the LLM verbatim — LLM selects the param_id from this list."""
-    payload = json.dumps({
-        "query": "solar wind proton density",
-        "provider": None,
-        "results": [
-            {"id": "cda/AC_H0_SWI/Np", "description": "ACE SWICS Proton Density", "score": 0.91},
-            {"id": "amda/imf_gsm", "description": "IMF GSM components", "score": 0.42},
-        ],
-    })
+    payload = json.dumps(
+        {
+            "query": "solar wind proton density",
+            "provider": None,
+            "results": [
+                {
+                    "id": "cda/AC_H0_SWI/Np",
+                    "description": "ACE SWICS Proton Density",
+                    "score": 0.91,
+                },
+                {"id": "amda/imf_gsm", "description": "IMF GSM components", "score": 0.42},
+            ],
+        }
+    )
     result = _history_tool_result("search_parameters", payload)
     data = json.loads(result)
     assert isinstance(data["results"], list), "results must be a list, not '[N items]'"
@@ -249,7 +259,9 @@ def test_history_search_parameters_passed_verbatim() -> None:
 
 
 def test_history_list_missions_passed_verbatim() -> None:
-    payload = json.dumps({"missions": [{"id": "ace", "name": "ACE"}, {"id": "wind", "name": "Wind"}]})
+    payload = json.dumps(
+        {"missions": [{"id": "ace", "name": "ACE"}, {"id": "wind", "name": "Wind"}]}
+    )
     result = _history_tool_result("list_missions", payload)
     data = json.loads(result)
     assert isinstance(data["missions"], list)
@@ -257,27 +269,33 @@ def test_history_list_missions_passed_verbatim() -> None:
 
 def test_history_get_events_timeseries_summarized() -> None:
     """get_events_timeseries (SEA) must be summarized — per_event_stats can have 50+ entries."""
-    payload = json.dumps({
-        "catalog_id": "amda/c1",
-        "param_id": "amda/imf_gsm",
-        "n_events_found": 80,
-        "per_event_stats": [{"event": i, "mean": float(i)} for i in range(50)],
-        "dataset": "imf_gsm_events",
-    })
+    payload = json.dumps(
+        {
+            "catalog_id": "amda/c1",
+            "param_id": "amda/imf_gsm",
+            "n_events_found": 80,
+            "per_event_stats": [{"event": i, "mean": float(i)} for i in range(50)],
+            "dataset": "imf_gsm_events",
+        }
+    )
     result = _history_tool_result("get_events_timeseries", payload)
     data = json.loads(result)
-    assert data["per_event_stats"] == "[50 items]", "per_event_stats must be collapsed to avoid context flood"
+    assert data["per_event_stats"] == "[50 items]", (
+        "per_event_stats must be collapsed to avoid context flood"
+    )
     assert data["dataset"] == "imf_gsm_events"
 
 
 def test_history_get_catalog_summarized() -> None:
     """get_catalog sample rows must be summarized."""
-    payload = json.dumps({
-        "catalog_id": "amda/c1",
-        "nb_events_total": 341,
-        "sample": [{"start": "2008-01-01", "stop": "2008-01-02"} for _ in range(20)],
-        "_kind": "catalog_preview",
-    })
+    payload = json.dumps(
+        {
+            "catalog_id": "amda/c1",
+            "nb_events_total": 341,
+            "sample": [{"start": "2008-01-01", "stop": "2008-01-02"} for _ in range(20)],
+            "_kind": "catalog_preview",
+        }
+    )
     result = _history_tool_result("get_catalog", payload)
     data = json.loads(result)
     assert data["sample"] == "[20 items]"

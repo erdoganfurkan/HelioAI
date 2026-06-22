@@ -341,7 +341,13 @@ async def stream_chat(
                 if sub_end_event is not None:
                     yield {"event": "sub_agent_end", "data": sub_end_event}
 
-                history.append(Message(role="tool", tool_call_id=tc.id, content=_history_tool_result(tc.name, result)))
+                history.append(
+                    Message(
+                        role="tool",
+                        tool_call_id=tc.id,
+                        content=_history_tool_result(tc.name, result),
+                    )
+                )
 
         log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
         store.save(user_id, session_id, history)

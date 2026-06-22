@@ -399,7 +399,8 @@ async def get_events_timeseries(
     cap_warning = (
         f"Showing first {max_events}/{len(filtered)} events. "
         f"Pass max_events={len(filtered)} for full SEA."
-        if len(filtered) > max_events else None
+        if len(filtered) > max_events
+        else None
     )
 
     # --- batch download: ONE speasy call for all events ---

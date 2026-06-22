@@ -84,7 +84,13 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "For event detection: implement threshold / derivative / boundary criteria in "
             "run_python; report event times, key signatures, and SPASE PhenomenonType if applicable."
         ),
-        allowed_tools=("search_parameters", "get_timeseries", "get_events_timeseries", "load_recipe", "run_python"),
+        allowed_tools=(
+            "search_parameters",
+            "get_timeseries",
+            "get_events_timeseries",
+            "load_recipe",
+            "run_python",
+        ),
         max_turns=8,
         auto_load_skills=("data_analyst",),
     ),

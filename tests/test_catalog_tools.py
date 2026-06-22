@@ -469,9 +469,7 @@ async def test_get_events_timeseries_cap_warning_present(monkeypatch) -> None:
     import numpy as np
 
     cat_idx = _make_catalog_index("c1", "ICME list", "", 5, "2005-01-01", "2005-12-31")
-    events = [
-        _make_event(f"2005-0{i}-01T00:00:00", f"2005-0{i}-02T00:00:00") for i in range(1, 6)
-    ]
+    events = [_make_event(f"2005-0{i}-01T00:00:00", f"2005-0{i}-02T00:00:00") for i in range(1, 6)]
     mock_cat = MagicMock()
     mock_cat.__iter__ = MagicMock(return_value=iter(events))
 
@@ -490,7 +488,10 @@ async def test_get_events_timeseries_cap_warning_present(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_events_timeseries(
-        "amda/c1", "amda/imf_gsm", "2005-01-01T00:00:00", "2005-12-31T23:59:59",
+        "amda/c1",
+        "amda/imf_gsm",
+        "2005-01-01T00:00:00",
+        "2005-12-31T23:59:59",
         max_events=3,
     )
     assert "error" not in result
@@ -528,7 +529,10 @@ async def test_get_events_timeseries_no_cap_warning_when_not_truncated(monkeypat
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_events_timeseries(
-        "amda/c1", "amda/imf_gsm", "2005-01-01T00:00:00", "2005-12-31T23:59:59",
+        "amda/c1",
+        "amda/imf_gsm",
+        "2005-01-01T00:00:00",
+        "2005-12-31T23:59:59",
     )
     assert "error" not in result
     assert "cap_warning" not in result
@@ -542,7 +546,8 @@ async def test_get_events_timeseries_per_event_stats_slimmed_above_10(monkeypatc
     n = 12
     cat_idx = _make_catalog_index("c1", "ICME list", "", n, "2005-01-01", "2005-12-31")
     events = [
-        _make_event(f"2005-{i:02d}-01T00:00:00", f"2005-{i:02d}-02T00:00:00") for i in range(1, n + 1)
+        _make_event(f"2005-{i:02d}-01T00:00:00", f"2005-{i:02d}-02T00:00:00")
+        for i in range(1, n + 1)
     ]
     mock_cat = MagicMock()
     mock_cat.__iter__ = MagicMock(return_value=iter(events))
@@ -562,7 +567,10 @@ async def test_get_events_timeseries_per_event_stats_slimmed_above_10(monkeypatc
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_events_timeseries(
-        "amda/c1", "amda/imf_gsm", "2005-01-01T00:00:00", "2005-12-31T23:59:59",
+        "amda/c1",
+        "amda/imf_gsm",
+        "2005-01-01T00:00:00",
+        "2005-12-31T23:59:59",
         max_events=n,
     )
     assert "error" not in result

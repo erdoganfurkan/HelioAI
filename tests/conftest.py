@@ -35,12 +35,19 @@ def _warm_sandbox_imports():
     Runs once per test session as a subprocess so that subsequent sandbox
     subprocess calls find pre-compiled bytecode instead of compiling from scratch.
     Without this, cold-start CI runners time out on trivial sandbox tests.
+
+    Best-effort only: a slow/hanging warmup (e.g. speasy doing a network
+    inventory refresh) must not fail the whole test session over a perf
+    optimization — fall through and let tests cold-start instead.
     """
-    subprocess.run(
-        [sys.executable, "-c", _SANDBOX_WARMUP],
-        timeout=180,
-        capture_output=True,
-    )
+    try:
+        subprocess.run(
+            [sys.executable, "-c", _SANDBOX_WARMUP],
+            timeout=180,
+            capture_output=True,
+        )
+    except subprocess.TimeoutExpired:
+        pass
 
 
 @pytest.fixture

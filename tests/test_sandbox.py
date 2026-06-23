@@ -205,3 +205,33 @@ async def test_superposed_epoch_recipe_end_to_end(tmp_path) -> None:
     assert "epoch_median" in result.get("exports", {}), result
     assert result["exports"]["epoch_median"]["n_finite"] == 100  # n_grid default
     assert result.get("n_figures", 0) >= 1
+
+
+async def test_api_keys_not_leaked_to_sandbox(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "secret-groq-123")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "secret-azure-456")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai-789")
+    code = (
+        "import os\n"
+        "print(os.environ.get('GROQ_API_KEY', 'MISSING'))\n"
+        "print(os.environ.get('AZURE_OPENAI_API_KEY', 'MISSING'))\n"
+        "print(os.environ.get('OPENAI_API_KEY', 'MISSING'))\n"
+    )
+    result = await run_python(code)
+    assert result.get("error") is None, result.get("stderr", "")
+    assert "secret-" not in result["stdout"]
+    assert result["stdout"].count("MISSING") == 3
+
+
+async def test_registry_rejects_private_args() -> None:
+    from helioai.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    @reg.register("echo", "echo", {"type": "object", "properties": {}})
+    async def _echo(**kwargs):
+        return kwargs
+
+    out = await reg.call_tool("echo", {"x": 1, "_plot_dir": "/etc"})
+    assert "rejected private argument" in out
+    assert "_plot_dir" in out

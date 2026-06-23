@@ -15,9 +15,66 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import signal
 import sys
 import textwrap
 from pathlib import Path
+
+# Environment whitelist for the sandbox subprocess. Only these (and the prefixes
+# below) are passed through; everything else — notably LLM provider API keys —
+# is dropped so LLM-generated code cannot read secrets from os.environ.
+_ENV_KEEP = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LC_ALL",
+        "TERM",
+        "TZ",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "VIRTUAL_ENV",
+        "MPLBACKEND",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+    }
+)
+_ENV_KEEP_PREFIXES = ("XDG_", "LC_", "SPEASY_", "SPEDAS_", "PYTHON")
+
+# ponytail: fork-bomb cap, generous so numpy/scipy thread pools still spawn.
+_MAX_PROCS = 4096
+
+
+def _sandbox_env() -> dict[str, str]:
+    """Filtered os.environ for the sandbox — secrets stripped (see _ENV_KEEP)."""
+    env = {
+        k: v for k, v in os.environ.items() if k in _ENV_KEEP or k.startswith(_ENV_KEEP_PREFIXES)
+    }
+    env.setdefault("MPLBACKEND", "Agg")
+    return env
+
+
+def _kill_proc_tree(proc: asyncio.subprocess.Process) -> None:
+    """Kill the subprocess and its whole session (grandchildren included)."""
+    if sys.platform != "win32":
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError):
+            pass
+    proc.kill()
 
 
 def _set_subprocess_limits() -> None:
@@ -37,6 +94,10 @@ def _set_subprocess_limits() -> None:
         # 200 MB max file write — prevents disk exhaustion from large figure dumps
         _200MB = 200 * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_FSIZE, (_200MB, _200MB))
+        # Cap process count — fork-bomb defense in depth (timeout + killpg also apply)
+        _, hard = resource.getrlimit(resource.RLIMIT_NPROC)
+        cap = _MAX_PROCS if hard == resource.RLIM_INFINITY else min(_MAX_PROCS, hard)
+        resource.setrlimit(resource.RLIMIT_NPROC, (cap, hard))
     except Exception:
         pass
 
@@ -278,12 +339,14 @@ async def run_python(
             full_code,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_sandbox_env(),
+            start_new_session=sys.platform != "win32",
             preexec_fn=_set_subprocess_limits if sys.platform != "win32" else None,
         )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
-            proc.kill()
+            _kill_proc_tree(proc)
             await proc.communicate()
             return {"error": f"Execution timed out after {timeout}s", "stdout": "", "stderr": ""}
 

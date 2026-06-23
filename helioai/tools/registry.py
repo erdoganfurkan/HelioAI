@@ -53,6 +53,9 @@ class ToolRegistry:
         """Invoke a tool and return its JSON-serialized result string."""
         if name not in self._tools:
             return json.dumps({"error": f"unknown tool {name!r}"})
+        if arguments and any(k.startswith("_") for k in arguments):
+            bad = sorted(k for k in arguments if k.startswith("_"))
+            return json.dumps({"error": f"rejected private argument(s): {bad}"})
         try:
             result = await self._tools[name].func(**(arguments or {}))
             if isinstance(result, str):

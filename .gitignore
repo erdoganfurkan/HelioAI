@@ -50,8 +50,3 @@ Thumbs.db
 
 # uv
 .uv/
-
-# Local workflow — not for the repo
-CLAUDE.md
-tasks/
-notes_bug.txt

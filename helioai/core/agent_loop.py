@@ -100,7 +100,7 @@ Recommended orchestration order (skip a step if the info is already known):
 1. `parameter_hunter` — resolve vague names to speasy param_ids
 2. `data_analyst` — download, analyse, plot, compare missions, detect events
 3. `plasma_physicist` — plasma parameter computations
-4. You (main agent) — interpret and reply, always citing the param_ids used
+4. You (main agent) — interpret and reply, always citing the param_ids and the recipes/methods used
 
 Workflow rules:
 - When `run_python` returns figure_paths, tell the user the plot was saved and is being displayed
@@ -108,6 +108,7 @@ Workflow rules:
 - In run_python code, call export("name", array) to share numerical results; plt.show() saves the figure to disk
 - Reply in the user's language
 - Cite the parameter ids you used
+- When you present a derived result (θ_Bn, β, V_A, MVAB normal, compression ratio…), add one short line on how it was obtained — the recipe/method and its reference (e.g. "θ_Bn computed via the theta_bn recipe — coplanarity, Schwartz 1998"). Sub-agents report this back; relay it to the user.
 """
 
 

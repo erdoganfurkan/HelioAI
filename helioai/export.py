@@ -12,6 +12,7 @@ each saved run cell executes standalone in a normal Jupyter kernel.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
@@ -19,10 +20,16 @@ from pathlib import Path
 
 from helioai.config import settings
 from helioai.core.session import store
+from helioai.datastore import read_manifest
 
 _PARAM_ID_RE = re.compile(r"\b(?:amda|cda|csa|ssc)/[\w./-]+")
+_LOAD_DATA_RE = re.compile(r"""load_data\(\s*(["'])([a-z0-9_]+)\1\s*\)""")
 
-_SETUP_CELL_TEMPLATE = '''\
+# Base setup cell — imports + the export()/clean()/param_card() shims that the
+# saved run cells always rely on. The load_data shim is appended separately
+# (see _LOAD_DATA_SHIM) only when some cell still references load_data after the
+# standalone rewrite.
+_SETUP_CELL_BASE = '''\
 # HelioAI export — environment setup (mirrors the sandbox preamble)
 import warnings
 warnings.filterwarnings("ignore")
@@ -62,18 +69,25 @@ def param_card(var, param_id):
           f"[{{getattr(var, 'unit', '')}}] n_points={{len(var.time)}}")
 
 
+def document_method(name, reference="", method=""):
+    """Shim for the sandbox document_method(): prints the recorded method + reference."""
+    print(f"method: {{name}}" + (f" — {{reference}}" if reference else ""))
+'''
+
+_LOAD_DATA_SHIM = '''
+
 def load_data(name):
     """Load a dataset saved by get_timeseries / get_events_timeseries during the session."""
     mfile = _HELIOAI_DATA_DIR / "manifest.json"
     if not mfile.exists():
         raise FileNotFoundError(
-            f"manifest not found at {{mfile}} — copy the session data/ folder next to this notebook"
+            f"manifest not found at {mfile} — copy the session data/ folder next to this notebook"
         )
     manifest = json.loads(mfile.read_text())
-    entry = manifest.get("datasets", {{}}).get(name)
+    entry = manifest.get("datasets", {}).get(name)
     if entry is None:
-        available = sorted(manifest.get("datasets", {{}}).keys())
-        raise KeyError(f"unknown dataset {{name!r}} — available: {{available}}")
+        available = sorted(manifest.get("datasets", {}).keys())
+        raise KeyError(f"unknown dataset {name!r} — available: {available}")
     z = np.load(_HELIOAI_DATA_DIR / entry["file"], allow_pickle=False)
     if entry["kind"] == "timeseries":
         ns = types.SimpleNamespace()
@@ -90,17 +104,58 @@ def load_data(name):
                 continue
             i = em["idx"]
             ev = types.SimpleNamespace()
-            ev.time = z[f"t{{i}}"]
-            ev.values = z[f"v{{i}}"]
+            ev.time = z[f"t{i}"]
+            ev.values = z[f"v{i}"]
             ev.start = em["start"]
             ev.stop = em["stop"]
             ev.units = entry.get("units", "")
             result.append(ev)
         return result
-    raise ValueError(f"unknown dataset kind {{entry['kind']!r}}")
+    raise ValueError(f"unknown dataset kind {entry['kind']!r}")
 '''
 
-_SETUP_CELL = _SETUP_CELL_TEMPLATE.format(data_dir="data")
+
+def _rewrite_load_data_calls(code_src: str, manifest: dict) -> str:
+    """Rewrite load_data("name") into a standalone spz.get_data(...) call.
+
+    Frontier rewrite: the stored sandbox code keeps load_data(); this produces the
+    standalone version shown to the reader (/code panel + notebook export).
+
+    - timeseries dataset with param_id/start/stop → spz.get_data("<id>", "<start>", "<stop>")
+      (SpeasyVariable exposes .time/.values/.columns; .units/.param_id are not mirrored —
+      ponytail: rare in generated code, nbconvert --execute catches any breakage)
+    - event_collection with param_id → spz.get_data("<id>", [["<s>","<e>"], ...]) over the
+      events that actually had data (speasy multi-interval call, same as get_events_timeseries)
+    - unknown / unreconstructable dataset → left intact (never emit a wrong call)
+    """
+    datasets = manifest.get("datasets", {})
+    kept_load_data = {"flag": False}
+
+    def _sub(m: re.Match) -> str:
+        name = m.group(2)
+        entry = datasets.get(name)
+        if not entry:
+            kept_load_data["flag"] = True
+            return m.group(0)
+        if entry.get("kind") == "timeseries" and all(
+            entry.get(k) for k in ("param_id", "start", "stop")
+        ):
+            return f'spz.get_data("{entry["param_id"]}", "{entry["start"]}", "{entry["stop"]}")'
+        if entry.get("kind") == "event_collection" and entry.get("param_id"):
+            intervals = [
+                [ev["start"], ev["stop"]]
+                for ev in entry.get("events", [])
+                if ev.get("status") == "ok"
+            ]
+            if intervals:
+                return f'spz.get_data("{entry["param_id"]}", {intervals!r})'
+        kept_load_data["flag"] = True
+        return m.group(0)
+
+    rewritten = _LOAD_DATA_RE.sub(_sub, code_src)
+    if kept_load_data["flag"]:
+        rewritten = "# some datasets kept as load_data() — see data/manifest.json\n" + rewritten
+    return rewritten
 
 
 def _version(pkg: str) -> str:
@@ -122,6 +177,58 @@ def _collect_param_ids(history) -> list[str]:
                 if pid not in seen:
                     seen.add(pid)
                     found.append(pid)
+    return found
+
+
+def _collect_recipes(history) -> list[dict]:
+    """Return the methods/recipes used during the session, for the Methods section.
+
+    Two sources:
+      - load_recipe tool calls → reference/description read from the recipe file header
+      - document_method() cards in run_python results (methods computed outside a recipe)
+    Each entry: {"name", "reference", "description"}. Order preserved, de-duplicated by name.
+    """
+    from helioai.tools.recipes import _parse_header
+
+    recipes_dir = settings.recipes.recipes_dir
+    found: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(name: str, reference: str, description: str) -> None:
+        if not name or name in seen:
+            return
+        seen.add(name)
+        found.append({"name": name, "reference": reference, "description": description})
+
+    for m in history:
+        for tc in m.tool_calls or []:
+            if tc.name != "load_recipe":
+                continue
+            args = tc.arguments
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (ValueError, TypeError):
+                    args = {}
+            name = (args or {}).get("name")
+            reference = description = ""
+            if name:
+                path = recipes_dir / f"{name}.py"
+                if path.is_file():
+                    meta = _parse_header(path.read_text(encoding="utf-8"))
+                    reference = meta.get("reference", "")
+                    description = meta.get("description", "")
+            _add(name, reference, description)
+
+        if m.role == "tool" and m.content:
+            try:
+                data = json.loads(m.content)
+            except (ValueError, TypeError):
+                continue
+            cards = data.get("cards", []) if isinstance(data, dict) else []
+            for card in cards:
+                if isinstance(card, dict) and card.get("kind") == "method_used":
+                    _add(card.get("name", ""), card.get("reference", ""), card.get("method", ""))
     return found
 
 
@@ -163,8 +270,42 @@ def build_notebook(user_id: str, session_id: str):
     prov.append("\n> Run all cells top-to-bottom to reproduce the analysis.")
     cells.append(nbf.v4.new_markdown_cell("\n".join(prov)))
 
+    # Methods & data acknowledgements — recipes used + references
+    recipes = _collect_recipes(history)
+    if recipes or param_ids:
+        methods = ["## Methods & data acknowledgements", ""]
+        for r in recipes:
+            line = f"- **{r['name']}**"
+            if r["description"]:
+                line += f" — {r['description']}"
+            if r["reference"]:
+                line += f"  \n  _Reference:_ {r['reference']}"
+            methods.append(line)
+        if param_ids:
+            methods.append(
+                "- **Data:** " + ", ".join(f"`{p}`" for p in param_ids) + " (via speasy)"
+            )
+        methods.append(
+            f"\n_Libraries: speasy {_version('speasy')}, plasmapy {_version('plasmapy')}, "
+            f"helioai {_version('helioai')}._"
+        )
+        cells.append(nbf.v4.new_markdown_cell("\n".join(methods)))
+
+    # Standalone rewrite of every saved run (load_data → spz.get_data), so cells run
+    # without the session data/ folder. Compute first to know if the load_data shim is
+    # still needed in the setup cell.
+    manifest = read_manifest(workspace_dir) if workspace_dir else {"datasets": {}}
+    runs: list[tuple[str, str]] = []
+    if workspace_dir and workspace_dir.exists():
+        for p in _code_files(workspace_dir):
+            src = _rewrite_load_data_calls(p.read_text(encoding="utf-8"), manifest)
+            runs.append((p.name, src))
+    shim_needed = any("load_data(" in src for _, src in runs)
+
     data_dir = (workspace_dir / "data") if workspace_dir else Path("data")
-    setup_cell = _SETUP_CELL_TEMPLATE.format(data_dir=str(data_dir))
+    setup_cell = _SETUP_CELL_BASE.format(data_dir=str(data_dir))
+    if shim_needed:
+        setup_cell += _LOAD_DATA_SHIM
     cells.append(nbf.v4.new_code_cell(setup_cell))
 
     # Conversation narrative
@@ -179,14 +320,11 @@ def build_notebook(user_id: str, session_id: str):
         cells.append(nbf.v4.new_markdown_cell("\n\n".join(convo)))
 
     # Reproducible analysis: every saved run, in execution order
-    if workspace_dir and workspace_dir.exists():
-        code_files = _code_files(workspace_dir)
-        if code_files:
-            cells.append(nbf.v4.new_markdown_cell("## Reproducible analysis"))
-            for p in code_files:
-                src = p.read_text(encoding="utf-8")
-                cells.append(nbf.v4.new_markdown_cell(f"### {p.name}"))
-                cells.append(nbf.v4.new_code_cell(src))
+    if runs:
+        cells.append(nbf.v4.new_markdown_cell("## Reproducible analysis"))
+        for name, src in runs:
+            cells.append(nbf.v4.new_markdown_cell(f"### {name}"))
+            cells.append(nbf.v4.new_code_cell(src))
 
     nb["cells"] = cells
     return nb

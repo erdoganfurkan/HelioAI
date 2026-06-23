@@ -2,6 +2,7 @@
 # description: Compute the pitch angle of a particle population given particle velocity vectors and local magnetic field vectors, then plot the pitch angle distribution (PAD).
 # inputs: V_particles (array (N,3) km/s), B_field (array (N,3) or (3,) nT), n_bins (int, default 18)
 # outputs: pa_deg (pitch angles in degrees, array N), counts (histogram counts per bin), pad_plot (figure)
+# reference: Pitch angle α = arccos(V·B / |V||B|); see Baumjohann & Treumann (1996), Basic Space Plasma Physics, ch. 2.
 
 """Pitch angle distribution (PAD).
 

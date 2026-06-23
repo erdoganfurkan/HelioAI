@@ -21,7 +21,7 @@ def recipes_dir(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(settings.recipes, "recipes_dir", d)
 
     (d / "theta_bn.py").write_text(
-        "# name: theta_bn\n# description: Shock normal angle.\n# inputs: B_up, B_dn\n# outputs: theta_bn_deg\npass\n",
+        "# name: theta_bn\n# description: Shock normal angle.\n# inputs: B_up, B_dn\n# outputs: theta_bn_deg\n# reference: Coplanarity theorem; Schwartz 1998.\npass\n",
         encoding="utf-8",
     )
     (d / "walen_test.py").write_text(
@@ -79,6 +79,12 @@ async def test_load_recipe_returns_code(recipes_dir):
     assert len(result["code"]) > 0
 
 
+async def test_load_recipe_returns_metadata_with_reference(recipes_dir):
+    result = await _rcp.load_recipe("theta_bn")
+    assert "metadata" in result
+    assert result["metadata"].get("reference")
+
+
 async def test_load_recipe_not_found(recipes_dir):
     result = await _rcp.load_recipe("nonexistent")
     assert "error" in result
@@ -127,3 +133,11 @@ async def test_real_recipes_have_valid_headers():
     for entry in result.get("recipes", []):
         assert "name" in entry and entry["name"], f"Missing name: {entry}"
         assert "description" in entry and entry["description"], f"Missing description: {entry}"
+
+
+async def test_real_recipes_have_reference():
+    """Each real recipe must carry a scientific reference in its header (provenance)."""
+    result = await _rcp.list_recipes()
+    for entry in result.get("recipes", []):
+        loaded = await _rcp.load_recipe(entry["name"])
+        assert loaded["metadata"].get("reference"), f"Missing reference: {entry['name']}"

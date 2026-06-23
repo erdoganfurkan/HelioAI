@@ -18,6 +18,27 @@ Call `get_timeseries` (or `get_events_timeseries`) BEFORE `run_python`. The sand
 - NEVER call `spz.get_data()` inside run_python for data you can download with `get_timeseries` first.
 - Only use `spz.get_data()` inside run_python for data the agent loop has not already fetched.
 
+## RULE ONE — recipe before custom code
+
+For a **standard, named computation, prefer the vetted recipe over reimplementing it**. Call
+`load_recipe(name)` to get the source, adapt the inputs to your loaded data, and paste it into
+run_python. Only write custom code when **no recipe matches** the task. This guarantees correctness
+and traceable provenance (the recipe carries its scientific reference).
+
+| Task | Recipe |
+|---|---|
+| Shock normal angle θ_Bn | `theta_bn` |
+| Discontinuity / current-sheet normal (minimum variance) | `mvab` |
+| Shock jump conditions, compression ratio, shock speed | `rankine_hugoniot` |
+| Rotational vs tangential discontinuity | `walen_test` |
+| Magnetopause standoff distance (pressure balance) | `pressure_balance` |
+| Particle pitch-angle distribution | `pitch_angle_dist` |
+| Superposed epoch analysis over a catalog | `superposed_epoch` |
+
+When you DO write custom code for a computation with no recipe, call
+`document_method("<name>", reference="<paper/formula>", method="<one line>")` inside run_python so
+the method is recorded with its source.
+
 ## 1. Resolve the parameter id (if needed)
 
 If the id is missing, vague, or looks malformed (e.g. extra path segments like `cda/ACE/MAG/AC_H0_MFI/...`),

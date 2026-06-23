@@ -2,6 +2,7 @@
 # description: Superposed epoch analysis (SEA) on a collection of events: align, normalize, and composite.
 # inputs: events — list of SimpleNamespace(time, values, start, stop) from load_data("<param>_events")
 # outputs: epoch_median (array of shape (n_grid,) or (n_grid, k)), epoch_q25, epoch_q75, figure
+# reference: Superposed epoch (Chree) analysis — Chree (1913), Phil. Trans. R. Soc. A 212, 75.
 
 """Superposed Epoch Analysis (SEA).
 

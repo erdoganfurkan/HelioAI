@@ -91,6 +91,46 @@ def test_emit_skill_loaded_for_load_skill() -> None:
     assert skill_events[0]["data"]["name"] == "plotting"
 
 
+def test_emit_recipe_used_artifact() -> None:
+    result = json.dumps(
+        {
+            "name": "theta_bn",
+            "code": "def theta_bn(...): ...",
+            "metadata": {"reference": "Schwartz 1998", "description": "Shock normal angle."},
+        }
+    )
+    events = list(emit_post_tool_events("load_recipe", result, tool_result_extra={"turn": 1}))
+    artifacts = [e for e in events if e["event"] == "artifact"]
+    assert len(artifacts) == 1
+    assert artifacts[0]["data"]["kind"] == "recipe_used"
+    assert artifacts[0]["data"]["name"] == "theta_bn"
+    assert artifacts[0]["data"]["reference"] == "Schwartz 1998"
+
+
+def test_emit_method_used_card_becomes_recipe_artifact() -> None:
+    result = json.dumps(
+        {
+            "stdout": "",
+            "figure_paths": [],
+            "cards": [
+                {
+                    "kind": "method_used",
+                    "name": "MVAB",
+                    "reference": "Sonnerup & Scheible 1998",
+                    "method": "minimum variance analysis",
+                }
+            ],
+        }
+    )
+    events = list(emit_post_tool_events("run_python", result, tool_result_extra={"turn": 1}))
+    recipes = [
+        e for e in events if e["event"] == "artifact" and e["data"].get("kind") == "recipe_used"
+    ]
+    assert len(recipes) == 1
+    assert recipes[0]["data"]["name"] == "MVAB"
+    assert recipes[0]["data"]["reference"] == "Sonnerup & Scheible 1998"
+
+
 def test_emit_no_skill_loaded_on_error() -> None:
     result = json.dumps({"error": "no such skill"})
     events = list(emit_post_tool_events("load_skill", result, tool_result_extra={"turn": 1}))

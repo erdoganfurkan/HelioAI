@@ -80,8 +80,20 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
                 }
             )
         for card in data.get("cards", []):
-            if isinstance(card, dict) and card.get("kind") == "parameter_card":
+            if not isinstance(card, dict):
+                continue
+            if card.get("kind") == "parameter_card":
                 artifacts.append({"tool": tool_name, **card})
+            elif card.get("kind") == "method_used":
+                artifacts.append(
+                    {
+                        "tool": tool_name,
+                        "kind": "recipe_used",
+                        "name": card.get("name", ""),
+                        "reference": card.get("reference", ""),
+                        "description": card.get("method", ""),
+                    }
+                )
         if data.get("code_path"):
             artifacts.append(
                 {
@@ -92,6 +104,19 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
                     "n_lines": data.get("n_lines"),
                 }
             )
+
+    # load_recipe: surface the recipe + its scientific reference for provenance
+    if tool_name == "load_recipe" and data.get("name"):
+        meta = data.get("metadata") or {}
+        artifacts.append(
+            {
+                "tool": tool_name,
+                "kind": "recipe_used",
+                "name": data["name"],
+                "reference": meta.get("reference", ""),
+                "description": meta.get("description", ""),
+            }
+        )
 
     # get_catalog result
     if tool_name == "get_catalog" and data.get("_kind") == "catalog_preview":

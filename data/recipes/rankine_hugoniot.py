@@ -2,6 +2,7 @@
 # description: Apply the Rankine-Hugoniot jump conditions to a collisionless shock, computing shock velocity and density compression ratio from upstream/downstream moments.
 # inputs: n_u (upstream number density cm-3), n_d (downstream number density cm-3), V_u (upstream bulk speed km/s), V_d (downstream bulk speed km/s), B_u (upstream |B| nT), B_d (downstream |B| nT), T_u (upstream temperature eV), T_d (downstream temperature eV)
 # outputs: V_shock (shock velocity km/s in spacecraft frame), r (density compression ratio), theta_check (consistency angle degrees)
+# reference: Rankine-Hugoniot jump conditions (Rankine 1870; Hugoniot 1887); for collisionless shocks see Schwartz (1998), ISSI SR-001, ch. 10.
 
 """Rankine-Hugoniot jump conditions for a collisionless shock.
 

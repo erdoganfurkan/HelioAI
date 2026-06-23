@@ -90,6 +90,7 @@ async def get_session_messages(session_id: str):
     pending_cards: list[dict] = []
     pending_catalogs: list[dict] = []
     pending_code: list[dict] = []
+    pending_recipes: list[dict] = []
     for m in history:
         if m.role == "user":
             out.append({"role": "user", "content": m.content})
@@ -107,6 +108,9 @@ async def get_session_messages(session_id: str):
             if pending_code:
                 entry["code"] = pending_code[:]
                 pending_code = []
+            if pending_recipes:
+                entry["recipes"] = pending_recipes[:]
+                pending_recipes = []
             out.append(entry)
         elif m.role == "tool" and m.content:
             try:
@@ -114,9 +118,22 @@ async def get_session_messages(session_id: str):
                 if isinstance(data, dict):
                     if data.get("figure_paths"):  # run_python direct
                         pending_figures.extend(data["figure_paths"])
-                    for card in data.get("cards", []):  # param_card() dans run_python
-                        if isinstance(card, dict) and card.get("kind") == "parameter_card":
+                    for card in data.get(
+                        "cards", []
+                    ):  # param_card()/document_method() in run_python
+                        if not isinstance(card, dict):
+                            continue
+                        if card.get("kind") == "parameter_card":
                             pending_cards.append(card)
+                        elif card.get("kind") == "method_used":
+                            pending_recipes.append(
+                                {
+                                    "kind": "recipe_used",
+                                    "name": card.get("name", ""),
+                                    "reference": card.get("reference", ""),
+                                    "description": card.get("method", ""),
+                                }
+                            )
                     if data.get("code_path"):  # run_python direct — artifact code
                         pending_code.append(
                             {
@@ -124,6 +141,16 @@ async def get_session_messages(session_id: str):
                                 "code_path": data["code_path"],
                                 "name": Path(data["code_path"]).name,
                                 "n_lines": data.get("n_lines"),
+                            }
+                        )
+                    if "metadata" in data and data.get("name") and data.get("code"):  # load_recipe
+                        _meta = data.get("metadata") or {}
+                        pending_recipes.append(
+                            {
+                                "kind": "recipe_used",
+                                "name": data["name"],
+                                "reference": _meta.get("reference", ""),
+                                "description": _meta.get("description", ""),
                             }
                         )
                     if data.get("_kind") == "catalog_preview":  # get_catalog
@@ -167,6 +194,8 @@ async def get_session_messages(session_id: str):
                             pending_catalogs.append(art)
                         if art.get("kind") == "code":
                             pending_code.append(art)
+                        if art.get("kind") == "recipe_used":
+                            pending_recipes.append(art)
             except (ValueError, TypeError):
                 pass
     return {"messages": out}
@@ -222,7 +251,12 @@ async def serve_code(path: str):
     if p.suffix != ".py" or not p.is_file():
         log.warning("code_rejected", path=path, reason="file not found or not .py")
         raise HTTPException(status_code=404, detail="Not found")
-    return PlainTextResponse(p.read_text(encoding="utf-8"))
+    from helioai.datastore import read_manifest
+    from helioai.export import _rewrite_load_data_calls
+
+    manifest = read_manifest(p.parent)
+    standalone = _rewrite_load_data_calls(p.read_text(encoding="utf-8"), manifest)
+    return PlainTextResponse(standalone)
 
 
 _FIGURE_TYPES = {".png": "image/png", ".pdf": "application/pdf"}

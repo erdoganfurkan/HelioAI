@@ -401,6 +401,17 @@ select:focus { border-color: var(--accent); }
 .artifact-code:hover { border-color: var(--accent); color: var(--text); }
 .ac-icon { font-size: 13px; }
 
+.artifact-recipe {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px; color: var(--text-muted);
+  align-self: flex-start;
+}
+.ar-icon { font-size: 13px; }
+.ar-name { color: var(--text); font-weight: 600; }
+
 /* Activity dock */
 .activity-dock {
   border-top: 1px solid var(--border);

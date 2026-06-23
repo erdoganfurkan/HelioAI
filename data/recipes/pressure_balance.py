@@ -2,6 +2,7 @@
 # description: Determine the magnetopause standoff distance using solar wind dynamic pressure and IMF balance with Earth's dipole magnetic pressure.
 # inputs: n_sw (solar wind density cm-3), V_sw (solar wind speed km/s), B_sw (IMF magnitude nT), B_msp (magnetosphere field nT at subsolar nose, default 50 nT)
 # outputs: r_mp (magnetopause standoff distance in Earth radii), P_dyn (dynamic pressure nPa), P_mag_sw (solar wind magnetic pressure nPa), P_mag_msp (magnetospheric pressure nPa)
+# reference: Chapman-Ferraro pressure balance (Chapman & Ferraro 1931); standoff scaling, see Shue et al. (1997), JGR 102, 9497.
 
 """Magnetopause pressure balance.
 

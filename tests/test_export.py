@@ -100,18 +100,18 @@ def test_export_custom_out_path(wired, tmp_path) -> None:
 
 
 def test_setup_cell_defines_clean() -> None:
-    from helioai.export import _SETUP_CELL
+    from helioai.export import _SETUP_CELL_BASE
 
-    assert "def clean" in _SETUP_CELL
+    assert "def clean" in _SETUP_CELL_BASE
 
 
 def test_exported_notebook_clean_shim_is_callable(wired, tmp_path) -> None:
     """A code cell using clean() should execute without NameError."""
-    from helioai.export import _SETUP_CELL
+    from helioai.export import _SETUP_CELL_BASE
 
     # Execute setup cell to populate namespace, then call clean()
     ns: dict = {}
-    exec(_SETUP_CELL, ns)  # noqa: S102
+    exec(_SETUP_CELL_BASE.format(data_dir="data"), ns)  # noqa: S102
     import numpy as np
 
     result = ns["clean"](np.array([1.0, 1e31, -1e31, float("inf"), float("-inf"), 2.0]))
@@ -121,3 +121,123 @@ def test_exported_notebook_clean_shim_is_callable(wired, tmp_path) -> None:
     assert np.isnan(result[4])
     assert result[0] == pytest.approx(1.0)
     assert result[5] == pytest.approx(2.0)
+
+
+# ── Chantier A: standalone rewrite ───────────────────────────────────────────
+
+
+def test_rewrite_timeseries_load_data_to_get_data() -> None:
+    from helioai.export import _rewrite_load_data_calls
+
+    manifest = {
+        "datasets": {
+            "imf_gsm": {
+                "kind": "timeseries",
+                "param_id": "amda/imf_gsm",
+                "start": "2005-01-17",
+                "stop": "2005-01-18",
+            }
+        }
+    }
+    code = 'd = load_data("imf_gsm")\nplt.plot(d.time, d.values)'
+    out = _rewrite_load_data_calls(code, manifest)
+    assert 'spz.get_data("amda/imf_gsm", "2005-01-17", "2005-01-18")' in out
+    assert "load_data(" not in out
+
+
+def test_rewrite_unknown_dataset_left_intact() -> None:
+    from helioai.export import _rewrite_load_data_calls
+
+    code = 'd = load_data("mystery")'
+    out = _rewrite_load_data_calls(code, {"datasets": {}})
+    assert 'load_data("mystery")' in out  # never emit a wrong spz.get_data call
+    assert "spz.get_data" not in out
+
+
+def test_rewrite_event_collection_reconstructed() -> None:
+    from helioai.export import _rewrite_load_data_calls
+
+    manifest = {
+        "datasets": {
+            "shocks_events": {
+                "kind": "event_collection",
+                "param_id": "amda/imf_gsm",
+                "events": [
+                    {
+                        "idx": 0,
+                        "start": "2005-01-17T01:00",
+                        "stop": "2005-01-17T02:00",
+                        "status": "ok",
+                    },
+                    {
+                        "idx": 1,
+                        "start": "2005-02-01T00:00",
+                        "stop": "2005-02-01T01:00",
+                        "status": "no_data",
+                    },
+                    {
+                        "idx": 2,
+                        "start": "2005-03-10T05:00",
+                        "stop": "2005-03-10T06:00",
+                        "status": "ok",
+                    },
+                ],
+            }
+        }
+    }
+    code = 'evs = load_data("shocks_events")'
+    out = _rewrite_load_data_calls(code, manifest)
+    assert "load_data(" not in out
+    assert 'spz.get_data("amda/imf_gsm"' in out
+    assert "2005-01-17T01:00" in out and "2005-03-10T05:00" in out
+    assert "2005-02-01T00:00" not in out  # no_data event excluded
+
+
+def test_rewrite_event_collection_without_param_id_kept() -> None:
+    from helioai.export import _rewrite_load_data_calls
+
+    manifest = {"datasets": {"x_events": {"kind": "event_collection", "events": []}}}
+    code = 'evs = load_data("x_events")'
+    out = _rewrite_load_data_calls(code, manifest)
+    assert 'load_data("x_events")' in out
+
+
+def test_setup_cell_drops_load_data_shim_when_all_rewritten(wired) -> None:
+    # the wired run uses spz.get_data directly (no load_data) → shim must be absent
+    path = export_session_notebook(_USER, _SESSION)
+    nb = nbformat.read(str(path), as_version=4)
+    code_sources = "\n".join(c.source for c in nb.cells if c.cell_type == "code")
+    assert "def clean" in code_sources  # base shims kept
+    assert "def load_data" not in code_sources
+
+
+# ── Chantier B: Methods section ──────────────────────────────────────────────
+
+
+def test_methods_section_lists_recipes(monkeypatch, tmp_path) -> None:
+    from helioai.export import build_notebook
+
+    store = SessionStore(tmp_path / "sessions.db")
+    workspace = tmp_path / "workspace"
+    (workspace / _LABEL).mkdir(parents=True)
+
+    history = [
+        Message(role="user", content="Find a shock and compute theta_Bn"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="r1", name="load_recipe", arguments={"name": "theta_bn"})],
+        ),
+        Message(role="tool", tool_call_id="r1", content='{"name": "theta_bn", "code": "..."}'),
+        Message(role="assistant", content="theta_Bn computed."),
+    ]
+    store.save(_USER, _SESSION, history)
+    store.set_workspace_dir(_USER, _SESSION, _LABEL)
+    monkeypatch.setattr(export_module, "store", store)
+    monkeypatch.setattr(export_module.settings.workspace, "workspace_dir", workspace)
+
+    nb = build_notebook(_USER, _SESSION)
+    md = "\n".join(c.source for c in nb.cells if c.cell_type == "markdown")
+    assert "Methods & data acknowledgements" in md
+    assert "theta_bn" in md
+    assert "Schwartz" in md  # reference pulled from the recipe header

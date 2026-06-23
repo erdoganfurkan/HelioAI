@@ -2,6 +2,7 @@
 # description: Minimum Variance Analysis of B (MVAB) — finds the coordinate system where Bn variance is minimum, giving the current-sheet or discontinuity normal.
 # inputs: B (magnetic field array shape (N,3) in nT)
 # outputs: eigenvalues (lambda_min, lambda_int, lambda_max), eigenvectors (n_min, n_int, n_max), normal direction
+# reference: Sonnerup & Scheible (1998), "Minimum and Maximum Variance Analysis", in Analysis Methods for Multi-Spacecraft Data, ISSI SR-001, ch. 8.
 
 """Minimum Variance Analysis of the magnetic field (MVAB).
 

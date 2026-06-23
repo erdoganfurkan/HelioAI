@@ -2,6 +2,7 @@
 # description: Walén test — check whether a discontinuity is a rotational discontinuity (|slope| ~ 1) or a tangential discontinuity (|slope| << 1).
 # inputs: V (ion velocity array shape (N,3) in km/s), B (magnetic field array shape (N,3) in nT), n_cm3 (ion density array shape (N,) in cm⁻³)
 # outputs: slope, R2, interpretation
+# reference: Walén (1944), Ark. Mat. Astron. Fys. 30A; HT-frame formulation, Sonnerup et al. (1987), JGR 92, 12137.
 
 """Walén test for rotational vs tangential discontinuities.
 

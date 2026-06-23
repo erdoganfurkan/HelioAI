@@ -279,6 +279,14 @@ function renderArtifact(data) {
     chatArea.append(chip);
     scrollBottom();
 
+  } else if (data.kind === 'recipe_used') {
+    const chip = el('div', 'artifact-recipe');
+    const ref = data.reference ? ` — ${data.reference}` : '';
+    chip.innerHTML = `<span class="ar-icon">📐</span><span class="ar-name">${data.name}</span>${ref}`;
+    if (data.description) chip.title = data.description;
+    chatArea.append(chip);
+    scrollBottom();
+
   } else if (data.kind === 'catalog_preview') {
     const card = el('div', 'catalog-card');
 
@@ -527,6 +535,7 @@ async function resumeSession(sid, itemEl) {
         (m.cards || []).forEach(c => renderArtifact(c));
         (m.catalogs || []).forEach(c => renderArtifact(c));
         (m.code || []).forEach(c => renderArtifact(c));
+        (m.recipes || []).forEach(c => renderArtifact(c));
         if (m.figures && m.figures.length > 0) {
           renderArtifact({ kind: 'image', figure_paths: m.figures });
         }

@@ -83,6 +83,7 @@ async def load_recipe(name: str) -> dict:
         return {
             "name": meta.get("name", name),
             "code": code,
+            "metadata": meta,
         }
     except Exception as e:
         return {"error": str(e)}

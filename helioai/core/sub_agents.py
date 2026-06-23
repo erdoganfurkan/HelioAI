@@ -43,6 +43,7 @@ SUB_SYSTEM_PROMPT_BASE = """You are a focused sub-agent inside HelioAI. The lead
 - Reply with a short final summary of what you did and the facts the lead needs (parameter ids, key values, findings).
 - Make a reasonable assumption when something is unclear, then proceed.
 - Always cite the speasy parameter ids you used.
+- For any derived quantity (theta_Bn, beta, V_A, MVAB normal, compression ratio…), state in your reply the method/recipe/library you used and its scientific reference (e.g. "theta_Bn by coplanarity, recipe theta_bn, Schwartz 1998"). Never report a result without naming how it was computed.
 - Use your tools to complete the task. If a tool call fails, retry with a corrected argument before concluding.
 """
 
@@ -72,6 +73,9 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
         system_addon=(
             "You specialise in data analysis, visualisation, multi-mission comparison, "
             "and plasma event detection. "
+            "For a standard named computation (theta_Bn, MVAB normal, Rankine-Hugoniot, Walén test, "
+            "pressure balance, pitch-angle, superposed epoch), load_recipe and reuse it instead of "
+            "writing your own — only write custom code when no recipe matches. "
             "Use search_parameters if any parameter id is missing or unclear. "
             "CRITICAL — to avoid sandbox timeouts: always call get_timeseries BEFORE run_python "
             "to download data outside the sandbox, then access it via load_data('name') inside run_python. "

@@ -163,6 +163,17 @@ def load_data(name):
     raise ValueError(f"unknown dataset kind {_entry['kind']!r}")
 
 
+def document_method(name, reference="", method=""):
+    \"\"\"Record a scientific method/algorithm used (provenance). Call when you compute a derived
+    quantity outside a recipe (e.g. MVAB inline). Shown in the UI and the exported Methods section.\"\"\"
+    __sandbox_cards.append({
+        "kind": "method_used",
+        "name": str(name),
+        "reference": str(reference),
+        "method": str(method),
+    })
+
+
 def param_card(var, param_id: str) -> None:
     \"\"\"Emit a parameter metadata card for display in the UI. Call after spz.get_data().\"\"\"
     try:

@@ -2,6 +2,7 @@
 # description: Compute the shock normal angle theta_Bn from upstream and downstream magnetic field vectors.
 # inputs: B_up (array of shape (N,3) or (3,) in nT, upstream), B_dn (array of shape (N,3) or (3,), downstream)
 # outputs: theta_bn_deg — angle in degrees between the upstream B and the shock normal
+# reference: Coplanarity theorem (Colburn & Sonett 1966); Schwartz (1998), "Shock and Discontinuity Normals, Mach Numbers and Related Parameters", ISSI SR-001, ch. 10.
 
 """Shock normal angle theta_Bn.
 

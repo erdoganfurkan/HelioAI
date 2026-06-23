@@ -160,6 +160,16 @@ class SessionStore:
             ).fetchone()
         return row[0] if row else None
 
+    def workspace_dirs(self, user_id: str) -> set[str]:
+        """All workspace dir labels owned by a user (for path-ownership checks)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT workspace_dir FROM sessions "
+                "WHERE user_id = ? AND workspace_dir IS NOT NULL",
+                (user_id,),
+            ).fetchall()
+        return {r[0] for r in rows}
+
     def all_sessions(self, user_id: str) -> list[str]:
         with self._connect() as conn:
             rows = conn.execute(

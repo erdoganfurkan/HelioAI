@@ -561,3 +561,23 @@ def test_valid_token_isolates_sessions(auth_client):
 def test_no_users_configured_stays_open(web_client):
     # Default: no HELIOAI_USERS → single-user, no token needed (local dev)
     assert web_client.get("/api/sessions").status_code == 200
+
+
+def test_figure_path_ownership(auth_client, tmp_path, monkeypatch):
+    import helioai.interfaces.web.app as web_app
+    from helioai.core.llm.base import Message
+
+    monkeypatch.setattr(web_app.settings.workspace, "workspace_dir", tmp_path)
+    wdir = tmp_path / "v-sess"
+    wdir.mkdir()
+    fig = wdir / "fig_0_0.png"
+    fig.write_bytes(b"\x89PNG")
+    web_app.store.save("vincent", "s1", [Message(role="user", content="hi")])
+    web_app.store.set_workspace_dir("vincent", "s1", "v-sess")
+
+    # alice cannot read vincent's figure
+    r = auth_client.get("/figure", params={"path": str(fig)}, headers={"X-Helio-Token": "tok-a"})
+    assert r.status_code == 404
+    # vincent can
+    r = auth_client.get("/figure", params={"path": str(fig)}, headers={"X-Helio-Token": "tok-v"})
+    assert r.status_code == 200

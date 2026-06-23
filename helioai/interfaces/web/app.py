@@ -51,6 +51,22 @@ def _profile_path(user_id: str) -> Path:
     return base.parent / "profiles" / f"{user_id}.md"
 
 
+def _owns_path(user_id: str, path: str) -> bool:
+    """True if `path` is in one of the user's session workspace dirs.
+
+    Workspace layout is <root>/<label>/... and the label is stored per
+    (user, session); a path is owned iff its top label belongs to the user.
+    No-op (always True) when auth is disabled (single local user).
+    """
+    if not settings.web_auth.users:
+        return True
+    try:
+        rel = Path(path).resolve().relative_to(_ws_root().resolve())
+    except (ValueError, OSError):
+        return False
+    return bool(rel.parts) and rel.parts[0] in store.workspace_dirs(user_id)
+
+
 app = FastAPI(title="HelioAI", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")
 
@@ -268,11 +284,9 @@ async def export_notebook(session_id: str, user_id: str = Depends(require_user))
 
 @app.get("/code")
 async def serve_code(path: str, user_id: str = Depends(require_user)):
-    # ponytail: gated on auth, not per-user path ownership — a valid user could
-    # read another user's workspace file if they guess the path. Tighten if needed.
     path = path.strip()
-    if not is_under_workspace(path):
-        log.warning("code_rejected", path=path, reason="outside workspace")
+    if not is_under_workspace(path) or not _owns_path(user_id, path):
+        log.warning("code_rejected", path=path, reason="outside workspace or not owner")
         raise HTTPException(status_code=404, detail="Not found")
     p = Path(path).resolve()
     if p.suffix != ".py" or not p.is_file():
@@ -292,8 +306,8 @@ _FIGURE_TYPES = {".png": "image/png", ".pdf": "application/pdf"}
 @app.get("/figure")
 async def serve_figure(path: str, user_id: str = Depends(require_user)):
     path = path.strip()
-    if not is_under_workspace(path):
-        log.warning("figure_rejected", path=path, reason="outside workspace")
+    if not is_under_workspace(path) or not _owns_path(user_id, path):
+        log.warning("figure_rejected", path=path, reason="outside workspace or not owner")
         raise HTTPException(status_code=404, detail="Not found")
     p = Path(path).resolve()
     media_type = _FIGURE_TYPES.get(p.suffix.lower())

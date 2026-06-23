@@ -10,7 +10,7 @@ import json
 import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -27,7 +27,29 @@ from helioai.workspace import is_under_workspace, _root as _ws_root
 log = get_logger(__name__)
 
 _STATIC = Path(__file__).parent / "static"
-_WEB_USER = "web"
+_DEFAULT_USER = "web"
+
+
+async def require_user(x_helio_token: str | None = Header(default=None)) -> str:
+    """Resolve the caller's user_id from the X-Helio-Token header.
+
+    No users configured (local dev) → single shared user, no auth. Once
+    HELIOAI_USERS is set (deployment), a valid nominative token is required.
+    """
+    users = settings.web_auth.users
+    if not users:
+        return _DEFAULT_USER
+    if not x_helio_token or x_helio_token not in users:
+        raise HTTPException(status_code=401, detail="Invalid or missing token")
+    return users[x_helio_token]
+
+
+def _profile_path(user_id: str) -> Path:
+    base = settings.profile.profile_path
+    if user_id == _DEFAULT_USER:
+        return base
+    return base.parent / "profiles" / f"{user_id}.md"
+
 
 app = FastAPI(title="HelioAI", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")
@@ -57,14 +79,17 @@ async def health():
 async def chat_stream(
     req: _ChatRequest,
     x_helio_dev_token: str | None = Header(default=None),
+    user_id: str = Depends(require_user),
 ):
-    restricted = not dev_unlock(x_helio_dev_token)
+    # Authenticated nominative users are trusted → unrestricted; the legacy dev
+    # token still unlocks scope when no users are configured (local dev).
+    restricted = not (bool(settings.web_auth.users) or dev_unlock(x_helio_dev_token))
 
     async def gen():
         try:
             llm = build_llm_client(req.provider)
             async for ev in stream_chat(
-                llm, _WEB_USER, req.session_id, req.message, restricted=restricted
+                llm, user_id, req.session_id, req.message, restricted=restricted
             ):
                 yield f"data: {json.dumps(ev)}\n\n"
         except Exception as e:
@@ -78,13 +103,13 @@ async def chat_stream(
 
 
 @app.get("/api/sessions")
-async def list_sessions():
-    return store.list_summaries(_WEB_USER)
+async def list_sessions(user_id: str = Depends(require_user)):
+    return store.list_summaries(user_id)
 
 
 @app.get("/api/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str):
-    history = store.get_or_create(_WEB_USER, session_id)
+async def get_session_messages(session_id: str, user_id: str = Depends(require_user)):
+    history = store.get_or_create(user_id, session_id)
     out: list[dict] = []
     pending_figures: list[str] = []
     pending_cards: list[dict] = []
@@ -202,24 +227,24 @@ async def get_session_messages(session_id: str):
 
 
 @app.get("/api/profile")
-async def get_profile():
-    p = settings.profile.profile_path
+async def get_profile(user_id: str = Depends(require_user)):
+    p = _profile_path(user_id)
     content = p.read_text(encoding="utf-8").strip() if p.exists() else ""
     return {"content": content}
 
 
 @app.put("/api/profile")
-async def put_profile(body: _ProfileBody):
-    p = settings.profile.profile_path
+async def put_profile(body: _ProfileBody, user_id: str = Depends(require_user)):
+    p = _profile_path(user_id)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(body.content, encoding="utf-8")
     return {"ok": True}
 
 
 @app.delete("/api/sessions/{session_id}")
-async def delete_session(session_id: str):
-    wdir = store.get_workspace_dir(_WEB_USER, session_id)
-    store.reset(_WEB_USER, session_id)
+async def delete_session(session_id: str, user_id: str = Depends(require_user)):
+    wdir = store.get_workspace_dir(user_id, session_id)
+    store.reset(user_id, session_id)
     if wdir:
         ws_path = _ws_root() / wdir
         if ws_path.exists():
@@ -228,12 +253,12 @@ async def delete_session(session_id: str):
 
 
 @app.get("/api/export")
-async def export_notebook(session_id: str):
+async def export_notebook(session_id: str, user_id: str = Depends(require_user)):
     from helioai.export import export_session_notebook
 
-    if session_id not in store.all_sessions(_WEB_USER):
+    if session_id not in store.all_sessions(user_id):
         raise HTTPException(status_code=404, detail="Unknown session")
-    path = export_session_notebook(_WEB_USER, session_id)
+    path = export_session_notebook(user_id, session_id)
     return FileResponse(
         path,
         media_type="application/x-ipynb+json",
@@ -242,7 +267,9 @@ async def export_notebook(session_id: str):
 
 
 @app.get("/code")
-async def serve_code(path: str):
+async def serve_code(path: str, user_id: str = Depends(require_user)):
+    # ponytail: gated on auth, not per-user path ownership — a valid user could
+    # read another user's workspace file if they guess the path. Tighten if needed.
     path = path.strip()
     if not is_under_workspace(path):
         log.warning("code_rejected", path=path, reason="outside workspace")
@@ -263,7 +290,7 @@ _FIGURE_TYPES = {".png": "image/png", ".pdf": "application/pdf"}
 
 
 @app.get("/figure")
-async def serve_figure(path: str):
+async def serve_figure(path: str, user_id: str = Depends(require_user)):
     path = path.strip()
     if not is_under_workspace(path):
         log.warning("figure_rejected", path=path, reason="outside workspace")

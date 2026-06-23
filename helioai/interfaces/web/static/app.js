@@ -64,6 +64,15 @@ function getDevToken() {
   return localStorage.getItem(DEV_TOKEN_KEY) || '';
 }
 
+// Inject the stored token as X-Helio-Token on every same-origin request so the
+// nominative-auth backend (HELIOAI_USERS) accepts it. No-op when unset (local dev).
+const _origFetch = window.fetch.bind(window);
+window.fetch = (url, opts = {}) => {
+  const token = getDevToken();
+  if (token) opts.headers = { ...(opts.headers || {}), 'X-Helio-Token': token };
+  return _origFetch(url, opts);
+};
+
 function updateDevIndicator() {
   const token = devTokenInput.value.trim();
   if (token) {

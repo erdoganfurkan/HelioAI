@@ -519,3 +519,45 @@ def test_chat_stream_wrong_token_stays_restricted(monkeypatch, tmp_path):
         resp.read()
 
     assert captured.get("restricted") is True
+
+
+# ── D.2 auth ──────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def auth_client(web_client, monkeypatch):
+    """web_client with HELIOAI_USERS configured (two nominative tokens)."""
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.web_auth, "users", {"tok-v": "vincent", "tok-a": "alice"})
+    return web_client
+
+
+def test_api_requires_token_when_users_configured(auth_client):
+    assert auth_client.get("/api/sessions").status_code == 401
+    r = auth_client.post("/chat/stream", json={"message": "hi", "session_id": "s1"})
+    assert r.status_code == 401
+
+
+def test_invalid_token_rejected(auth_client):
+    r = auth_client.get("/api/sessions", headers={"X-Helio-Token": "nope"})
+    assert r.status_code == 401
+
+
+def test_valid_token_isolates_sessions(auth_client):
+    import helioai.interfaces.web.app as web_app
+    from helioai.core.llm.base import Message
+
+    web_app.store.save("vincent", "s1", [Message(role="user", content="hi")])
+    # alice sees none of vincent's sessions
+    r = auth_client.get("/api/sessions", headers={"X-Helio-Token": "tok-a"})
+    assert r.status_code == 200
+    assert r.json() == []
+    # vincent sees his own
+    r = auth_client.get("/api/sessions", headers={"X-Helio-Token": "tok-v"})
+    assert any(s["session_id"] == "s1" for s in r.json())
+
+
+def test_no_users_configured_stays_open(web_client):
+    # Default: no HELIOAI_USERS → single-user, no token needed (local dev)
+    assert web_client.get("/api/sessions").status_code == 200

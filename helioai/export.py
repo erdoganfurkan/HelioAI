@@ -47,7 +47,7 @@ def export(name, data):
 # Notebook setup cell — full imports + the real clean()/export() helpers. The
 # load_data shim is appended separately only when a cell still references it.
 _SETUP_CELL_BASE = (
-    '''\
+    """\
 # HelioAI export — environment setup
 import warnings
 warnings.filterwarnings("ignore")
@@ -62,7 +62,7 @@ except ImportError:
     pf = None
 
 
-'''
+"""
     + _CLEAN_DEF
     + "\n\n\n"
     + _EXPORT_DEF
@@ -394,8 +394,7 @@ def build_notebook(user_id: str, session_id: str):
     if shim_needed:
         setup_cell += (
             f"\n\nimport json, types\nfrom pathlib import Path\n"
-            f"_HELIOAI_DATA_DIR = Path({str(data_dir)!r})\n"
-            + _LOAD_DATA_SHIM
+            f"_HELIOAI_DATA_DIR = Path({str(data_dir)!r})\n" + _LOAD_DATA_SHIM
         )
     cells.append(nbf.v4.new_code_cell(setup_cell))
 

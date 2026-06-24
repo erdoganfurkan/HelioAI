@@ -209,7 +209,7 @@ def test_to_standalone_strips_agent_only_calls() -> None:
     from helioai.export import to_standalone
 
     code = (
-        'b = clean(x)\n'
+        "b = clean(x)\n"
         'param_card(b, "amda/imf")\n'
         'document_method("MVAB", "Sonnerup (1998)", "min variance")\n'
         'export("beta", b)\n'

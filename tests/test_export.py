@@ -75,8 +75,8 @@ def test_export_includes_saved_code(wired) -> None:
     nb = nbformat.read(str(path), as_version=4)
     code_sources = [c.source for c in nb.cells if c.cell_type == "code"]
     assert any("spz.get_data('amda/imf'" in s for s in code_sources)
-    # setup cell defines the export/param_card shims so saved runs execute standalone
-    assert any("def param_card" in s for s in code_sources)
+    # agent-only param_card() is stripped from standalone code
+    assert all("param_card" not in s for s in code_sources)
 
 
 def test_export_includes_conversation(wired) -> None:
@@ -111,7 +111,7 @@ def test_exported_notebook_clean_shim_is_callable(wired, tmp_path) -> None:
 
     # Execute setup cell to populate namespace, then call clean()
     ns: dict = {}
-    exec(_SETUP_CELL_BASE.format(data_dir="data"), ns)  # noqa: S102
+    exec(_SETUP_CELL_BASE, ns)  # noqa: S102
     import numpy as np
 
     result = ns["clean"](np.array([1.0, 1e31, -1e31, float("inf"), float("-inf"), 2.0]))
@@ -200,6 +200,47 @@ def test_rewrite_event_collection_without_param_id_kept() -> None:
     code = 'evs = load_data("x_events")'
     out = _rewrite_load_data_calls(code, manifest)
     assert 'load_data("x_events")' in out
+
+
+# ── Chantier 2: to_standalone (strip agent-only + header) ────────────────────
+
+
+def test_to_standalone_strips_agent_only_calls() -> None:
+    from helioai.export import to_standalone
+
+    code = (
+        'b = clean(x)\n'
+        'param_card(b, "amda/imf")\n'
+        'document_method("MVAB", "Sonnerup (1998)", "min variance")\n'
+        'export("beta", b)\n'
+    )
+    out = to_standalone(code, {"datasets": {}})
+    assert "param_card" not in out
+    assert "document_method" not in out
+    assert "clean(x)" in out and 'export("beta", b)' in out  # scientific calls kept
+
+
+def test_to_standalone_header_defines_used_helpers() -> None:
+    from helioai.export import to_standalone
+
+    code = "b = clean(spz.get_data('amda/imf', s, e).values)\nexport('b', b)\n"
+    out = to_standalone(code, {"datasets": {}})
+    assert "import speasy as spz" in out
+    assert "import numpy as np" in out
+    assert "def clean(" in out
+    assert "def export(" in out
+    import ast
+
+    ast.parse(out)  # standalone code is syntactically valid
+
+
+def test_to_standalone_no_header_for_notebook() -> None:
+    from helioai.export import to_standalone
+
+    code = "param_card(b, 'x')\nplt.plot(t, y)\n"
+    out = to_standalone(code, {"datasets": {}}, with_header=False)
+    assert "import" not in out  # setup cell carries imports
+    assert "param_card" not in out
 
 
 def test_setup_cell_drops_load_data_shim_when_all_rewritten(wired) -> None:

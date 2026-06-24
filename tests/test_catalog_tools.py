@@ -110,7 +110,7 @@ def test_walk_catalogs_ttl_cache() -> None:
 async def test_list_catalogs_returns_all(monkeypatch, tmp_path) -> None:
     from helioai.config import settings
 
-    monkeypatch.setattr(settings.catalogs, "catalogs_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
     cat_idx = _make_catalog_index(
         "sharedcatalog_41", "ICME list", "Richardson & Cane ICME", 341, "1996-01-01", "2022-12-31"
     )
@@ -137,7 +137,7 @@ async def test_list_catalogs_returns_all(monkeypatch, tmp_path) -> None:
 async def test_list_catalogs_type_filter(monkeypatch, tmp_path) -> None:
     from helioai.config import settings
 
-    monkeypatch.setattr(settings.catalogs, "catalogs_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
     cat_idx = _make_catalog_index("c1", "Cat", "", 10, "", "")
     tt_idx = _make_catalog_index("t1", "TT", "", 5, "", "", "TimetableIndex")
     mock_spz = _make_spz({"c1": cat_idx}, {"t1": tt_idx})

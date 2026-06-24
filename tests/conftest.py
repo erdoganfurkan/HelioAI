@@ -50,6 +50,17 @@ def _warm_sandbox_imports():
         pass
 
 
+@pytest.fixture(autouse=True)
+def _reset_workspace_ctx():
+    """Keep the workspace contextvars (user/label/session) from leaking across tests."""
+    import helioai.workspace as ws
+
+    yield
+    ws._current_user.set(None)
+    ws._current_label.set(None)
+    ws._current_session.set(None)
+
+
 @pytest.fixture
 def tmp_chroma_dir(tmp_path: Path) -> Path:
     return tmp_path / "chroma"

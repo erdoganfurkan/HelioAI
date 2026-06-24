@@ -241,10 +241,52 @@ def _interactive(*, restricted: bool = True) -> None:
         asyncio.run(_run_query(query, restricted=restricted))
 
 
+def _run_migrate_storage() -> None:
+    """One-shot, idempotent migration of legacy flat storage into per-user homes."""
+    import shutil
+    from pathlib import Path
+
+    from helioai.config import settings
+    from helioai.workspace import DEFAULT_USER, user_home
+
+    moved = 0
+
+    legacy_catalogs = Path(settings.catalogs.catalogs_dir)
+    if legacy_catalogs.is_dir():
+        dest = user_home(DEFAULT_USER) / "catalogs"
+        dest.mkdir(parents=True, exist_ok=True)
+        for src in legacy_catalogs.glob("*.json"):
+            tgt = dest / src.name
+            if not tgt.exists():
+                shutil.move(str(src), str(tgt))
+                moved += 1
+
+    legacy_profiles = Path(settings.profile.profile_path).parent / "profiles"
+    if legacy_profiles.is_dir():
+        for src in legacy_profiles.glob("*.md"):
+            tgt = user_home(src.stem) / "profile.md"
+            if not tgt.exists():
+                tgt.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(tgt))
+                moved += 1
+
+    legacy_default_profile = Path(settings.profile.profile_path)
+    if legacy_default_profile.is_file():
+        tgt = user_home(DEFAULT_USER) / "profile.md"
+        if not tgt.exists():
+            tgt.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(legacy_default_profile), str(tgt))
+            moved += 1
+
+    print(f"migrate-storage: moved {moved} file(s) into data/users/")
+
+
 def main() -> None:
     global _SESSION_ID
     from helioai.config import dev_unlock, settings
+    from helioai.workspace import set_user
 
+    set_user(_USER_ID)
     args = sys.argv[1:]
 
     # --dev: supply the configured dev token to bypass the scope guardrail
@@ -280,6 +322,10 @@ def main() -> None:
 
     if args[0] == "export":
         _run_export(args[1] if len(args) > 1 else None)
+        return
+
+    if args[0] == "migrate-storage":
+        _run_migrate_storage()
         return
 
     if args[0] == "serve":

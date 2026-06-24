@@ -116,6 +116,7 @@ class WebAuthConfig:
 
 @dataclass
 class Settings:
+    data_dir: Path = field(default_factory=lambda: _ROOT / "data")
     llm: LLMConfig = field(default_factory=LLMConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     rag: RAGConfig = field(default_factory=RAGConfig)
@@ -145,6 +146,7 @@ def _load() -> Settings:
     provider = os.environ.get("HELIOAI_LLM_PROVIDER", "azure").lower()
     max_iterations = int(os.environ.get("HELIOAI_MAX_ITERATIONS", "10"))
 
+    data_dir = Path(os.environ.get("HELIOAI_DATA_DIR", str(_ROOT / "data")))
     workspace_dir = Path(os.environ.get("HELIOAI_WORKSPACE", str(_ROOT / "data" / "workspace")))
     workspace_ttl = int(os.environ.get("HELIOAI_WORKSPACE_TTL_S", str(86400 * 7)))
     profile_path = Path(os.environ.get("HELIOAI_PROFILE", str(_ROOT / "data" / "profile.md")))
@@ -156,6 +158,7 @@ def _load() -> Settings:
     web_users = _parse_users(os.environ.get("HELIOAI_USERS", ""))
 
     s = Settings(
+        data_dir=data_dir,
         web_auth=WebAuthConfig(users=web_users),
         workspace=WorkspaceConfig(workspace_dir=workspace_dir, ttl_seconds=workspace_ttl),
         profile=ProfileConfig(profile_path=profile_path),

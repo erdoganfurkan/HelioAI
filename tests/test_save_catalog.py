@@ -12,10 +12,13 @@ from helioai.config import settings
 
 @pytest.fixture()
 def catalogs_dir(tmp_path, monkeypatch):
-    d = tmp_path / "catalogs"
-    d.mkdir()
-    monkeypatch.setattr(settings.catalogs, "catalogs_dir", d)
-    return d
+    from helioai.workspace import DEFAULT_USER, reset_user, set_user
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    tok = set_user(DEFAULT_USER)
+    d = tmp_path / "users" / DEFAULT_USER / "catalogs"
+    yield d
+    reset_user(tok)
 
 
 def _make_events(n=3):

@@ -19,7 +19,7 @@ _LABEL = "plot-imf-bz_abc123"
 def wired(monkeypatch, tmp_path):
     """A fresh store on a tmp DB + a tmp workspace with one saved run."""
     store = SessionStore(tmp_path / "sessions.db")
-    workspace = tmp_path / "workspace"
+    workspace = tmp_path / "users" / _USER / "workspace"
     (workspace / _LABEL).mkdir(parents=True)
     (workspace / _LABEL / "code_0.py").write_text(
         "var = spz.get_data('amda/imf', start, stop)\nparam_card(var, 'amda/imf')\n",
@@ -48,7 +48,7 @@ def wired(monkeypatch, tmp_path):
     store.set_workspace_dir(_USER, _SESSION, _LABEL)
 
     monkeypatch.setattr(export_module, "store", store)
-    monkeypatch.setattr(export_module.settings.workspace, "workspace_dir", workspace)
+    monkeypatch.setattr(export_module.settings, "data_dir", tmp_path)
     return workspace
 
 
@@ -259,7 +259,7 @@ def test_methods_section_lists_recipes(monkeypatch, tmp_path) -> None:
     from helioai.export import build_notebook
 
     store = SessionStore(tmp_path / "sessions.db")
-    workspace = tmp_path / "workspace"
+    workspace = tmp_path / "users" / _USER / "workspace"
     (workspace / _LABEL).mkdir(parents=True)
 
     history = [
@@ -275,7 +275,7 @@ def test_methods_section_lists_recipes(monkeypatch, tmp_path) -> None:
     store.save(_USER, _SESSION, history)
     store.set_workspace_dir(_USER, _SESSION, _LABEL)
     monkeypatch.setattr(export_module, "store", store)
-    monkeypatch.setattr(export_module.settings.workspace, "workspace_dir", workspace)
+    monkeypatch.setattr(export_module.settings, "data_dir", tmp_path)
 
     nb = build_notebook(_USER, _SESSION)
     md = "\n".join(c.source for c in nb.cells if c.cell_type == "markdown")

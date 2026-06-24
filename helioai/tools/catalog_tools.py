@@ -543,9 +543,9 @@ _MAX_EVENTS_LOCAL = 5000
 
 
 def _catalogs_dir() -> Path:
-    from helioai.config import settings
+    from helioai.workspace import current_user, user_home
 
-    d = Path(settings.catalogs.catalogs_dir)
+    d = user_home(current_user()) / "catalogs"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

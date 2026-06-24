@@ -90,7 +90,7 @@ def web_client(monkeypatch, fake_stream, tmp_path):
     from helioai.core.session import SessionStore
 
     test_store = SessionStore(tmp_path / "sessions.db")
-    monkeypatch.setattr(settings.profile, "profile_path", tmp_path / "profile.md")
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr("helioai.interfaces.web.app.stream_chat", fake_stream)
     monkeypatch.setattr("helioai.interfaces.web.app.build_llm_client", lambda provider=None: None)
     monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)

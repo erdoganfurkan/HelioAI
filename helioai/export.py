@@ -334,9 +334,11 @@ def build_notebook(user_id: str, session_id: str):
     """Build an nbformat notebook object for a session (no file I/O)."""
     import nbformat as nbf
 
+    from helioai.workspace import user_home
+
     history = store.get_or_create(user_id, session_id)
     label = store.get_workspace_dir(user_id, session_id)
-    workspace_dir = Path(settings.workspace.workspace_dir) / label if label else None
+    workspace_dir = user_home(user_id) / "workspace" / label if label else None
 
     nb = nbf.v4.new_notebook()
     cells = []
@@ -430,8 +432,10 @@ def export_session_notebook(user_id: str, session_id: str, out_path: Path | None
     nb = build_notebook(user_id, session_id)
 
     if out_path is None:
+        from helioai.workspace import user_home
+
         label = store.get_workspace_dir(user_id, session_id) or session_id
-        root = Path(settings.workspace.workspace_dir)
+        root = user_home(user_id) / "workspace"
         root.mkdir(parents=True, exist_ok=True)
         out_path = root / f"{label}.ipynb"
     out_path = Path(out_path)

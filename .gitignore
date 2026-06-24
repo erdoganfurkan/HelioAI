@@ -32,6 +32,7 @@ data/sessions.db
 data/workspace/
 data/catalogs/
 data/users.json
+data/users/
 data/profiles/
 
 # Local MCP config

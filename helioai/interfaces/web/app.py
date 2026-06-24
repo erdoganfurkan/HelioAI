@@ -22,7 +22,7 @@ from helioai.core.agent_loop import stream_chat
 from helioai.core.llm.factory import build_llm_client
 from helioai.core.session import store
 from helioai.logging_config import get_logger
-from helioai.workspace import is_under_workspace, _root as _ws_root
+from helioai.workspace import is_under_workspace, user_home
 
 log = get_logger(__name__)
 
@@ -45,26 +45,22 @@ async def require_user(x_helio_token: str | None = Header(default=None)) -> str:
 
 
 def _profile_path(user_id: str) -> Path:
-    base = settings.profile.profile_path
-    if user_id == _DEFAULT_USER:
-        return base
-    return base.parent / "profiles" / f"{user_id}.md"
+    return user_home(user_id) / "profile.md"
 
 
 def _owns_path(user_id: str, path: str) -> bool:
-    """True if `path` is in one of the user's session workspace dirs.
+    """True if `path` is physically under the user's own storage home.
 
-    Workspace layout is <root>/<label>/... and the label is stored per
-    (user, session); a path is owned iff its top label belongs to the user.
-    No-op (always True) when auth is disabled (single local user).
+    Storage is namespaced as <data>/users/<user>/workspace/... so ownership is
+    a physical containment check. No-op (always True) when auth is disabled.
     """
     if not settings.web_auth.users:
         return True
     try:
-        rel = Path(path).resolve().relative_to(_ws_root().resolve())
+        Path(path).resolve().relative_to((user_home(user_id) / "workspace").resolve())
     except (ValueError, OSError):
         return False
-    return bool(rel.parts) and rel.parts[0] in store.workspace_dirs(user_id)
+    return True
 
 
 app = FastAPI(title="HelioAI", docs_url=None, redoc_url=None)
@@ -262,7 +258,7 @@ async def delete_session(session_id: str, user_id: str = Depends(require_user)):
     wdir = store.get_workspace_dir(user_id, session_id)
     store.reset(user_id, session_id)
     if wdir:
-        ws_path = _ws_root() / wdir
+        ws_path = user_home(user_id) / "workspace" / wdir
         if ws_path.exists():
             shutil.rmtree(ws_path, ignore_errors=True)
     return {"deleted": session_id}

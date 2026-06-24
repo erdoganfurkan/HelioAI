@@ -232,7 +232,7 @@ def test_figure_path_outside_workspace(web_client):
 def test_figure_path_traversal(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
 
-    monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
     # path traversal attempt
     r = web_client.get(f"/figure?path={tmp_path}/../etc/passwd")
     assert r.status_code == 404
@@ -241,9 +241,9 @@ def test_figure_path_traversal(web_client, tmp_path, monkeypatch):
 def test_figure_valid(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
 
-    monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
 
-    fig_dir = tmp_path / "sess123" / "run001"
+    fig_dir = tmp_path / "users" / "web" / "workspace" / "sess123" / "run001"
     fig_dir.mkdir(parents=True)
     fig = fig_dir / "fig_0.png"
     fig.write_bytes(b"\x89PNG\r\n")
@@ -256,9 +256,9 @@ def test_figure_valid(web_client, tmp_path, monkeypatch):
 def test_figure_pdf_served(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
 
-    monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
 
-    fig_dir = tmp_path / "sess123" / "run001"
+    fig_dir = tmp_path / "users" / "web" / "workspace" / "sess123" / "run001"
     fig_dir.mkdir(parents=True)
     pdf = fig_dir / "fig_0.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -271,9 +271,9 @@ def test_figure_pdf_served(web_client, tmp_path, monkeypatch):
 def test_figure_unsupported_type_rejected(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
 
-    monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
 
-    fig_dir = tmp_path / "sess123"
+    fig_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
     fig_dir.mkdir(parents=True)
     txt = fig_dir / "data.txt"
     txt.write_text("not a figure")
@@ -293,7 +293,7 @@ def test_code_outside_workspace(web_client):
 def test_code_path_traversal(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
 
-    monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
     r = web_client.get(f"/code?path={tmp_path}/../etc/passwd")
     assert r.status_code == 404
 
@@ -301,8 +301,8 @@ def test_code_path_traversal(web_client, tmp_path, monkeypatch):
 def test_code_not_py(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
 
-    monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
-    txt_file = tmp_path / "sess" / "data.txt"
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    txt_file = tmp_path / "users" / "web" / "workspace" / "sess" / "data.txt"
     txt_file.parent.mkdir(parents=True)
     txt_file.write_text("not python")
     r = web_client.get(f"/code?path={txt_file}")
@@ -312,8 +312,8 @@ def test_code_not_py(web_client, tmp_path, monkeypatch):
 def test_code_valid(web_client, tmp_path, monkeypatch):
     from helioai.config import settings
 
-    monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
-    code_dir = tmp_path / "sess123"
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    code_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
     code_dir.mkdir(parents=True)
     code_file = code_dir / "code_0.py"
     source = "import numpy as np\nprint(np.pi)\n"
@@ -407,7 +407,7 @@ def test_export_endpoint(monkeypatch, tmp_path):
 
     monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
     monkeypatch.setattr(export_module, "store", test_store)
-    monkeypatch.setattr(export_module.settings.workspace, "workspace_dir", tmp_path / "ws")
+    monkeypatch.setattr(export_module.settings, "data_dir", tmp_path)
 
     from helioai.interfaces.web.app import app
 
@@ -567,9 +567,9 @@ def test_figure_path_ownership(auth_client, tmp_path, monkeypatch):
     import helioai.interfaces.web.app as web_app
     from helioai.core.llm.base import Message
 
-    monkeypatch.setattr(web_app.settings.workspace, "workspace_dir", tmp_path)
-    wdir = tmp_path / "v-sess"
-    wdir.mkdir()
+    monkeypatch.setattr(web_app.settings, "data_dir", tmp_path)
+    wdir = tmp_path / "users" / "vincent" / "workspace" / "v-sess"
+    wdir.mkdir(parents=True)
     fig = wdir / "fig_0_0.png"
     fig.write_bytes(b"\x89PNG")
     web_app.store.save("vincent", "s1", [Message(role="user", content="hi")])

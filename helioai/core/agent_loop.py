@@ -228,6 +228,7 @@ async def stream_chat(
     import helioai.workspace as _ws
 
     _ws_token = _ws.set_session(session_id)
+    _user_token = _ws.set_user(user_id)
 
     history = store.get_or_create(user_id, session_id)
     history.append(Message(role="user", content=user_text))
@@ -364,6 +365,7 @@ async def stream_chat(
     finally:
         _ws.reset_session(_ws_token)
         _ws.reset_label(_label_token)
+        _ws.reset_user(_user_token)
 
 
 async def chat(

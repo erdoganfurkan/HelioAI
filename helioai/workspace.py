@@ -17,12 +17,37 @@ from pathlib import Path
 
 _current_session: ContextVar[str | None] = ContextVar("helioai_current_session", default=None)
 _current_label: ContextVar[str | None] = ContextVar("helioai_workspace_label", default=None)
+_current_user: ContextVar[str | None] = ContextVar("helioai_current_user", default=None)
+
+DEFAULT_USER = "web"
+
+
+def current_user() -> str:
+    return _current_user.get() or DEFAULT_USER
+
+
+def set_user(user_id: str) -> object:
+    """Bind the user contextvar. Returns token for later reset."""
+    return _current_user.set(user_id)
+
+
+def reset_user(token: object) -> None:
+    _current_user.reset(token)  # type: ignore[arg-type]
+
+
+def _users_root() -> Path:
+    from helioai.config import settings
+
+    return Path(settings.data_dir) / "users"
+
+
+def user_home(user: str) -> Path:
+    """A user's private storage home: <data>/users/<user>/ (not created here)."""
+    return _users_root() / user
 
 
 def _root() -> Path:
-    from helioai.config import settings
-
-    p = Path(settings.workspace.workspace_dir)
+    p = user_home(current_user()) / "workspace"
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -98,26 +123,32 @@ def get_run_dir_for_sandbox() -> str:
 
 
 def is_under_workspace(path: str | Path) -> bool:
-    """True if path is safely under the workspace root (no path traversal)."""
+    """True if path is safely under the per-user storage root (no traversal)."""
     try:
         p = Path(path).resolve()
-        root = _root().resolve()
+        root = _users_root().resolve()
         return str(p).startswith(str(root) + "/") or p == root
     except (ValueError, OSError):
         return False
 
 
 def cleanup_old_runs(ttl_seconds: int | None = None) -> int:
-    """Purge session dirs older than ttl_seconds. Returns count removed."""
+    """Purge session dirs older than ttl_seconds across all users. Returns count removed."""
     from helioai.config import settings
 
     if ttl_seconds is None:
         ttl_seconds = settings.workspace.ttl_seconds
-    root = _root()
+    users_root = _users_root()
+    if not users_root.exists():
+        return 0
     cutoff = time.time() - ttl_seconds
     removed = 0
-    for session_dir in root.iterdir():
-        if session_dir.is_dir() and session_dir.stat().st_mtime < cutoff:
-            shutil.rmtree(session_dir, ignore_errors=True)
-            removed += 1
+    for home in users_root.iterdir():
+        ws = home / "workspace"
+        if not ws.is_dir():
+            continue
+        for session_dir in ws.iterdir():
+            if session_dir.is_dir() and session_dir.stat().st_mtime < cutoff:
+                shutil.rmtree(session_dir, ignore_errors=True)
+                removed += 1
     return removed

@@ -19,27 +19,13 @@ def test_inject_only_for_run_python(monkeypatch) -> None:
     monkeypatch.setattr(ws, "get_session_dir", lambda: __import__("pathlib").Path("/tmp/ws"))
     monkeypatch.setattr(ws, "get_next_run_idx", lambda d: 3)
 
-    out = inject_run_python_args("run_python", {"code": "x=1"})
-    assert out["_plot_dir"] == "/tmp/ws"
-    assert out["_run_idx"] == 3
-    assert out["code"] == "x=1"
+    # Returns only the trusted args, passed to call_tool(..., trusted=...).
+    out = inject_run_python_args("run_python")
+    assert out == {"_plot_dir": "/tmp/ws", "_run_idx": 3}
 
 
 def test_inject_noop_for_other_tools() -> None:
-    args = {"param_id": "amda/imf"}
-    out = inject_run_python_args("get_timeseries", args)
-    assert out == args
-    assert "_plot_dir" not in out
-
-
-def test_inject_does_not_mutate_input(monkeypatch) -> None:
-    import helioai.workspace as ws
-
-    monkeypatch.setattr(ws, "get_session_dir", lambda: __import__("pathlib").Path("/tmp/ws"))
-    monkeypatch.setattr(ws, "get_next_run_idx", lambda d: 0)
-    src = {"code": "x=1"}
-    inject_run_python_args("run_python", src)
-    assert "_plot_dir" not in src
+    assert inject_run_python_args("get_timeseries") == {}
 
 
 # ──────────────────────────────── emit_post_tool_events ─────────────────────

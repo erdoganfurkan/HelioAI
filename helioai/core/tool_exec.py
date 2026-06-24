@@ -157,19 +157,19 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
     return artifacts
 
 
-def inject_run_python_args(name: str, args: dict | None) -> dict:
-    """Inject the per-run sandbox output dir into run_python arguments.
+def inject_run_python_args(name: str) -> dict:
+    """Trusted per-run sandbox args (_plot_dir/_run_idx) for run_python.
 
-    No-op for any other tool. Returns a new dict (does not mutate the input).
+    Passed via `call_tool(..., trusted=...)` so they bypass the private-arg
+    guard that rejects LLM/MCP-supplied `_*` overrides. Empty for any other tool.
     """
-    args = args or {}
     if name != "run_python":
-        return args
+        return {}
     import helioai.workspace as _ws
 
     sdir = _ws.get_session_dir()
     ridx = _ws.get_next_run_idx(sdir)
-    return {**args, "_plot_dir": str(sdir), "_run_idx": ridx}
+    return {"_plot_dir": str(sdir), "_run_idx": ridx}
 
 
 def emit_post_tool_events(

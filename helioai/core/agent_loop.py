@@ -323,7 +323,7 @@ async def stream_chat(
                         result = _dispatch_internal_tool(tc.name, tc.arguments)
                     else:
                         result = await registry.call_tool(
-                            tc.name, inject_run_python_args(tc.name, tc.arguments)
+                            tc.name, tc.arguments, trusted=inject_run_python_args(tc.name)
                         )
                 except Exception as e:
                     log.exception("tool_call_failed", turn=turn, tool=tc.name)

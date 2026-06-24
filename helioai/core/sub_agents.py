@@ -272,7 +272,7 @@ async def stream_subagent(
                     )
                 else:
                     result = await registry.call_tool(
-                        tc.name, inject_run_python_args(tc.name, tc.arguments)
+                        tc.name, tc.arguments, trusted=inject_run_python_args(tc.name)
                     )
 
                 for ev in emit_post_tool_events(

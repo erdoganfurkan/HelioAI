@@ -235,3 +235,17 @@ async def test_registry_rejects_private_args() -> None:
     out = await reg.call_tool("echo", {"x": 1, "_plot_dir": "/etc"})
     assert "rejected private argument" in out
     assert "_plot_dir" in out
+
+
+async def test_registry_allows_trusted_private_args() -> None:
+    from helioai.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    @reg.register("echo", "echo", {"type": "object", "properties": {}})
+    async def _echo(**kwargs):
+        return kwargs
+
+    out = await reg.call_tool("echo", {"x": 1}, trusted={"_plot_dir": "/safe"})
+    assert "rejected private argument" not in out
+    assert "/safe" in out

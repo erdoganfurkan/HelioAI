@@ -49,15 +49,22 @@ class ToolRegistry:
             ToolDef(name=t.name, description=t.description, parameters=t.parameters) for t in tools
         ]
 
-    async def call_tool(self, name: str, arguments: dict | None) -> str:
-        """Invoke a tool and return its JSON-serialized result string."""
+    async def call_tool(
+        self, name: str, arguments: dict | None, *, trusted: dict | None = None
+    ) -> str:
+        """Invoke a tool and return its JSON-serialized result string.
+
+        `arguments` is caller-supplied (LLM/MCP) and may not carry private
+        `_*` keys. `trusted` is framework-injected (e.g. the sandbox output
+        dir) and bypasses that guard.
+        """
         if name not in self._tools:
             return json.dumps({"error": f"unknown tool {name!r}"})
         if arguments and any(k.startswith("_") for k in arguments):
             bad = sorted(k for k in arguments if k.startswith("_"))
             return json.dumps({"error": f"rejected private argument(s): {bad}"})
         try:
-            result = await self._tools[name].func(**(arguments or {}))
+            result = await self._tools[name].func(**{**(arguments or {}), **(trusted or {})})
             if isinstance(result, str):
                 return result
             return json.dumps(result, ensure_ascii=False, default=str)

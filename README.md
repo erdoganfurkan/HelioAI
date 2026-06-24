@@ -35,9 +35,9 @@ No API key required for data access. No manual parameter hunting.
 - **PlasmaPy tools** — plasma β, gyrofrequency, Debye length, Alfvén speed, inertial length, power spectrum — ready-made for the agent.
 - **Sandboxed Python** — the agent writes and runs analysis code safely (subprocess, timeout). All scripts are saved for reproducibility.
 - **5 specialised skills** — `parameter_hunter`, `data_analyst`, `plasma_physicist`, `plotting`, `helioai_helper` — loaded as markdown, zero coupling to the agent loop.
-- **Derived recipes** — 6 reusable scientific scripts: θ_Bn, Walén test, MVAB, Rankine-Hugoniot jump conditions, pressure balance, pitch angle distribution.
+- **Derived recipes** — 7 reusable scientific scripts, each with a cited reference: θ_Bn, Walén test, MVAB, Rankine-Hugoniot jump conditions, pressure balance, pitch angle distribution, superposed epoch.
 - **Fill value masking** — `clean()` helper in the sandbox automatically masks CDF fill values (`|x| ≥ 1e30`, `±inf`) before any plot or analysis.
-- **Export to notebook** — any session exports as a self-contained `.ipynb` with provenance cell, setup shims, and all generated code.
+- **Standalone notebook export** — any session exports as a self-contained `.ipynb`: `load_data()` calls are rewritten to direct `spz.get_data(...)`, sandbox-only helpers are stripped, and a *Methods & data acknowledgements* cell lists the recipes and references used — every cell re-runs in a plain Jupyter kernel.
 - **Multiple interfaces** — interactive CLI, Jupyter magic, Web UI (FastAPI + SSE + activity dock), MCP server (Claude Desktop / `claude` CLI).
 - **User profile** — inject your preferred missions, domain, and plot style once; the agent adapts to you.
 - **Heliophysics scope guardrail** — the agent stays on-topic; a dev token unlocks unrestricted mode for development.
@@ -218,7 +218,7 @@ Full catalog catalogue via `list_catalogs()` or `helioai "what event catalogs ar
 | `inertial_length` | Ion/electron inertial length |
 | `power_spectrum` | Welch PSD on a time series |
 | `list_recipes` | Catalogue of scientific Python recipes |
-| `load_recipe` | Load a recipe source (θ_Bn, Walén, MVAB, Rankine-Hugoniot, pressure balance, pitch angle dist) |
+| `load_recipe` | Load a recipe source + reference (θ_Bn, Walén, MVAB, Rankine-Hugoniot, pressure balance, pitch angle dist, superposed epoch) |
 | `task` | Delegate to a specialised sub-agent |
 
 ---
@@ -268,7 +268,7 @@ helioai/
 
 ```bash
 uv sync --extra dev
-uv run pytest                          # 254 tests, 65% coverage
+uv run pytest                          # 320+ tests
 uv run ruff check helioai/ tests/      # lint
 uv run ruff format helioai/ tests/     # format
 ```

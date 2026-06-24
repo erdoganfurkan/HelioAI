@@ -31,6 +31,8 @@ data/chroma/
 data/sessions.db
 data/workspace/
 data/catalogs/
+data/users.json
+data/profiles/
 
 # Local MCP config
 .mcp.json

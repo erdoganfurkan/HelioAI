@@ -243,6 +243,16 @@ def test_to_standalone_no_header_for_notebook() -> None:
     assert "param_card" not in out
 
 
+def test_to_standalone_does_not_duplicate_existing_imports() -> None:
+    from helioai.export import to_standalone
+
+    # Sandbox code already ships its own numpy/matplotlib imports.
+    code = "import numpy as np\nimport matplotlib.pyplot as plt\n\nplt.plot(np.arange(3))\n"
+    out = to_standalone(code, {"datasets": {}})
+    assert out.count("import numpy as np") == 1
+    assert out.count("import matplotlib.pyplot as plt") == 1
+
+
 def test_setup_cell_drops_load_data_shim_when_all_rewritten(wired) -> None:
     # the wired run uses spz.get_data directly (no load_data) → shim must be absent
     path = export_session_notebook(_USER, _SESSION)

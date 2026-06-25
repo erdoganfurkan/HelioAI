@@ -221,6 +221,10 @@ def _standalone_header(code: str) -> str:
     if re.search(r"\bu\.", code):
         imports.append("import astropy.units as u")
 
+    # ponytail: drop any import the body already declares verbatim (sandbox code
+    # ships its own `import numpy as np` etc.); exact-line match, good enough.
+    imports = [imp for imp in imports if not re.search(rf"(?m)^{re.escape(imp)}\s*$", code)]
+
     blocks: list[str] = []
     if imports:
         blocks.append("\n".join(imports))

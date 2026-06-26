@@ -316,13 +316,14 @@ def test_code_valid(web_client, tmp_path, monkeypatch):
     code_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
     code_dir.mkdir(parents=True)
     code_file = code_dir / "code_0.py"
-    source = "import numpy as np\nprint(np.pi)\n"
+    source = "b = clean(np.array([1.0]))\nparam_card(b, 'amda/imf')\nexport('b', b)\n"
     code_file.write_text(source)
 
     r = web_client.get(f"/code?path={code_file}")
     assert r.status_code == 200
     assert "text/plain" in r.headers["content-type"]
-    assert r.text == source
+    assert "param_card" not in r.text  # agent-only call stripped
+    assert "def clean(" in r.text and "def export(" in r.text  # shims supplied
 
 
 def test_session_messages_attach_code(monkeypatch, tmp_path):

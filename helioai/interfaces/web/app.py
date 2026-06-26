@@ -289,10 +289,10 @@ async def serve_code(path: str, user_id: str = Depends(require_user)):
         log.warning("code_rejected", path=path, reason="file not found or not .py")
         raise HTTPException(status_code=404, detail="Not found")
     from helioai.datastore import read_manifest
-    from helioai.export import _rewrite_load_data_calls
+    from helioai.export import to_standalone
 
     manifest = read_manifest(p.parent)
-    standalone = _rewrite_load_data_calls(p.read_text(encoding="utf-8"), manifest)
+    standalone = to_standalone(p.read_text(encoding="utf-8"), manifest, with_header=True)
     return PlainTextResponse(standalone)
 
 

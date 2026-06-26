@@ -203,6 +203,37 @@ def _strip_agent_only_calls(code: str) -> str:
     return code
 
 
+_KNOWN_IMPORT_ROOTS = {"numpy", "matplotlib", "speasy", "scipy", "plasmapy", "astropy"}
+
+
+def _import_roots(stmt: str) -> set[str]:
+    if stmt.startswith("from "):
+        return {stmt.split()[1].split(".")[0]}
+    roots = set()
+    for part in stmt[len("import ") :].split(","):
+        name = part.strip().split(" as ")[0].strip().split(".")[0]
+        if name:
+            roots.add(name)
+    return roots
+
+
+def _strip_known_imports(code: str) -> str:
+    """Drop top-level import lines that only pull canonical modules the header re-adds.
+
+    Handles combined forms (`import numpy as np, matplotlib.pyplot as plt`) the
+    header would otherwise duplicate. The header is the single source of imports.
+    """
+    out = []
+    for line in code.splitlines():
+        s = line.strip()
+        if line[:1] not in (" ", "\t") and (s.startswith("import ") or s.startswith("from ")):
+            roots = _import_roots(s)
+            if roots and roots <= _KNOWN_IMPORT_ROOTS:
+                continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def _standalone_header(code: str) -> str:
     """Imports + real clean()/export() helpers needed by `code`, conditionally."""
     needs_np = "np." in code or re.search(r"\b(clean|export)\s*\(", code)
@@ -221,10 +252,6 @@ def _standalone_header(code: str) -> str:
     if re.search(r"\bu\.", code):
         imports.append("import astropy.units as u")
 
-    # ponytail: drop any import the body already declares verbatim (sandbox code
-    # ships its own `import numpy as np` etc.); exact-line match, good enough.
-    imports = [imp for imp in imports if not re.search(rf"(?m)^{re.escape(imp)}\s*$", code)]
-
     blocks: list[str] = []
     if imports:
         blocks.append("\n".join(imports))
@@ -242,7 +269,9 @@ def to_standalone(code_src: str, manifest: dict, *, with_header: bool = True) ->
     embedded in a notebook that already has a setup cell) prepends the imports
     plus real clean()/export() helpers it needs.
     """
-    body = _rewrite_load_data_calls(_strip_agent_only_calls(code_src), manifest)
+    body = _strip_known_imports(
+        _rewrite_load_data_calls(_strip_agent_only_calls(code_src), manifest)
+    )
     if not with_header:
         return body
     header = _standalone_header(body)

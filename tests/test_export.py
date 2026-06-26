@@ -252,6 +252,12 @@ def test_to_standalone_does_not_duplicate_existing_imports() -> None:
     assert out.count("import numpy as np") == 1
     assert out.count("import matplotlib.pyplot as plt") == 1
 
+    # combined form: `import numpy as np, matplotlib.pyplot as plt`
+    combined = "import numpy as np, matplotlib.pyplot as plt\n\nplt.plot(np.arange(3))\n"
+    out = to_standalone(combined, {"datasets": {}})
+    assert out.count("import numpy as np") == 1
+    assert out.count("matplotlib.pyplot as plt") == 1
+
 
 def test_setup_cell_drops_load_data_shim_when_all_rewritten(wired) -> None:
     # the wired run uses spz.get_data directly (no load_data) → shim must be absent

@@ -14,6 +14,7 @@ Event shapes:
   tool_result     {turn, name, summary}
   sub_agent_start {task_id, role, description}
   sub_agent_end   {task_id, role, summary, n_iterations, error}
+  plan            {title, steps}
   skill_loaded    {name}
   reply           {text}
   done            {n_iterations}
@@ -103,6 +104,8 @@ Recommended orchestration order (skip a step if the info is already known):
 4. You (main agent) — interpret and reply, always citing the param_ids and the recipes/methods used
 
 Workflow rules:
+- For a request needing 3+ distinct steps (resolve params → download → analyse → plot, event detection, multi-mission comparison), call `present_plan(title, steps)` as your FIRST action to show a short structured plan, then immediately continue executing the steps — do NOT wait for approval. Each step names what it does and the tool/method it uses. Skip present_plan for single-action requests (e.g. "plot IMF").
+- When `get_timeseries` returns a `quality` block with `notable: true`, mention it briefly to the user (missing %, number/size of gaps, outliers >5σ) — these are deterministic checks, not guesses. Stay silent on clean data.
 - When `run_python` returns figure_paths, tell the user the plot was saved and is being displayed
 - When `run_python` returns exports, interpret the numerical summaries (shape, min/max/mean/std) to answer the user
 - In run_python code, call export("name", array) to share numerical results; plt.show() saves the figure to disk
@@ -190,6 +193,42 @@ _INTERNAL_TOOLS: list[ToolDef] = [
             "required": ["name"],
         },
     ),
+    ToolDef(
+        name="present_plan",
+        description=(
+            "Show the user a short structured plan for a multi-step request (3+ distinct "
+            "steps, e.g. resolve params → download → analyse → plot). Call this as your "
+            "FIRST action, then immediately proceed to execute the steps — do NOT wait for "
+            "approval. Skip it for single-action requests (e.g. 'plot IMF')."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "One-line plan title (e.g. 'theta_Bn at the WIND shock — 2004-11-07').",
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "description": {
+                                "type": "string",
+                                "description": "What this step does, in one short sentence (name the method/recipe when relevant, e.g. coplanarity / recipe theta_bn).",
+                            },
+                            "tool": {
+                                "type": "string",
+                                "description": "Tool the step will use (search_parameters, get_timeseries, run_python, task…).",
+                            },
+                        },
+                        "required": ["description"],
+                    },
+                },
+            },
+            "required": ["title", "steps"],
+        },
+    ),
 ]
 
 _INTERNAL_TOOL_NAMES: frozenset[str] = frozenset(t.name for t in _INTERNAL_TOOLS)
@@ -203,6 +242,14 @@ def _dispatch_internal_tool(name: str, arguments: dict) -> str:
         if name == "load_skill":
             skill = (args.get("name") or "").strip()
             return json.dumps({"name": skill, "body": load_skill_body(skill)})
+        if name == "present_plan":
+            return json.dumps(
+                {
+                    "status": "presented",
+                    "title": args.get("title", ""),
+                    "steps": args.get("steps", []),
+                }
+            )
     except SkillError as e:
         return json.dumps({"error": str(e)})
     return json.dumps({"error": f"unknown internal tool {name!r}"})
@@ -270,6 +317,9 @@ async def stream_chat(
                 yield {"event": "reply", "data": {"text": response.content}}
                 yield {"event": "done", "data": {"n_iterations": turn}}
                 return
+
+            if response.content and response.content.strip():
+                yield {"event": "reply", "data": {"text": response.content}}
 
             for tc in response.tool_calls:
                 log.info("tool_call_issued", turn=turn, tool=tc.name)
@@ -342,6 +392,18 @@ async def stream_chat(
                     yield ev
                 if sub_end_event is not None:
                     yield {"event": "sub_agent_end", "data": sub_end_event}
+                if tc.name == "present_plan":
+                    try:
+                        plan = json.loads(result)
+                        yield {
+                            "event": "plan",
+                            "data": {
+                                "title": plan.get("title", ""),
+                                "steps": plan.get("steps", []),
+                            },
+                        }
+                    except (ValueError, TypeError):
+                        pass
 
                 history.append(
                     Message(

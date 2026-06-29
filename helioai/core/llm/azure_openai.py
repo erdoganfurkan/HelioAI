@@ -136,5 +136,5 @@ class AzureOpenAIClient(LLMClient):
                     )
                     args = {}
                 tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
-            return Message(role="assistant", tool_calls=tool_calls)
+            return Message(role="assistant", content=msg.content or "", tool_calls=tool_calls)
         return Message(role="assistant", content=msg.content or "")

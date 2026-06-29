@@ -137,22 +137,23 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
 
     # get_timeseries called directly by main agent
     if tool_name == "get_timeseries" and "preview" in data:
-        artifacts.append(
-            {
-                "tool": tool_name,
-                "kind": "parameter_card",
-                "param_id": data.get("param_id"),
-                "name": data.get("name"),
-                "mission": data.get("mission"),
-                "instrument": data.get("instrument"),
-                "units": data.get("units"),
-                "cadence": data.get("cadence"),
-                "components": data.get("components"),
-                "n_points": data.get("n_points"),
-                "start": data.get("start"),
-                "stop": data.get("stop"),
-            }
-        )
+        card = {
+            "tool": tool_name,
+            "kind": "parameter_card",
+            "param_id": data.get("param_id"),
+            "name": data.get("name"),
+            "mission": data.get("mission"),
+            "instrument": data.get("instrument"),
+            "units": data.get("units"),
+            "cadence": data.get("cadence"),
+            "components": data.get("components"),
+            "n_points": data.get("n_points"),
+            "start": data.get("start"),
+            "stop": data.get("stop"),
+        }
+        if (data.get("quality") or {}).get("notable"):
+            card["quality"] = data["quality"]
+        artifacts.append(card)
 
     return artifacts
 

@@ -9,7 +9,64 @@ import numpy as np
 import pytest
 
 import helioai.tools.rag as rag_module
-from helioai.tools.speasy_tools import get_timeseries, list_missions, search_parameters
+from helioai.tools.speasy_tools import (
+    _data_quality,
+    get_timeseries,
+    list_missions,
+    search_parameters,
+)
+
+
+# ─────────────────────────────── _data_quality ──────────────────────────────
+
+
+def _times(n, step_s=60):
+    return np.datetime64("2024-03-01T00:00:00") + np.arange(n) * np.timedelta64(step_s, "s")
+
+
+def test_data_quality_clean_data_not_notable() -> None:
+    t = _times(100)
+    v = np.ones(100)
+    q = _data_quality(t, v, np)
+    assert q["missing_pct"] == 0.0
+    assert q["gaps"] == []
+    assert q["outliers_5sigma"] == 0
+    assert q["notable"] is False
+
+
+def test_data_quality_counts_nan_and_fill() -> None:
+    t = _times(100)
+    v = np.ones(100)
+    v[:10] = np.nan
+    v[10] = 1e31  # CDF fill value
+    q = _data_quality(t, v, np)
+    assert q["missing_pct"] == 11.0
+    assert q["notable"] is True
+
+
+def test_data_quality_detects_gap() -> None:
+    t = _times(50)
+    t[25:] += np.timedelta64(3, "h")  # large hole before sample 25
+    v = np.ones(50)
+    q = _data_quality(t, v, np)
+    assert len(q["gaps"]) == 1
+    assert q["gaps"][0]["dur_h"] == pytest.approx(3.0 + 1 / 60, abs=0.05)
+    assert q["notable"] is True
+
+
+def test_data_quality_detects_outlier() -> None:
+    t = _times(200)
+    v = np.ones(200)
+    v[100] = 50.0  # far beyond 5 sigma
+    q = _data_quality(t, v, np)
+    assert q["outliers_5sigma"] >= 1
+    assert q["notable"] is True
+
+
+def test_data_quality_non_numeric_returns_empty() -> None:
+    t = _times(3)
+    v = np.array(["a", "b", "c"], dtype=object)
+    assert _data_quality(t, v, np) == {}
 
 
 # ─────────────────────────────── list_missions ──────────────────────────────

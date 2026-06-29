@@ -128,5 +128,5 @@ class GeminiClient(LLMClient):
             if text:
                 text_chunks.append(text)
         if tool_calls:
-            return Message(role="assistant", tool_calls=tool_calls)
+            return Message(role="assistant", content="".join(text_chunks), tool_calls=tool_calls)
         return Message(role="assistant", content="".join(text_chunks))

@@ -80,6 +80,8 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "CRITICAL — to avoid sandbox timeouts: always call get_timeseries BEFORE run_python "
             "to download data outside the sandbox, then access it via load_data('name') inside run_python. "
             "NEVER call spz.get_data() inside run_python for data you can download with get_timeseries first. "
+            "If get_timeseries returns a `quality` block with `notable: true`, report it (missing %, gaps, "
+            "5sigma outliers) — deterministic checks, not guesses. "
             "run_python is the ONLY tool that produces figures. "
             "A text description of a plot is not a plot. Always call run_python. "
             "For multi-mission work: call get_timeseries once per mission, then load all datasets "

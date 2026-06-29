@@ -90,6 +90,9 @@ async def get_timeseries(
         source="get_timeseries",
     )
 
+    # Data quality on the full-resolution arrays (deterministic, before downsampling)
+    quality = _data_quality(times, values, np)
+
     # Downsample if needed
     if n_points > max_points:
         step = n_points // max_points
@@ -161,11 +164,58 @@ async def get_timeseries(
         "n_points": n_points,
         "preview": preview,
     }
+    if quality:
+        result["quality"] = quality
     if saved:
         ds_name = saved["dataset"]
         result["dataset"] = ds_name
         result["dataset_note"] = f"use load_data({ds_name!r}) in run_python — never spz.get_data"
     return result
+
+
+def _data_quality(times, values, np) -> dict:
+    """Deterministic data-quality checks on full-resolution arrays.
+
+    Returns {} when the data is not numeric/datetime (provider-agnostic, like the
+    cadence block). The `notable` flag gates whether the agent and the web card
+    surface it: missing > 5%, any gap, or any 5σ outlier.
+    """
+    try:
+        finite = np.isfinite(values)
+        bad = ~finite | (np.abs(values) >= 1e30)
+        total = values.size
+        missing_pct = round(100 * float(bad.sum()) / total, 1) if total else 0.0
+
+        gaps: list[dict] = []
+        if len(times) > 2:
+            deltas = np.diff(times.astype("datetime64[ms]").astype(float))
+            med = float(np.median(deltas))
+            if med > 0:
+                for i in np.where(deltas > 3 * med)[0][:10]:
+                    gaps.append(
+                        {
+                            "start": str(times[i])[:19],
+                            "dur_h": round(float(deltas[i]) / 3_600_000, 2),
+                        }
+                    )
+
+        outliers = 0
+        clean = values[finite & (np.abs(values) < 1e30)]
+        if clean.size > 1:
+            mean = float(clean.mean())
+            std = float(clean.std())
+            if std > 0:
+                outliers = int((np.abs(clean - mean) > 5 * std).sum())
+
+        notable = bool(missing_pct > 5 or gaps or outliers > 0)
+        return {
+            "missing_pct": missing_pct,
+            "gaps": gaps,
+            "outliers_5sigma": outliers,
+            "notable": notable,
+        }
+    except Exception:
+        return {}
 
 
 async def list_missions() -> dict:

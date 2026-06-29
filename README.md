@@ -37,6 +37,8 @@ No API key required for data access. No manual parameter hunting.
 - **5 specialised skills** — `parameter_hunter`, `data_analyst`, `plasma_physicist`, `plotting`, `helioai_helper` — loaded as markdown, zero coupling to the agent loop.
 - **Derived recipes** — 7 reusable scientific scripts, each with a cited reference: θ_Bn, Walén test, MVAB, Rankine-Hugoniot jump conditions, pressure balance, pitch angle distribution, superposed epoch.
 - **Fill value masking** — `clean()` helper in the sandbox automatically masks CDF fill values (`|x| ≥ 1e30`, `±inf`) before any plot or analysis.
+- **Data quality checks** — every `get_timeseries` download is scanned (deterministically, no LLM) for missing/fill values, data gaps, and 5σ outliers; the agent flags them only when they matter, so you know what you're working with *before* analysis.
+- **Plan preview** — for a multi-step request the agent first lays out a short structured plan (the steps and the tool/method each will use), then executes — transparent, no black box.
 - **Standalone notebook export** — any session exports as a self-contained `.ipynb`: `load_data()` calls are rewritten to direct `spz.get_data(...)`, sandbox-only helpers are stripped, and a *Methods & data acknowledgements* cell lists the recipes and references used — every cell re-runs in a plain Jupyter kernel.
 - **Multiple interfaces** — interactive CLI, Jupyter magic, Web UI (FastAPI + SSE + activity dock), MCP server (Claude Desktop / `claude` CLI).
 - **User profile** — inject your preferred missions, domain, and plot style once; the agent adapts to you.

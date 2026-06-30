@@ -17,7 +17,7 @@ import structlog
 
 from helioai.core.llm.base import LLMClient, Message, ToolDef
 from helioai.core.skills_loader import SkillError, load_skill as load_skill_body
-from helioai.core.tool_exec import emit_post_tool_events, inject_run_python_args
+from helioai.core.tool_exec import compact_history, emit_post_tool_events, inject_run_python_args
 from helioai.logging_config import get_logger
 from helioai.tools.registry import registry
 
@@ -245,7 +245,7 @@ async def stream_subagent(
             n_iters = i + 1
             tc_choice = "required" if i == 0 else "auto"
             response = await llm_client.chat(
-                history, tools, system_prompt=system_prompt, tool_choice=tc_choice
+                compact_history(history), tools, system_prompt=system_prompt, tool_choice=tc_choice
             )
             history.append(response)
 

@@ -7,23 +7,19 @@ allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_r
 
 # Procedure — analyze a time series
 
-## RULE ZERO
+## RULE ZERO — run_python is the only tool that makes figures and numbers
+A text description of a plot is not a figure. To produce a figure, call run_python with `plt.show()`.
 
-**run_python is the only tool that produces figures and numerical results.**
-A text description of a plot is not an actual figure. To produce a figure you must call run_python with plt.show().
+## RULE ONE — download outside the sandbox, always
+Call `get_timeseries` (or `get_events_timeseries`) BEFORE `run_python` — the sandbox has a 60 s
+timeout that speasy downloads blow past. The result carries a `dataset` key; read it inside
+run_python with `load_data("name")`. Never call `spz.get_data()` in the sandbox for data you can
+fetch first; use it only for data the loop has not already downloaded.
 
-**Download outside the sandbox — always.**
-Call `get_timeseries` (or `get_events_timeseries`) BEFORE `run_python`. The sandbox has a 60 s timeout; speasy downloads can easily exceed it.
-- After `get_timeseries`: the result contains a `dataset` key → use `load_data("name")` inside run_python.
-- NEVER call `spz.get_data()` inside run_python for data you can download with `get_timeseries` first.
-- Only use `spz.get_data()` inside run_python for data the agent loop has not already fetched.
-
-## RULE ONE — recipe before custom code
-
-For a **standard, named computation, prefer the vetted recipe over reimplementing it**. Call
-`load_recipe(name)` to get the source, adapt the inputs to your loaded data, and paste it into
-run_python. Only write custom code when **no recipe matches** the task. This guarantees correctness
-and traceable provenance (the recipe carries its scientific reference).
+## RULE TWO — recipe before custom code
+For a standard, named computation, `load_recipe(name)`, adapt it to your loaded data, and paste it
+into run_python. Write custom code only when no recipe matches — recipes carry their scientific
+reference, so this also gives you provenance.
 
 | Task | Recipe |
 |---|---|
@@ -35,216 +31,78 @@ and traceable provenance (the recipe carries its scientific reference).
 | Particle pitch-angle distribution | `pitch_angle_dist` |
 | Superposed epoch analysis over a catalog | `superposed_epoch` |
 
-When you DO write custom code for a computation with no recipe, call
-`document_method("<name>", reference="<paper/formula>", method="<one line>")` inside run_python so
-the method is recorded with its source.
+When you write custom code for a computation with no recipe, call
+`document_method("<name>", reference="<paper/formula>", method="<one line>")` in run_python so the
+method is recorded with its source.
 
-## 1. Resolve the parameter id (if needed)
+## Sandbox helpers (provided, no import needed)
+- `load_data("name")` → `ns(time, values, unit)` for a dataset from get_timeseries.
+- `param_card(var, param_id)` → metadata card in the UI. Call once per downloaded parameter.
+- `clean(var.values)` → masks CDF fill values (`-1e31`, `9.96e36`) to NaN. Always wrap `.values`.
+- `export(name, value)` → surfaces a key number in the reply. Call for every result that matters.
+- `plt.show()` → REQUIRED; it is what saves the figure to disk.
 
-If the id is missing, vague, or looks malformed (e.g. extra path segments like `cda/ACE/MAG/AC_H0_MFI/...`),
-call `search_parameters` first with a plain-English query (e.g. `"ACE magnetic field GSE components"`).
-Pick the shortest matching id from the results.
+## Resolve the id first (if needed)
+If the id is missing, vague, or malformed (extra path segments like `cda/ACE/MAG/AC_H0_MFI/...`),
+`search_parameters` with a plain-English query and pick the shortest matching id.
 
-## 2. Download then plot
-
-Step A — call `get_timeseries` (outside the sandbox, no timeout risk):
-```
-get_timeseries(param_id="cda/AC_H0_MFI/BGSEc", start="2008-01-01T00:00:00", stop="2008-01-02T00:00:00")
-```
-The result includes a `dataset` key (e.g. `"BGSEc"`).
-
-Step B — call `run_python` using `load_data`:
-
-### Template — time series plot
-
+## Canonical template — download then plot
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
 
-var = load_data("BGSEc")          # no import needed; uses dataset key from get_timeseries
-param_card(var, "cda/AC_H0_MFI/BGSEc")  # displays metadata card in UI
-t = var.time
-data = clean(var.values)  # shape (N,) or (N, components) — masks CDF fill values
-
+var = load_data("BGSEc")                  # dataset key from get_timeseries
+param_card(var, "cda/AC_H0_MFI/BGSEc")
+t, data = var.time, clean(var.values)     # data is (N,) or (N, components)
 export("n_points", len(t))
 export("units", str(var.unit))
 
-if data.ndim > 1:
+if data.ndim > 1:                         # vectors: one component per row, sharex
     labels = ["Bx", "By", "Bz"] if data.shape[1] == 3 else [f"C{i}" for i in range(data.shape[1])]
     fig, axes = plt.subplots(data.shape[1], 1, figsize=(12, 2.5 * data.shape[1]), sharex=True)
-    for i, (ax, label) in enumerate(zip(axes, labels)):
-        ax.plot(t, data[:, i], linewidth=0.8)
-        ax.set_ylabel(f"{label} ({var.unit})")
+    for ax, i, lbl in zip(axes, range(data.shape[1]), labels):
+        ax.plot(t, data[:, i], linewidth=0.8); ax.set_ylabel(f"{lbl} ({var.unit})")
     axes[-1].set_xlabel("Time")
 else:
     fig, ax = plt.subplots(figsize=(12, 4))
-    ax.plot(t, data, linewidth=0.8)
-    ax.set_ylabel(str(var.unit))
-    ax.set_xlabel("Time")
-
-plt.suptitle("ACE IMF — 2008-01-01")
-plt.tight_layout()
-plt.show()  # REQUIRED — saves the figure to disk
-```
-
-### Template — FFT / Power spectral density
-
-```python
-import speasy as spz
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.signal import welch
-
-var = spz.get_data("PARAM_ID", "START", "STOP")
-param_card(var, "PARAM_ID")
-t = var.time
-data = clean(var.values)
-signal = np.nanmean(data, axis=1) if data.ndim > 1 else data
-dt = float(np.median(np.diff(t.astype("int64"))) * 1e-9)
-
-f, Pxx = welch(signal[~np.isnan(signal)], fs=1.0/dt, nperseg=256)
-export("peak_freq_Hz", float(f[np.argmax(Pxx)]))
-export("sampling_dt_s", dt)
-
-fig, ax = plt.subplots(figsize=(10, 4))
-ax.loglog(f[1:], Pxx[1:])
-ax.set_xlabel("Frequency (Hz)")
-ax.set_ylabel("PSD")
+    ax.plot(t, data, linewidth=0.8); ax.set_ylabel(str(var.unit)); ax.set_xlabel("Time")
 plt.tight_layout()
 plt.show()
 ```
 
-## 3. Rules
+**FFT / PSD:** use `scipy.signal.welch(signal, fs=1/dt)` with `dt` from the median time delta, or the
+`power_spectrum` tool. Plot loglog and `export` the peak frequency.
 
-- **plt.show() is mandatory** — it is the only way to save a figure to disk.
-- **param_card(var, param_id)** — call immediately after `spz.get_data()` to display a metadata card. Always call it for every downloaded parameter.
-- **clean(var.values)** — always wrap `var.values` in `clean()`. speasy/CDAWeb return CDF fill values (`-1e31`, `9.96e36`) for data gaps that destroy the Y-axis scale. `clean()` converts them to NaN, which matplotlib renders as gaps.
-- **export(name, value)** for every key number so the LLM sees it in the response.
-- If spz.get_data() raises an error, try a corrected id (strip extra path segments, e.g. `cda/AC_H0_MFI/BGSEc` instead of `cda/ACE/MAG/AC_H0_MFI/BGSEc`).
-- For vectors: plot components separately (Bx, By, Bz) with sharex=True.
-- Units come from var.unit. State them in the reply.
+If `get_timeseries` returns a `quality` block with `notable: true`, report it (missing %, gaps,
+5σ outliers) — these are deterministic checks, not guesses.
 
 ---
 
 ## Cross-mission comparison
+- `search_parameters` once per mission with explicit spacecraft names; never reuse one id across missions.
+- Download each mission with get_timeseries, then in ONE run_python load all via `load_data()`.
+- Align on a common grid with pandas `resample`/`reindex`; normalize units before any cross-mission arithmetic.
+- State the id used per mission. If a mission has no data, report it — never silently drop it.
+- L1 propagation delay: `delay_s = 1.5e6 / V_sw_km_s`; shift on the resampled grid.
+- 4 MMS spacecraft = one tetrahedron (curlometer), not independent missions.
 
-### Resolve one parameter id per mission
-
-Use `search_parameters` once per mission with explicit spacecraft names in the query. Do not reuse the same id for different missions.
-
-### Download and align on a common grid
-
-```python
-import speasy as spz
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-
-t_start, t_stop = "2005-01-17T00:00:00", "2005-01-18T00:00:00"
-
-param_ids = {"ACE": "cda/AC_H0_MFI/BGSEc", "Wind": "cda/WI_H0_MFI/BGSEc"}
-datasets = {name: spz.get_data(pid, t_start, t_stop) for name, pid in param_ids.items()}
-for name, var in datasets.items():
-    if var is not None:
-        param_card(var, param_ids[name])
-
-t_common = pd.date_range(t_start, t_stop, freq="1min")
-aligned = {}
-for name, var in datasets.items():
-    if var is None or len(var.time) == 0:
-        export(f"{name}_ok", False)
-        continue
-    df = pd.DataFrame(clean(var.values), index=pd.to_datetime(var.time))
-    aligned[name] = df.resample("1min").mean().reindex(t_common)
-    export(f"{name}_ok", True)
-
-n = len(aligned)
-fig, axes = plt.subplots(n, 1, sharex=True, figsize=(12, 3 * n))
-if n == 1:
-    axes = [axes]
-colors = ["tab:blue", "tab:orange", "tab:green", "tab:red"]
-for ax, (name, df), color in zip(axes, aligned.items(), colors):
-    if df.shape[1] == 3:
-        for col, lbl in zip(df.columns, ["x", "y", "z"]):
-            ax.plot(df.index, df[col], label=lbl, alpha=0.8)
-        ax.legend(fontsize=8)
-    else:
-        ax.plot(df.index, df.iloc[:, 0], color=color)
-    ax.set_ylabel(name)
-axes[0].set_title("Cross-mission comparison")
-plt.tight_layout()
-plt.show()
-```
-
-### Propagation delay (L1 spacecraft)
-
-```python
-V_sw_km_s = 400.0
-d_L1_km = 1.5e6
-delay_s = d_L1_km / V_sw_km_s
-export("propagation_delay_min", round(delay_s / 60, 1))
-# Shift dataset: df_shifted = df.shift(periods=int(delay_s / 60))  # 1-min grid
-```
-
-### Rules for multi-mission work
-
-- Always state which param id was used for each mission.
-- If one mission has no data, report it — never silently drop it.
-- Normalize units before cross-mission arithmetic.
-- For 4 MMS spacecraft: treat as tetrahedral configuration (curlometer), not independent missions.
-
----
-
-## Superposed epoch analysis (catalog → SEA)
-
-**Full workflow:**
-1. `get_events_timeseries(catalog_id, param_id, start, stop)` — downloads + persists all events, returns `dataset` key.
-2. `load_recipe("superposed_epoch")` — retrieve the SEA recipe source.
-3. In run_python:
-```python
-events = load_data("<param_id_last_segment>_events")  # list of ns(time, values, start, stop)
-component = 2   # e.g. Bz for a 3-component field
-units = "nT"
-param_label = "Bz GSM"
-# ... paste recipe source below (epoch_median, IQR figure, export calls) ...
-```
-
-**Never re-fetch with spz.get_data()** — the events are already persisted from step 1.
-Multi-component data: set `component=0/1/2` for Bx/By/Bz; recipe handles both scalar and vector inputs.
-
----
+## Superposed epoch (catalog → SEA)
+1. `get_events_timeseries(catalog_id, param_id, start, stop)` — persists all events, returns a `dataset` key.
+2. `load_recipe("superposed_epoch")`.
+3. run_python: `events = load_data("<param_last_segment>_events")` (list of `ns(time, values, start, stop)`),
+   set `component` (0/1/2 for Bx/By/Bz, scalar handled too), paste the recipe. Never re-fetch — events are already persisted.
 
 ## Event detection
+Implement threshold / derivative / boundary criteria in run_python; report event times and key
+signature values (ΔP/P, ΔB/B…).
 
-### Event signatures
-
-| Event | Signatures | Parameters needed |
+| Event | Signatures | Parameters |
 |---|---|---|
-| **IP shock** | Jump in n, V, B, T; pressure increase | B vector, n_p, V_sw, T_p |
-| **Magnetic reconnection** | B reversal + V jet + current sheet | B vector, V_ion, n_e |
-| **CME / flux rope** | Smooth B rotation, enhanced B, low T | B vector, T_p, V_sw |
-| **SIR / CIR** | Velocity ramp, density pile-up, B compression | V_sw, n_p, B |
-| **Magnetopause crossing** | B sign change, density jump | B, n_e, V_ion |
+| IP shock | jump in n, V, B, T; dynamic-pressure increase | B, n_p, V_sw, T_p |
+| Reconnection | B reversal + V jet + current sheet | B, V_ion, n_e |
+| CME / flux rope | smooth B rotation, enhanced B, low T | B, T_p, V_sw |
+| SIR / CIR | velocity ramp, density pile-up, B compression | V_sw, n_p, B |
+| Magnetopause crossing | B sign change, density jump | B, n_e, V_ion |
 
-### Detection template (IP shock)
-
-```python
-n = n_var.values[:, 0]
-V = np.abs(V_var.values[:, 0])
-Pdyn = n * V**2
-window = 10
-ratio = np.array([
-    Pdyn[i+window:i+2*window].mean() / (Pdyn[i:i+window].mean() + 1e-10)
-    for i in range(len(Pdyn) - 2*window)
-])
-shock_candidates = np.where(ratio > 2.0)[0]
-export("n_shock_candidates", len(shock_candidates))
-if len(shock_candidates) > 0:
-    export("first_shock_time", str(n_var.time[shock_candidates[0] + window]))
-```
-
-### Report format
-
-- Number of candidates found, time of most prominent event.
-- Key signature values at event time (ΔP/P, ΔB/B…).
-- SPASE PhenomenonType: `InterplanetaryShock`, `MagneticCloud`, `CoronalMassEjection`, `StreamInteractionRegion`, `MagnetopauseCrossing`, `Substorm`.
+SPASE PhenomenonType: `InterplanetaryShock`, `MagneticCloud`, `CoronalMassEjection`,
+`StreamInteractionRegion`, `MagnetopauseCrossing`, `Substorm`.

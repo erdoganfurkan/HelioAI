@@ -94,30 +94,16 @@ catalog (~68k of 83k params)** and drowns AMDA/CSA in any generic query. Use the
   `search_parameters(queries=[...], provider="amda")` call per provider (at most a few), all in
   THIS single agent. Never ask the lead to spawn several `parameter_hunter` sub-agents.
 
-### Provider context
-The index covers these providers. The filter is more reliable than mentioning them in the query text:
-- **AMDA** (`amda/...`) — CDPP/IRAP catalog, European missions, derived products
-- **CDA** (`cda/...`) — NASA SPDF, largest set (~68k params), ACE/Wind/MMS/Cluster/PSP/SolO
-- **CSA** (`csa/...`) — ESA Cluster Science Archive, Cluster-1 to 4 only
-
-If the user has no preference, search without a filter and return the best-scoring result.
+Providers: **amda** (CDPP/IRAP, European missions, derived products), **cda** (NASA SPDF,
+~68k params, ACE/Wind/MMS/Cluster/PSP/SolO), **csa** (ESA Cluster Science Archive, C1–C4),
+**ssc** (ephemeris). The filter is more reliable than naming the provider in the query text.
+With no preference, search without a filter and return the best-scoring result.
 
 ## 3. Interpret the score
 
-With hybrid search and the reranker off (the default), `score` is a **relative**
-ranking confidence (top result ≈ 1.0), not an absolute one. What matters most is
-**agreement**: a parameter ranked high by both the semantic and the exact-token
-channels is a strong match. When unsure, re-query or compare the top 3.
-
-The thresholds below are **absolute** and only apply when the cross-encoder
-reranker is enabled:
-
-| Score | Meaning | Action |
-|---|---|---|
-| ≥ 0.75 | Confident match | Use it, no need to search more |
-| 0.65–0.75 | Likely match | Use it, mention the id to the user |
-| 0.50–0.65 | Uncertain | Re-query with different phrasing, then pick best |
-| < 0.50 | No good match | Try fallback steps below |
+`score` is a **relative** ranking confidence (top ≈ 1.0), not absolute. What matters is
+**agreement**: a parameter ranked high by both the semantic and exact-token channels is a strong
+match. When unsure, re-query or compare the top 3.
 
 ## 4. Fallbacks when search returns nothing relevant
 
@@ -127,17 +113,8 @@ reranker is enabled:
 3. Call `list_missions()` to see available missions, then re-search scoped to the best candidate
 4. If still nothing: tell the user clearly — never invent a parameter id
 
-## 5. Multi-mission cases
+## 5. Output format
 
-When the user asks for comparison across missions (e.g. *"solar wind B at L1 and near Mars"*):
-- Build one query per mission context and pass them together: `search_parameters(queries=["ACE IMF magnetic field L1", "MAVEN magnetic field Mars"])`
-- Pick one result per group
-- State clearly which id you'll use for each: *"ACE: `amda/ace_imf_all`, MAVEN: `cda/MAVEN_MAG/OB_B`"*
-
-## 6. Output format
-
-Always tell the user:
-- The resolved parameter id (e.g. `amda/ace_imf_all`)
-- Its name and a one-line description
-- Its units
-- A confidence note if score < 0.70
+For each resolved parameter, give: the id (e.g. `amda/ace_imf_all`), its name + one-line
+description, its units, and a confidence note if the match is weak. For multi-mission requests,
+state one id per mission explicitly (*"ACE: `amda/ace_imf_all`, MAVEN: `cda/MAVEN_MAG/OB_B`"*).

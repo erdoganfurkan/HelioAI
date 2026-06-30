@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 
+from helioai.core.llm.base import Message
 from helioai.core.tool_exec import (
+    compact_history,
     emit_post_tool_events,
     inject_run_python_args,
 )
@@ -131,3 +133,27 @@ def test_emit_event_order() -> None:
     ]
     assert events[0] == "tool_result"
     assert events.index("tool_result") < events.index("skill_loaded")
+
+
+# ──────────────────────────────── compact_history ──────────────────────────
+
+
+def test_compact_history_keeps_recent_summarizes_old() -> None:
+    long = json.dumps({"results": [{"id": f"p{i}", "description": "x" * 200} for i in range(5)]})
+    history = [
+        Message(role="user", content="hi"),
+        Message(role="tool", tool_call_id="1", content=long),
+        Message(role="assistant", content="ok"),
+        Message(role="tool", tool_call_id="2", content=long),
+        Message(role="tool", tool_call_id="3", content=long),
+    ]
+    out = compact_history(history, keep_full=2)
+    assert history[1].content == long  # original list untouched
+    assert len(out[1].content) < len(long)  # oldest tool result summarized
+    assert out[3].content == long and out[4].content == long  # two most recent kept verbatim
+    assert out[0].content == "hi"  # non-tool messages untouched
+
+
+def test_compact_history_noop_when_few_tools() -> None:
+    history = [Message(role="tool", tool_call_id="1", content="a" * 500)]
+    assert compact_history(history, keep_full=2) is history

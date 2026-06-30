@@ -13,6 +13,7 @@ This module imports neither agent_loop nor sub_agents, so there is no cycle.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Iterator
 
@@ -55,6 +56,27 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
         elif isinstance(v, dict):
             keep[k] = f"{{{len(v)} keys}}"
     return json.dumps(keep, ensure_ascii=False)[:max_chars]
+
+
+def compact_history(messages: list, keep_full: int = 2) -> list:
+    """Return a copy of `messages` where tool-result messages older than the last
+    `keep_full` are summarized. The most recent results stay verbatim (the next LLM
+    call usually needs them); older ones — already consumed — are trimmed so context
+    does not grow unbounded over a long session. Persisted history is left untouched;
+    only the per-call payload shrinks.
+
+    ponytail: fixed window N=2; widen keep_full if a case regresses on stale results.
+    """
+    tool_idx = [i for i, m in enumerate(messages) if getattr(m, "role", None) == "tool"]
+    if len(tool_idx) <= keep_full:
+        return messages
+    stale = set(tool_idx[:-keep_full])
+    return [
+        replace(m, content=_summarize_tool_result(m.content, max_chars=300))
+        if i in stale and m.content
+        else m
+        for i, m in enumerate(messages)
+    ]
 
 
 def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:

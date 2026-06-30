@@ -17,13 +17,9 @@ from helioai.tools import catalog_tools as _cat
 registry.register(
     name="search_parameters",
     description=(
-        "Semantic search over 65 000+ speasy parameters (CDAWeb, AMDA, CSA, SSC…). "
-        "Use English natural-language queries. Always call this before get_timeseries "
-        "to resolve the exact parameter id. "
-        "To resolve SEVERAL parameters, pass `queries` (a list) in ONE call — strongly "
-        "preferred over many separate calls. Use `query` (string) for a single parameter. "
-        "Examples: query='IMF magnitude ACE'; "
-        "queries=['solar wind ion density MMS', 'electron energy spectrum Solar Orbiter']."
+        "Semantic search over 83 000+ speasy parameters (CDAWeb, AMDA, CSA, SSC). "
+        "English natural-language queries. To resolve SEVERAL parameters pass `queries` "
+        "(a list) in ONE call (preferred); use `query` (string) for a single parameter."
     ),
     parameters={
         "type": "object",
@@ -99,12 +95,9 @@ registry.register(
 registry.register(
     name="run_python",
     description=(
-        "Execute Python code in an isolated sandbox. "
-        "Pre-imported: speasy as `spz`, numpy as `np`, matplotlib (plt.show() captures PNG), "
-        "scipy (signal/stats/fft), plasmapy as `pf`, astropy.units as `u`. "
-        "Use for: FFT, power spectra, plasma parameter calculations (gyrofrequency, Debye length, "
-        "plasma beta), event detection, custom plots. "
-        "plt.show() captures the figure as PNG and returns it as an artifact."
+        "Execute Python code in an isolated sandbox. Pre-imported: speasy as `spz`, numpy as "
+        "`np`, scipy (signal/stats/fft), plasmapy as `pf`, astropy.units as `u`; matplotlib "
+        "`plt.show()` captures the figure as a PNG artifact."
     ),
     parameters={
         "type": "object",
@@ -128,7 +121,6 @@ registry.register(
     name="plasma_beta",
     description=(
         "Compute plasma beta (ratio of thermal to magnetic pressure). "
-        "SPASE: ActivityIndex / PlasmaBeta. "
         "Inputs: B in nT, density in cm⁻³, temperature in eV."
     ),
     parameters={
@@ -147,7 +139,6 @@ registry.register(
     name="gyrofrequency",
     description=(
         "Compute particle gyrofrequency (cyclotron frequency). "
-        "SPASE: FieldQuantity.Gyrofrequency / ParticleQuantity.Gyrofrequency. "
         "Returns frequency in Hz and angular frequency in rad/s."
     ),
     parameters={
@@ -180,9 +171,7 @@ registry.register(
 
 registry.register(
     name="alfven_speed",
-    description=(
-        "Compute Alfvén speed. SPASE: ParticleQuantity.AlfvenVelocity. Returns speed in km/s."
-    ),
+    description=("Compute Alfvén speed. Returns speed in km/s."),
     parameters={
         "type": "object",
         "properties": {
@@ -222,7 +211,6 @@ registry.register(
     name="power_spectrum",
     description=(
         "Compute power spectral density (Welch method) from a time series. "
-        "SPASE: MeasurementType.Spectrum. "
         "Returns frequencies (Hz), PSD values, and peak frequency."
     ),
     parameters={
@@ -284,10 +272,8 @@ registry.register(
 registry.register(
     name="get_catalog",
     description=(
-        "Download and summarize an AMDA event catalog or timetable. "
-        "Returns event count, columns and a sample of events (start, stop + metadata). "
-        "Use list_catalogs() first to find the catalog id. "
-        "Use get_events_timeseries() to download a parameter over all events."
+        "Download and summarize an AMDA event catalog or timetable. Returns event count, columns, "
+        "and a sample of events. Supports agent-side filters (where/columns/sort_by/offset)."
     ),
     parameters={
         "type": "object",
@@ -350,11 +336,9 @@ registry.register(
 registry.register(
     name="get_events_timeseries",
     description=(
-        "Download a parameter for every event in an AMDA catalog (superposed epoch analysis). "
-        "Uses speasy's native multi-interval API — one call for N events. "
-        "Returns per-event statistics (mean/std/min/max) and the data for plotting. "
-        "Use for: stack-plots across ICMEs/shocks, statistical surveys, epoch analysis. "
-        "Workflow: list_catalogs → get_catalog (inspect) → get_events_timeseries (download)."
+        "Download a parameter for every event in an AMDA catalog in one speasy call (superposed "
+        "epoch / statistical surveys). Returns per-event statistics (mean/std/min/max) plus the "
+        "data for plotting."
     ),
     parameters={
         "type": "object",
@@ -393,10 +377,9 @@ registry.register(
 registry.register(
     name="save_catalog",
     description=(
-        "Save a list of detected events as a local catalog under the local/<name> prefix. "
-        "Use after detecting events in run_python (e.g. IP shocks, reconnection jets). "
-        "The saved catalog is then accessible via list_catalogs(), get_catalog('local/<name>'), "
-        "and get_events_timeseries('local/<name>', ...) — enabling full statistical follow-up."
+        "Save detected events as a local catalog under local/<name>, then usable via "
+        "list_catalogs, get_catalog('local/<name>') and get_events_timeseries('local/<name>', …). "
+        "Use after detecting events in run_python."
     ),
     parameters={
         "type": "object",

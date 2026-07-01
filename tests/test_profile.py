@@ -7,8 +7,6 @@ Covers:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from starlette.testclient import TestClient
 
@@ -16,60 +14,54 @@ from starlette.testclient import TestClient
 # ── _load_user_profile ────────────────────────────────────────────────────────
 
 
+def _write_profile(monkeypatch, tmp_path, user, text):
+    from helioai.config import settings
+    from helioai.workspace import user_home
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    p = user_home(user) / "profile.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
 def test_load_user_profile_missing(tmp_path, monkeypatch):
     from helioai.config import settings
 
-    monkeypatch.setattr(settings.profile, "profile_path", tmp_path / "profile.md")
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     from helioai.core.agent_loop import _load_user_profile
 
-    assert _load_user_profile() == ""
+    assert _load_user_profile("alice") == ""
 
 
 def test_load_user_profile_present(tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    p = tmp_path / "profile.md"
-    p.write_text("preferred missions: ACE, WIND\nunits: SI\n", encoding="utf-8")
-    monkeypatch.setattr(settings.profile, "profile_path", p)
+    _write_profile(monkeypatch, tmp_path, "alice", "preferred missions: ACE, WIND\nunits: SI\n")
 
     from helioai.core.agent_loop import _load_user_profile
 
-    content = _load_user_profile()
+    content = _load_user_profile("alice")
     assert "ACE" in content
     assert "WIND" in content
 
 
+def test_load_user_profile_per_user(tmp_path, monkeypatch):
+    """Each user reads their own profile, not another user's."""
+    _write_profile(monkeypatch, tmp_path, "alice", "alice prefs")
+    _write_profile(monkeypatch, tmp_path, "bob", "bob prefs")
+
+    from helioai.core.agent_loop import _load_user_profile
+
+    assert _load_user_profile("alice") == "alice prefs"
+    assert _load_user_profile("bob") == "bob prefs"
+
+
 def test_load_user_profile_stripped(tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    p = tmp_path / "profile.md"
-    p.write_text("  hello  \n\n", encoding="utf-8")
-    monkeypatch.setattr(settings.profile, "profile_path", p)
+    _write_profile(monkeypatch, tmp_path, "alice", "  hello  \n\n")
 
     from helioai.core.agent_loop import _load_user_profile
 
-    assert _load_user_profile() == "hello"
-
-
-def test_load_user_profile_oserror(tmp_path, monkeypatch):
-    """An unreadable profile returns '' rather than raising."""
-    from helioai.config import settings
-
-    class _BadPath(Path):
-        _flavour = Path(".")._flavour  # type: ignore[attr-defined]
-
-        def exists(self):
-            return True
-
-        def read_text(self, **kwargs):
-            raise OSError("permission denied")
-
-    monkeypatch.setattr(settings.profile, "profile_path", _BadPath(tmp_path / "x.md"))
-
-    from helioai.core.agent_loop import _load_user_profile
-
-    assert _load_user_profile() == ""
+    assert _load_user_profile("alice") == "hello"
 
 
 # ── Web endpoints ─────────────────────────────────────────────────────────────

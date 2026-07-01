@@ -131,9 +131,11 @@ def build_lead_system_prompt(restricted: bool) -> str:
     return SYSTEM_PROMPT
 
 
-def _load_user_profile() -> str:
-    """Return the user profile content, or '' when the file does not exist."""
-    p = settings.profile.profile_path
+def _load_user_profile(user_id: str) -> str:
+    """Return the user's profile content, or '' when the file does not exist."""
+    from helioai.workspace import user_home
+
+    p = user_home(user_id) / "profile.md"
     try:
         if p.exists():
             return p.read_text(encoding="utf-8").strip()
@@ -265,7 +267,7 @@ async def stream_chat(
     log.info("agent_tools_listed", count=len(tools), tools=[t.name for t in tools])
 
     effective_prompt = build_lead_system_prompt(restricted)
-    profile = _load_user_profile()
+    profile = _load_user_profile(user_id)
     if profile:
         effective_prompt = f"{effective_prompt}\n\n## User profile\n{profile}"
 

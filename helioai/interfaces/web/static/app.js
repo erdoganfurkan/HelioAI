@@ -255,20 +255,28 @@ function renderArtifact(data) {
     card.append(header);
 
     const chips = el('div', 'pc-chips');
+    const comps = data.components || [];
+    const COMP_MAX = 6;
+    const compVal = comps.length
+      ? (comps.length > COMP_MAX
+          ? `${comps.slice(0, COMP_MAX).join(', ')} +${comps.length - COMP_MAX} more`
+          : comps.join(', '))
+      : null;
     const chipDefs = [
       { label: 'Mission', value: data.mission },
       { label: 'Instrument', value: data.instrument },
       { label: 'Units', value: data.units },
       { label: 'Cadence', value: data.cadence },
       { label: 'Frame', value: data.coord_sys || null },
-      { label: 'Components', value: (data.components || []).join(', ') || null },
+      { label: 'Components', value: compVal, title: comps.length > COMP_MAX ? comps.join(', ') : null },
       { label: 'Points', value: data.n_points != null ? String(data.n_points) : null },
     ];
-    chipDefs.forEach(({ label, value }) => {
+    chipDefs.forEach(({ label, value, title }) => {
       if (!value) return;
       const chip = document.createElement('span');
       chip.className = 'param-chip';
       chip.innerHTML = `<span class="chip-label">${label}</span>${value}`;
+      if (title) chip.title = title;
       chips.append(chip);
     });
     if (chips.children.length) card.append(chips);

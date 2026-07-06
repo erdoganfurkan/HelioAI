@@ -24,6 +24,7 @@ Event shapes:
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import time
 from dataclasses import dataclass, field
@@ -131,17 +132,27 @@ def build_lead_system_prompt(restricted: bool) -> str:
     return SYSTEM_PROMPT
 
 
+@functools.lru_cache(maxsize=64)
+def _read_profile(path_str: str, mtime: float) -> str:
+    # mtime in the key busts the cache whenever the profile is edited.
+    try:
+        from pathlib import Path
+
+        return Path(path_str).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def _load_user_profile(user_id: str) -> str:
     """Return the user's profile content, or '' when the file does not exist."""
     from helioai.workspace import user_home
 
     p = user_home(user_id) / "profile.md"
     try:
-        if p.exists():
-            return p.read_text(encoding="utf-8").strip()
+        mtime = p.stat().st_mtime
     except OSError:
-        pass
-    return ""
+        return ""
+    return _read_profile(str(p), mtime)
 
 
 _INTERNAL_TOOLS: list[ToolDef] = [

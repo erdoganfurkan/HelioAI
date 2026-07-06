@@ -224,21 +224,34 @@ def _run_profile() -> None:
 
 
 def _interactive(*, restricted: bool = True) -> None:
-    import readline  # noqa: F401 — enables history & editing
+    import readline  # enables history & editing
+    from pathlib import Path
+
+    hist = Path.home() / ".helioai_history"
+    try:
+        readline.read_history_file(hist)
+    except OSError:
+        pass
 
     mode = "" if restricted else " \033[33m[dev mode]\033[0m"
     print(f"\033[1mHelioAI\033[0m{mode} — type your query, Ctrl+D to exit\n")
-    while True:
+    try:
+        while True:
+            try:
+                query = input("\033[1m> \033[0m").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not query:
+                continue
+            if query.lower() in ("exit", "quit"):
+                break
+            asyncio.run(_run_query(query, restricted=restricted))
+    finally:
         try:
-            query = input("\033[1m> \033[0m").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-        if not query:
-            continue
-        if query.lower() in ("exit", "quit"):
-            break
-        asyncio.run(_run_query(query, restricted=restricted))
+            readline.write_history_file(hist)
+        except OSError:
+            pass
 
 
 def _run_migrate_storage() -> None:
@@ -284,9 +297,10 @@ def _run_migrate_storage() -> None:
 def main() -> None:
     global _SESSION_ID
     from helioai.config import dev_unlock, settings
-    from helioai.workspace import set_user
+    from helioai.workspace import cleanup_old_runs, set_user
 
     set_user(_USER_ID)
+    cleanup_old_runs()
     args = sys.argv[1:]
 
     # --dev: supply the configured dev token to bypass the scope guardrail

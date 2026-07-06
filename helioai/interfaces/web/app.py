@@ -319,4 +319,7 @@ async def serve_figure(path: str, user_id: str = Depends(require_user)):
 def serve_web(host: str = "127.0.0.1", port: int = 7890) -> None:
     import uvicorn
 
+    from helioai.workspace import cleanup_old_runs
+
+    cleanup_old_runs()
     uvicorn.run(app, host=host, port=port)

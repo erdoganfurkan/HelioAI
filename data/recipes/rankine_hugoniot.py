@@ -66,6 +66,7 @@ def rh_jump(
     n_d_si = n_d * CM3_TO_M3
     V_u_si = V_u * 1e3
     V_d_si = V_d * 1e3
+    V_shock_si = V_shock * 1e3
     B_u_si = B_u * 1e-9
     B_d_si = B_d * 1e-9
     T_u_si = T_u * EV
@@ -75,9 +76,9 @@ def rh_jump(
     P_u = n_u_si * T_u_si + B_u_si**2 / (2 * MU0)
     P_d = n_d_si * T_d_si + B_d_si**2 / (2 * MU0)
 
-    # Momentum flux balance check: ρ V² + P should be conserved
-    mom_u = n_u_si * MP * V_u_si**2 + P_u
-    mom_d = n_d_si * MP * V_d_si**2 + P_d
+    # Momentum flux balance check: ρ (V-V_shock)² + P should be conserved
+    mom_u = n_u_si * MP * (V_u_si - V_shock_si) ** 2 + P_u
+    mom_d = n_d_si * MP * (V_d_si - V_shock_si) ** 2 + P_d
     mom_residual = abs(mom_d - mom_u) / (abs(mom_u) + 1e-30)
 
     export("V_shock_km_s", np.array([V_shock]))

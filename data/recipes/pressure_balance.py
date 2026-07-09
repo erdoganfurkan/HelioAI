@@ -58,7 +58,8 @@ def mp_standoff(
     """
     # Solar wind pressures (SI)
     rho     = n_sw * CM3_M3 * MP
-    P_dyn   = 0.5 * rho * (V_sw * KMS_MS)**2
+    k = 0.88  # Spreiter et al. 1966; consistent with Shue et al. 1997 empirical standoff
+    P_dyn   = k * rho * (V_sw * KMS_MS)**2
     P_mag_sw = (B_sw * NT_T)**2 / (2 * MU0)
     P_sw_total = P_dyn + P_mag_sw
 

@@ -57,7 +57,7 @@ async def plasma_beta(B_nT: float, n_cm3: float, T_eV: float) -> dict:
         if beta_val < 0.01:
             regime = "magnetically dominated (β ≪ 1) — typical inner magnetosphere / coronal loop"
         elif beta_val < 1.0:
-            regime = "sub-Alfvénic plasma (β < 1) — typical solar wind / outer magnetosphere"
+            regime = "low-β plasma (β < 1) — typical solar wind / outer magnetosphere"
         elif beta_val < 10.0:
             regime = "high-β plasma (β ~ 1-10) — typical magnetosheath / plasma sheet"
         else:
@@ -144,12 +144,15 @@ async def alfven_speed(B_nT: float, n_cm3: float, mass_amu: float = 1.0) -> dict
     Returns dict with Alfvén speed in km/s.
     """
     try:
+        import astropy.constants as const
         import astropy.units as u
         import plasmapy.formulary as pf
 
         B = B_nT * u.nT
         n = n_cm3 * u.cm**-3
-        ion = "H-1 1+" if mass_amu == 1.0 else "p+"
+        from plasmapy.particles import CustomParticle
+
+        ion = CustomParticle(mass=mass_amu * const.u, charge=1 * const.e.si)
 
         V_A = pf.Alfven_speed(B, n, ion=ion)
         va_km_s = float(V_A.to(u.km / u.s).value)
@@ -214,7 +217,12 @@ async def power_spectrum(
         from scipy import signal
 
         arr = np.asarray(values, dtype=float)
-        arr = arr[np.isfinite(arr)]
+        arr[~np.isfinite(arr)] = np.nan
+        arr[np.abs(arr) >= 1e30] = np.nan
+        n_original = len(arr)
+        valid_mask = ~np.isnan(arr)
+        arr = arr[valid_mask]
+        n_dropped = n_original - len(arr)
         if len(arr) < 8:
             return {"error": f"Need at least 8 finite samples, got {len(arr)}"}
 
@@ -235,6 +243,9 @@ async def power_spectrum(
             "peak_period_s": round(1.0 / peak_freq, 3) if peak_freq > 0 else None,
             "peak_power": round(peak_power, 8),
             "n_points": len(arr),
+            "n_original": n_original,
+            "n_dropped": n_dropped,
+            "gap_fraction": round(n_dropped / max(n_original, 1), 4),
             "fs_Hz": round(fs, 6),
             "freq_resolution_Hz": round(freqs[1] - freqs[0], 8) if len(freqs) > 1 else None,
         }

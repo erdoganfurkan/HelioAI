@@ -70,8 +70,11 @@ def compute_pad(
     pa_deg[~mask] = np.nan
 
     valid = pa_deg[~np.isnan(pa_deg)]
-    counts, edges = np.histogram(valid, bins=n_bins, range=(0, 180))
+    counts_raw, edges = np.histogram(valid, bins=n_bins, range=(0, 180))
     bin_centers = 0.5 * (edges[:-1] + edges[1:])
+    sin_alpha = np.sin(np.radians(bin_centers))
+    sin_alpha = np.where(sin_alpha < 1e-10, 1e-10, sin_alpha)
+    counts = counts_raw / sin_alpha
 
     # Plot
     plt.style.use("dark_background")

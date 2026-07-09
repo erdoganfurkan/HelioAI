@@ -109,6 +109,21 @@ async def test_alfven_speed_scales_with_B() -> None:
     assert r2["alfven_speed_km_s"] == pytest.approx(2 * r1["alfven_speed_km_s"], rel=1e-3)
 
 
+async def test_alfven_speed_mass_scaling() -> None:
+    """V_A ∝ 1/√m — alpha particles (mass=4 amu) halve the speed vs protons."""
+    v_proton = await alfven_speed(B_nT=5.0, n_cm3=10.0, mass_amu=1.0)
+    v_alpha = await alfven_speed(B_nT=5.0, n_cm3=10.0, mass_amu=4.0)
+    ratio = v_proton["alfven_speed_km_s"] / v_alpha["alfven_speed_km_s"]
+    assert ratio == pytest.approx(2.0, rel=0.02)
+
+
+async def test_plasma_beta_regime_no_subalfvenic() -> None:
+    """sub-Alfvénic describes flow regime (Mach number), not β — must not appear in regime label."""
+    result = await plasma_beta(B_nT=10.0, n_cm3=10.0, T_eV=10.0)
+    assert "sub-Alfv" not in result["regime"]
+    assert result["regime"].startswith("low-β") or result["regime"].startswith("magnetically")
+
+
 # ──────────────────────────────── inertial_length ────────────────────────────
 
 
@@ -142,3 +157,18 @@ async def test_power_spectrum_list_input() -> None:
     result = await power_spectrum([1.0, -1.0, 1.0, -1.0] * 32, dt_s=1.0)
     assert "peak_frequency_Hz" in result
     assert result["peak_frequency_Hz"] > 0
+
+
+async def test_power_spectrum_rejects_fill_values() -> None:
+    """CDF fill values (|x| >= 1e30) must be detected and dropped."""
+    data = [1.0, 2.0, 1.0, 2.0] * 32 + [-1e31] * 10
+    result = await power_spectrum(data, dt_s=1.0)
+    assert result.get("n_dropped", 0) >= 10
+    assert result["n_points"] < result["n_original"]
+
+
+async def test_power_spectrum_reports_gap_fraction() -> None:
+    result = await power_spectrum([0.0] * 256, dt_s=1.0)
+    assert "gap_fraction" in result
+    assert "n_original" in result
+    assert "n_dropped" in result

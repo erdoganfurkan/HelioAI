@@ -298,3 +298,23 @@ def test_methods_section_lists_recipes(monkeypatch, tmp_path) -> None:
     assert "Methods & data acknowledgements" in md
     assert "theta_bn" in md
     assert "Schwartz" in md  # reference pulled from the recipe header
+
+
+def test_physics_helper_reemitted_standalone():
+    from helioai.export import to_standalone
+
+    code = "theta, r = mp_shue1998(2.0, 0.0)\nprint(float(r[0]))"
+    out = to_standalone(code, {})
+    assert "import numpy as np" in out
+    assert "def mp_shue1998" in out
+    ns: dict = {}
+    exec(out, ns)
+
+
+def test_transform_helper_reemitted_with_geopack_note():
+    from helioai.export import to_standalone
+
+    out = to_standalone("v = transform_coords('2019-01-01', [1, 2, 3], 'gse', 'gsm')", {})
+    assert "pip install geopack" in out
+    assert "def _epoch_seconds" in out
+    assert "def transform_coords" in out

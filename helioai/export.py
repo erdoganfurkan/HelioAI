@@ -236,7 +236,9 @@ def _strip_known_imports(code: str) -> str:
 
 def _standalone_header(code: str) -> str:
     """Imports + real clean()/export() helpers needed by `code`, conditionally."""
-    needs_np = "np." in code or re.search(r"\b(clean|export)\s*\(", code)
+    needs_np = "np." in code or re.search(
+        r"\b(clean|export|transform_coords|mp_shue1998|bs_jelinek2012)\s*\(", code
+    )
     imports: list[str] = []
     if needs_np:
         imports.append("import numpy as np")
@@ -259,7 +261,30 @@ def _standalone_header(code: str) -> str:
         blocks.append(_CLEAN_DEF)
     if re.search(r"\bexport\s*\(", code):
         blocks.append(_EXPORT_DEF)
+    blocks.extend(_physics_helper_defs(code))
     return "\n\n\n".join(blocks)
+
+
+def _physics_helper_defs(code: str) -> list[str]:
+    """Source of the sandbox physics helpers the code calls, for standalone reuse."""
+    used = [
+        h
+        for h in ("transform_coords", "mp_shue1998", "bs_jelinek2012")
+        if re.search(rf"\b{h}\s*\(", code)
+    ]
+    if not used:
+        return []
+    import inspect
+
+    from helioai.tools import sandbox_helpers
+
+    blocks: list[str] = []
+    if "transform_coords" in used:
+        blocks.append(
+            "# requires: pip install geopack\n" + inspect.getsource(sandbox_helpers._epoch_seconds)
+        )
+    blocks.extend(inspect.getsource(getattr(sandbox_helpers, h)) for h in used)
+    return blocks
 
 
 def to_standalone(code_src: str, manifest: dict, *, with_header: bool = True) -> str:

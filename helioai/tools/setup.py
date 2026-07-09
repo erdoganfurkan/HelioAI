@@ -98,7 +98,10 @@ registry.register(
     description=(
         "Execute Python code in an isolated sandbox. Pre-imported: speasy as `spz`, numpy as "
         "`np`, scipy (signal/stats/fft), plasmapy as `pf`, astropy.units as `u`; matplotlib "
-        "`plt.show()` captures the figure as a PNG artifact."
+        "`plt.show()` captures the figure as a PNG artifact. Physics helpers available: "
+        "`transform_coords(time, vectors, frm, to)` (gse/gsm/sm/geo/mag/gei), "
+        "`mp_shue1998(pdyn_nPa, bz_nT)` and `bs_jelinek2012(pdyn_nPa)` — both return "
+        "(theta_deg, r_RE) boundary profiles."
     ),
     parameters={
         "type": "object",

@@ -369,3 +369,15 @@ async def test_registry_allows_trusted_private_args() -> None:
     out = await reg.call_tool("echo", {"x": 1}, trusted={"_plot_dir": "/safe"})
     assert "rejected private argument" not in out
     assert "/safe" in out
+
+
+async def test_physics_helpers_available_in_sandbox() -> None:
+    result = await run_python(
+        "theta, r = mp_shue1998(2.0, 0.0, theta_deg=0.0)\n"
+        "t2, rbs = bs_jelinek2012(2.0, theta_deg=0.0)\n"
+        "v = transform_coords('2019-01-01T00:00:00', [10.0, 2.0, 3.0], 'gse', 'gsm')\n"
+        "print(round(float(r[0]), 2), round(float(rbs[0]), 2), round(float(v[0]), 2))",
+        timeout=120.0,
+    )
+    assert result.get("error") is None, result.get("stderr", "")
+    assert "10.25 13.51 10.0" in result["stdout"]

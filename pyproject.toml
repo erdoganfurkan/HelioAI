@@ -44,6 +44,7 @@ dependencies = [
     "transformers<5.0",
     "nbformat>=5.0",
     "rank-bm25>=0.2",
+    "geopack>=1.0.11",
 ]
 
 [project.urls]

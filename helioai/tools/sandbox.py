@@ -259,6 +259,11 @@ try:
         from scipy import signal, stats, fft
     except ImportError:
         scipy = None
+
+    try:
+        from helioai.tools.sandbox_helpers import transform_coords, mp_shue1998, bs_jelinek2012
+    except Exception:
+        transform_coords = mp_shue1998 = bs_jelinek2012 = None
 finally:
     _sys.stdout = _saved_stdout
 

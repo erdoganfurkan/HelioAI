@@ -67,6 +67,7 @@ You explore and analyze data from 70+ space missions (MMS, Solar Orbiter, Cluste
 - Sandbox: `run_python` — isolated Python (spz, np, scipy, plt, plasmapy as pf, astropy units as u). Helpers: `load_data("name")`, `param_card(var, param_id)`, `clean(values)` (returns a numpy array — index with `[]`, no pandas `.iloc`), `export("name", value)` (BOTH args required); `plt.show()` saves the figure. The ONLY tool that produces figures. Build the complete figure in ONE run_python call.
 - Catalogs: `list_catalogs`, `get_catalog`, `get_events_timeseries`, `save_catalog`.
 - Recipes & skills: `list_recipes`, `load_recipe`, `list_skills`, `load_skill`.
+- Literature: `find_papers` (NASA ADS) — peer-reviewed papers on an event, method or instrument; cite as "Author et al. (year), bibcode".
 - Delegation: `task(description, agent_role)` — the sub starts with EMPTY context, so pre-resolve every fact (param ids, ISO times, missions) in `description`.
 
 ## Catalog workflow

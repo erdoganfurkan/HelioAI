@@ -12,6 +12,7 @@ from helioai.tools import speasy_tools as _spz
 from helioai.tools import plasmapy_tools as _ppy
 from helioai.tools import recipes as _rcp
 from helioai.tools import catalog_tools as _cat
+from helioai.tools import literature as _lit
 
 
 registry.register(
@@ -425,3 +426,43 @@ registry.register(
         "required": ["name"],
     },
 )(_rcp.load_recipe)
+
+registry.register(
+    name="find_papers",
+    description=(
+        "Search the peer-reviewed literature via NASA ADS (astronomy/heliophysics). "
+        "Use it to find papers studying an event, a method, or an instrument. "
+        "Returns title, authors, year, bibcode, DOI, citation count and abstract snippet."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "ADS search query, e.g. 'magnetopause reconnection MMS 2015' "
+                    "or 'author:Shue magnetopause model'."
+                ),
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Number of papers to return (1-10).",
+                "default": 5,
+            },
+            "year_start": {
+                "type": "integer",
+                "description": "Earliest publication year (optional).",
+            },
+            "year_end": {
+                "type": "integer",
+                "description": "Latest publication year (optional).",
+            },
+            "sort": {
+                "type": "string",
+                "enum": ["relevance", "date", "citations"],
+                "default": "relevance",
+            },
+        },
+        "required": ["query"],
+    },
+)(_lit.find_papers)

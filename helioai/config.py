@@ -99,6 +99,11 @@ class CatalogsConfig:
 
 
 @dataclass
+class LiteratureConfig:
+    ads_token: str = ""
+
+
+@dataclass
 class DevConfig:
     # Shared-secret that unlocks unrestricted LLM access (bypasses scope guardrail).
     # Empty (default) → no token is valid → all requests stay restricted.
@@ -124,6 +129,7 @@ class Settings:
     profile: ProfileConfig = field(default_factory=ProfileConfig)
     recipes: RecipesConfig = field(default_factory=RecipesConfig)
     catalogs: CatalogsConfig = field(default_factory=CatalogsConfig)
+    literature: LiteratureConfig = field(default_factory=LiteratureConfig)
     dev: DevConfig = field(default_factory=DevConfig)
     web_auth: WebAuthConfig = field(default_factory=WebAuthConfig)
 
@@ -164,6 +170,7 @@ def _load() -> Settings:
         profile=ProfileConfig(profile_path=profile_path),
         recipes=RecipesConfig(recipes_dir=recipes_dir),
         catalogs=CatalogsConfig(catalogs_dir=catalogs_dir),
+        literature=LiteratureConfig(ads_token=os.environ.get("ADS_API_TOKEN", "")),
         rag=RAGConfig(hybrid_enabled=hybrid_enabled),
         dev=DevConfig(token=dev_token),
         llm=LLMConfig(

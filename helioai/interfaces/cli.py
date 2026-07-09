@@ -172,8 +172,10 @@ async def _run_query(query: str, *, restricted: bool = True) -> None:
     import helioai.tools.setup  # noqa: F401  registers all tools
     from helioai.core.agent_loop import stream_chat
     from helioai.logging_config import setup_logging
+    from helioai.tools.mcp_client import discover_and_register
 
     setup_logging("WARNING")
+    await discover_and_register()
 
     llm = _build_llm_client()
     async for ev in stream_chat(llm, _USER_ID, _SESSION_ID, query, restricted=restricted):

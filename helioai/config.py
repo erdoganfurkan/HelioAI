@@ -104,6 +104,11 @@ class LiteratureConfig:
 
 
 @dataclass
+class MCPConfig:
+    servers_json: str = ""
+
+
+@dataclass
 class DevConfig:
     # Shared-secret that unlocks unrestricted LLM access (bypasses scope guardrail).
     # Empty (default) → no token is valid → all requests stay restricted.
@@ -130,6 +135,7 @@ class Settings:
     recipes: RecipesConfig = field(default_factory=RecipesConfig)
     catalogs: CatalogsConfig = field(default_factory=CatalogsConfig)
     literature: LiteratureConfig = field(default_factory=LiteratureConfig)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
     dev: DevConfig = field(default_factory=DevConfig)
     web_auth: WebAuthConfig = field(default_factory=WebAuthConfig)
 
@@ -171,6 +177,7 @@ def _load() -> Settings:
         recipes=RecipesConfig(recipes_dir=recipes_dir),
         catalogs=CatalogsConfig(catalogs_dir=catalogs_dir),
         literature=LiteratureConfig(ads_token=os.environ.get("ADS_API_TOKEN", "")),
+        mcp=MCPConfig(servers_json=os.environ.get("HELIOAI_MCP_SERVERS", "")),
         rag=RAGConfig(hybrid_enabled=hybrid_enabled),
         dev=DevConfig(token=dev_token),
         llm=LLMConfig(

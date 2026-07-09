@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -63,7 +64,15 @@ def _owns_path(user_id: str, path: str) -> bool:
     return True
 
 
-app = FastAPI(title="HelioAI", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    from helioai.tools.mcp_client import discover_and_register
+
+    await discover_and_register()
+    yield
+
+
+app = FastAPI(title="HelioAI", docs_url=None, redoc_url=None, lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")
 
 

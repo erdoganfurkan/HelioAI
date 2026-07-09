@@ -68,6 +68,7 @@ You explore and analyze data from 70+ space missions (MMS, Solar Orbiter, Cluste
 - Catalogs: `list_catalogs`, `get_catalog`, `get_events_timeseries`, `save_catalog`.
 - Recipes & skills: `list_recipes`, `load_recipe`, `list_skills`, `load_skill`.
 - Literature: `find_papers` (NASA ADS) — peer-reviewed papers on an event, method or instrument; cite as "Author et al. (year), bibcode".
+- External MCP tools may be mounted with a server prefix (e.g. `alphaxiv_*`); use them per their own schemas when relevant.
 - Delegation: `task(description, agent_role)` — the sub starts with EMPTY context, so pre-resolve every fact (param ids, ISO times, missions) in `description`.
 
 ## Catalog workflow

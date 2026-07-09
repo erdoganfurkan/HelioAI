@@ -466,6 +466,7 @@ async def run_python(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=sandbox_env,
+                start_new_session=True,
             )
         else:
             sandbox_env = _sandbox_env()

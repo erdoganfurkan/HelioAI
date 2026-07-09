@@ -18,6 +18,7 @@ import structlog
 from helioai.core.llm.base import LLMClient, Message, ToolDef
 from helioai.core.skills_loader import SkillError, load_skill as load_skill_body
 from helioai.core.tool_exec import compact_history, emit_post_tool_events, inject_run_python_args
+from helioai.core.vision import maybe_review
 from helioai.logging_config import get_logger
 from helioai.tools.registry import registry
 
@@ -276,6 +277,13 @@ async def stream_subagent(
                     result = await registry.call_tool(
                         tc.name, tc.arguments, trusted=inject_run_python_args(tc.name)
                     )
+
+                result, figure_verdict = await maybe_review(tc.name, result)
+                if figure_verdict:
+                    yield {
+                        "event": "figure_review",
+                        "data": {"turn": n_iters, "text": figure_verdict, "sub_agent_ctx": ctx},
+                    }
 
                 for ev in emit_post_tool_events(
                     tc.name,

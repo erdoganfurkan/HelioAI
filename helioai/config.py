@@ -109,6 +109,16 @@ class MCPConfig:
 
 
 @dataclass
+class VisionConfig:
+    # Reviews sandbox figures with a multimodal side-call; only the text
+    # verdict enters the history, never the image.
+    enabled: bool = False
+    provider: str = "azure"
+    model: str = ""
+    timeout_s: float = 20.0
+
+
+@dataclass
 class DevConfig:
     # Shared-secret that unlocks unrestricted LLM access (bypasses scope guardrail).
     # Empty (default) → no token is valid → all requests stay restricted.
@@ -136,6 +146,7 @@ class Settings:
     catalogs: CatalogsConfig = field(default_factory=CatalogsConfig)
     literature: LiteratureConfig = field(default_factory=LiteratureConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
     dev: DevConfig = field(default_factory=DevConfig)
     web_auth: WebAuthConfig = field(default_factory=WebAuthConfig)
 
@@ -178,6 +189,11 @@ def _load() -> Settings:
         catalogs=CatalogsConfig(catalogs_dir=catalogs_dir),
         literature=LiteratureConfig(ads_token=os.environ.get("ADS_API_TOKEN", "")),
         mcp=MCPConfig(servers_json=os.environ.get("HELIOAI_MCP_SERVERS", "")),
+        vision=VisionConfig(
+            enabled=os.environ.get("HELIOAI_VISION_ENABLED", "0") not in ("0", "", "false"),
+            provider=os.environ.get("HELIOAI_VISION_PROVIDER", "azure").lower(),
+            model=os.environ.get("HELIOAI_VISION_MODEL", ""),
+        ),
         rag=RAGConfig(hybrid_enabled=hybrid_enabled),
         dev=DevConfig(token=dev_token),
         llm=LLMConfig(

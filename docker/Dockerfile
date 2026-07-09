@@ -25,6 +25,10 @@ WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 
+# preexec_fn drops the sandbox subprocess to this dedicated user so
+# LLM-generated code cannot read /proc/<server>/environ (see sandbox.py).
+RUN useradd -r -s /bin/false helioai-sandbox
+
 VOLUME /app/data
 EXPOSE 7890
 

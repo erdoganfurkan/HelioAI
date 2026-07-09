@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from helioai.tools import sandbox
 from helioai.tools.sandbox import run_python
 
 
@@ -221,6 +222,125 @@ async def test_api_keys_not_leaked_to_sandbox(monkeypatch) -> None:
     assert result.get("error") is None, result.get("stderr", "")
     assert "secret-" not in result["stdout"]
     assert result["stdout"].count("MISSING") == 3
+
+
+async def test_sandbox_runs_as_different_uid() -> None:
+    """H1 — sandbox must be PID-isolated from the server.
+
+    Functional bwrap → PID namespace isolation.
+    helioai-sandbox user + root → UID isolation via preexec_fn.
+    Falls back to skip on dev machines without either.
+    """
+    from helioai.tools.sandbox import _bwrap_works
+
+    if not _bwrap_works():
+        try:
+            import pwd
+
+            pwd.getpwnam("helioai-sandbox")
+        except (KeyError, ImportError):
+            pytest.skip("bwrap not functional and no helioai-sandbox user — H1 not verifiable")
+
+    import os as _os
+
+    server_pid = _os.getpid()
+    code = (
+        f"import os\n"
+        f"try:\n"
+        f"    with open('/proc/{server_pid}/environ', 'rb') as f:\n"
+        f"        data = f.read(); print('READABLE:' + str(len(data)))\n"
+        f"except (PermissionError, FileNotFoundError):\n"
+        f"    print('BLOCKED')\n"
+    )
+    result = await run_python(code)
+    assert "BLOCKED" in result["stdout"], (
+        f"sandbox can read /proc/{server_pid}/environ — API keys exposed"
+    )
+
+
+async def test_sandbox_cannot_read_server_proc() -> None:
+    """H1+H4 — sandbox must not read server /proc/<pid>/environ.
+
+    With bwrap (--unshare-pid) or setuid sandbox user, /proc entries
+    from the server's PID namespace are invisible or permission-blocked.
+    Skips when neither mechanism is available.
+    """
+    from helioai.tools.sandbox import _bwrap_works
+
+    if not _bwrap_works():
+        try:
+            import pwd
+
+            pwd.getpwnam("helioai-sandbox")
+        except (KeyError, ImportError):
+            pytest.skip("bwrap not functional and no helioai-sandbox user — H1 not verifiable")
+
+    import os as _os
+
+    server_pid = _os.getpid()
+    code = (
+        f"try:\n"
+        f"    with open('/proc/{server_pid}/environ', 'rb') as f:\n"
+        f"        data = f.read()\n"
+        f"    print('READABLE:' + str(len(data)))\n"
+        f"except PermissionError:\n"
+        f"    print('BLOCKED')\n"
+        f"except FileNotFoundError:\n"
+        f"    print('BLOCKED')\n"
+    )
+    result = await run_python(code)
+    assert "BLOCKED" in result["stdout"], (
+        f"sandbox can read server /proc/{server_pid}/environ — API keys exposed"
+    )
+
+
+async def test_home_not_leaked_to_sandbox(monkeypatch) -> None:
+    """H4 — sandbox HOME must be a scratch dir, never the server's real home."""
+    monkeypatch.setenv("HOME", "/home/secret-user")
+    code = "import os; print(os.environ.get('HOME', 'MISSING'))"
+    result = await run_python(code)
+    assert result.get("error") is None, result.get("stderr", "")
+    home = result["stdout"].strip()
+    assert home != "/home/secret-user", "server HOME leaked into sandbox"
+    assert home == "/tmp" or home.startswith("/tmp/"), (
+        f"sandbox HOME={home!r}, expected a /tmp-scoped scratch dir"
+    )
+
+
+@pytest.mark.skipif(
+    not sandbox._bwrap_works(), reason="bwrap unavailable — no filesystem isolation to assert"
+)
+async def test_sandbox_cannot_read_secrets(tmp_path, monkeypatch) -> None:
+    """H1/H2 — a bwrap sandbox must not read data/ secrets nor the .env file.
+
+    data/ is masked by an empty tmpfs (only this session's workspace is re-bound),
+    and .env is masked to /dev/null. Without both, run_python could exfiltrate the
+    password hashes (users.json) and the LLM provider API keys (.env).
+    """
+    from helioai.config import _ROOT, settings
+
+    data_dir = tmp_path / "data"
+    plot_dir = data_dir / "users" / "u" / "workspace" / "lbl"
+    plot_dir.mkdir(parents=True)
+    secret = "SUPER_SECRET_HASH_9f83b2c1"
+    (data_dir / "users.json").write_text(f'{{"admin": {{"pw": "{secret}"}}}}')
+    monkeypatch.setattr(settings, "data_dir", data_dir)
+
+    users_json = str(data_dir / "users.json")
+    env_file = str(_ROOT / ".env")
+    code = (
+        "def _try(p):\n"
+        "    try:\n"
+        "        with open(p) as f: return f.read()\n"
+        "    except Exception as e: return 'BLOCKED:' + type(e).__name__\n"
+        f"print('USERS=' + _try({users_json!r}))\n"
+        f"print('ENV=' + _try({env_file!r}))\n"
+    )
+    result = await run_python(code, _plot_dir=str(plot_dir))
+    assert result.get("error") is None, result.get("stderr", "")
+    out = result["stdout"]
+    assert secret not in out, "password hash readable from sandbox — data/ not masked"
+    assert "AZURE" not in out and "API_KEY" not in out, ".env keys readable from sandbox"
 
 
 async def test_registry_rejects_private_args() -> None:

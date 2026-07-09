@@ -16,7 +16,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import signal
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -27,7 +29,6 @@ from pathlib import Path
 _ENV_KEEP = frozenset(
     {
         "PATH",
-        "HOME",
         "USER",
         "LOGNAME",
         "LANG",
@@ -57,12 +58,26 @@ _ENV_KEEP_PREFIXES = ("XDG_", "LC_", "SPEASY_", "SPEDAS_", "PYTHON")
 _MAX_PROCS = 4096
 
 
-def _sandbox_env() -> dict[str, str]:
-    """Filtered os.environ for the sandbox — secrets stripped (see _ENV_KEEP)."""
+def _sandbox_env(home: str = "/tmp") -> dict[str, str]:
+    """Filtered os.environ for the sandbox — secrets stripped (see _ENV_KEEP).
+
+    HOME is explicitly set (default /tmp, or the plot_dir when bwrap is active).
+    The bwrap sandbox mounts /tmp as a writable tmpfs while the rest of the
+    filesystem is read-only. Libraries that create caches at import time
+    (speasy SQLite, matplotlib font cache) need a writable home directory.
+    """
     env = {
         k: v for k, v in os.environ.items() if k in _ENV_KEEP or k.startswith(_ENV_KEEP_PREFIXES)
     }
     env.setdefault("MPLBACKEND", "Agg")
+    env["HOME"] = home
+    # Redirect all XDG base dirs under the writable home. Otherwise a host
+    # XDG_DATA_HOME/XDG_CONFIG_HOME (kept via the XDG_ prefix) leaks through and
+    # points speasy's diskcache index at a path bwrap mounts read-only → the
+    # SQLite index open fails with "attempt to write a readonly database".
+    env["XDG_CACHE_HOME"] = os.path.join(home, ".cache")
+    env["XDG_DATA_HOME"] = os.path.join(home, ".local", "share")
+    env["XDG_CONFIG_HOME"] = os.path.join(home, ".config")
     return env
 
 
@@ -77,8 +92,104 @@ def _kill_proc_tree(proc: asyncio.subprocess.Process) -> None:
     proc.kill()
 
 
+_BWARP = shutil.which("bwrap")
+
+
+def _bwrap_works() -> bool:
+    """Check that bubblewrap can actually set up a namespace on this host.
+
+    `shutil.which` finds the binary but the kernel may not allow user
+    namespaces (Debian default, Docker seccomp profiles, etc.).
+    """
+    if not _BWARP or sys.platform != "linux":
+        return False
+    try:
+        proc = subprocess.run(
+            [_BWARP, "--ro-bind", "/", "/", "true"],
+            capture_output=True,
+            timeout=5,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def _build_sandbox_cmd(plot_dir: str, full_code: str) -> list[str]:
+    """Build the sandbox execution command.
+
+    Prefers bubblewrap (bwrap) for PID-namespace isolation — prevents the
+    sandbox from reading /proc/<server-pid>/environ even when the server and
+    sandbox share the same host UID. Falls back to plain python + preexec_fn
+    when bwrap is not functional (local dev, restrictive seccomp profiles).
+    """
+    if _bwrap_works():
+        from helioai.config import _ROOT, settings
+
+        data_dir = str(settings.data_dir)
+        cmd = [
+            _BWARP,
+            "--unshare-pid",
+            "--unshare-ipc",
+            "--ro-bind",
+            "/",
+            "/",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            # Empty tmpfs over data/ hides users.json (password hashes), sessions.db
+            # and every other user's workspace/catalogs — the whole point of the sandbox.
+            "--tmpfs",
+            data_dir,
+        ]
+        # Mask the .env file — it holds the LLM provider API keys and is otherwise
+        # readable through --ro-bind / / even though it's absent from the subprocess env.
+        env_file = _ROOT / ".env"
+        if env_file.exists():
+            cmd += ["--ro-bind", "/dev/null", str(env_file)]
+        # Re-bind THIS session's workspace writable LAST, so no earlier tmpfs
+        # (/tmp or data/) can mask it — plot_dir may live under either.
+        cmd += ["--bind", plot_dir, plot_dir]
+        cmd += [sys.executable, "-c", full_code]
+        return cmd
+    return [sys.executable, "-c", full_code]
+
+
+def _preexec_fn() -> callable | None:
+    """preexec_fn for the non-bwrap path — limits + privilege drop."""
+    if sys.platform == "win32":
+        return None
+    return _set_subprocess_limits
+
+
+def _drop_privileges() -> None:
+    """Drop to the dedicated sandbox user (or nobody) after fork, before exec.
+
+    Runs in the child via preexec_fn. When the sandbox subprocess shares the
+    server's UID it can read /proc/<ppid>/environ (API keys) and other server
+    files — this call closes that hole. Degrades silently when unavailable.
+    """
+    try:
+        import pwd
+
+        sb = pwd.getpwnam("helioai-sandbox")
+        os.setgid(sb.pw_gid)
+        os.setuid(sb.pw_uid)
+        return
+    except (KeyError, PermissionError):
+        pass
+    try:
+        nb = pwd.getpwnam("nobody")
+        os.setgid(nb.pw_gid)
+        os.setuid(nb.pw_uid)
+    except Exception:
+        pass
+
+
 def _set_subprocess_limits() -> None:
-    """Apply resource limits inside the sandbox subprocess (Linux only).
+    """Apply resource limits + drop to sandbox user (pre-exec hook).
 
     Called via preexec_fn — runs in the child process after fork, before exec.
     Degrades silently on non-Linux or permission error.
@@ -88,6 +199,7 @@ def _set_subprocess_limits() -> None:
     causing OSError on import rather than at actual allocation. The hard timeout
     already handles runaway CPU usage.
     """
+    _drop_privileges()
     try:
         import resource
 
@@ -106,6 +218,17 @@ _SANDBOX_PREAMBLE = """\
 import sys as _sys, io as _io, warnings, os
 warnings.filterwarnings('ignore')
 os.environ.setdefault('MPLBACKEND', 'Agg')
+
+# Ensure cache directories exist before library init.  Libraries that create
+# SQLite caches at import time (speasy uses diskcache) need their parent dirs
+# to exist.  With bwrap the filesystem is read-only except for HOME and /tmp
+# so we must pre-create them here.
+_hm = os.environ.get('HOME', '/tmp')
+for _d in (os.path.join(_hm, '.cache', 'speasy'),
+           os.path.join(_hm, '.local', 'share', 'speasy', 'index'),
+           os.path.join(_hm, '.config', 'speasy'),
+           os.path.join(_hm, '.matplotlib')):
+    os.makedirs(_d, exist_ok=True)
 
 import json
 import re as _re
@@ -332,17 +455,28 @@ async def run_python(
         plot_dir_line + _SANDBOX_PREAMBLE + textwrap.dedent(code) + "\n" + _SANDBOX_POSTAMBLE
     )
 
+    cmd = _build_sandbox_cmd(plot_dir, full_code)
+    using_bwrap = cmd[0].endswith("bwrap") if cmd else False
+
     try:
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-c",
-            full_code,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=_sandbox_env(),
-            start_new_session=sys.platform != "win32",
-            preexec_fn=_set_subprocess_limits if sys.platform != "win32" else None,
-        )
+        if using_bwrap:
+            sandbox_env = _sandbox_env(home=plot_dir)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=sandbox_env,
+            )
+        else:
+            sandbox_env = _sandbox_env()
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=sandbox_env,
+                start_new_session=True,
+                preexec_fn=_preexec_fn(),
+            )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:

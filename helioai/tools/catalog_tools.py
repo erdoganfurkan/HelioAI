@@ -149,6 +149,93 @@ def _walk_catalogs(spz) -> list[dict]:
     return entries
 
 
+# ── remote community catalogs (HELIO4CAST) ────────────────────────────────────
+
+_HELIO4CAST = {
+    "icmecat": {
+        "url": "https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23.csv",
+        "start_col": "icme_start_time",
+        "stop_col": "mo_end_time",
+        "name": "HELIO4CAST ICMECAT v2.3",
+        "description": (
+            "Interplanetary CME catalog 1990-2025, multi-spacecraft in-situ (Wind, "
+            "STEREO-A/B, PSP, Solar Orbiter, BepiColombo, MAVEN, Juno, Ulysses, "
+            "MESSENGER, VEX). start=ICME start, stop=magnetic obstacle end; filter "
+            "spacecraft with where={column: sc_insitu}. Cite Moestl et al."
+        ),
+        "citation": (
+            "HELIO4CAST ICMECAT v2.3 (https://helioforecast.space/icmecat) — "
+            "Moestl et al. (2017), Space Weather 15, doi:10.1002/2017SW001614"
+        ),
+        "approx_events": 1976,
+        "survey": ("1990", "2025"),
+    },
+}
+_HELIO4CAST_TTL_S = 7 * 86400
+
+
+def _helio4cast_cache_path(name: str) -> Path:
+    from helioai.config import settings
+
+    d = settings.data_dir / "helio4cast"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{name}.csv"
+
+
+def _fetch_helio4cast_csv(name: str) -> Path | None:
+    import urllib.request
+
+    spec = _HELIO4CAST[name]
+    path = _helio4cast_cache_path(name)
+    if path.exists() and (time.time() - path.stat().st_mtime) < _HELIO4CAST_TTL_S:
+        return path
+    try:
+        with urllib.request.urlopen(spec["url"], timeout=30) as resp:
+            data = resp.read()
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(data)
+        tmp.replace(path)
+    except Exception as e:
+        if path.exists():
+            log.warning("helio4cast %s: refresh failed (%s) — using stale cache", name, e)
+            return path
+        log.warning("helio4cast %s: download failed: %s", name, e)
+        return None
+    return path
+
+
+def _h4c_iso(raw: str) -> str:
+    t = (raw or "").strip().rstrip("Z").replace(" ", "T")
+    return t + ":00" if len(t) == 16 else t
+
+
+def _load_helio4cast_catalog(name: str):
+    import csv
+
+    from speasy.products import Catalog, Event
+
+    spec = _HELIO4CAST.get(name)
+    if spec is None:
+        return None
+    path = _fetch_helio4cast_csv(name)
+    if path is None:
+        return None
+    time_cols = (spec["start_col"], spec["stop_col"])
+    events, skipped = [], 0
+    with path.open(newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            start = _h4c_iso(row.get(spec["start_col"], ""))
+            stop = _h4c_iso(row.get(spec["stop_col"], ""))
+            if not start or not stop:
+                skipped += 1
+                continue
+            meta = {k: v for k, v in row.items() if k and v and k not in time_cols}
+            events.append(Event(start, stop, meta=meta))
+    if skipped:
+        log.info("helio4cast %s: skipped %d rows without start/stop", name, skipped)
+    return Catalog(name=spec["name"], meta={}, events=events)
+
+
 # ── tools ─────────────────────────────────────────────────────────────────────
 
 
@@ -189,6 +276,27 @@ async def list_catalogs(
             )
     except Exception as e:
         log.warning("list_catalogs: local catalog scan failed: %s", e)
+
+    for key, spec in _HELIO4CAST.items():
+        nb = spec["approx_events"]
+        cache = _helio4cast_cache_path(key)
+        if cache.exists():
+            try:
+                with cache.open(encoding="utf-8") as f:
+                    nb = max(sum(1 for _ in f) - 1, 0)
+            except OSError:
+                pass
+        entries.append(
+            {
+                "id": f"helio4cast/{key}",
+                "name": spec["name"],
+                "type": "catalog",
+                "nb_events": nb,
+                "survey_start": spec["survey"][0],
+                "survey_stop": spec["survey"][1],
+                "description": spec["description"][:200],
+            }
+        )
 
     if type in ("catalog", "timetable"):
         entries = [e for e in entries if e["type"] == type]
@@ -565,10 +673,17 @@ def _load_local_catalog(name: str):
 
 
 def _resolve_catalog(catalog_id: str, spz):
-    """Return (speasy_catalog_object, index_or_None) for amda/ or local/ prefixes."""
+    """Return (speasy_catalog_object, index_or_None) for amda/, local/ or helio4cast/ prefixes."""
     if catalog_id.startswith("local/"):
         name = catalog_id[len("local/") :]
         cat = _load_local_catalog(name)
+        if cat is None:
+            return None, None
+        return cat, None
+
+    if catalog_id.startswith("helio4cast/"):
+        name = catalog_id[len("helio4cast/") :]
+        cat = _load_helio4cast_catalog(name)
         if cat is None:
             return None, None
         return cat, None

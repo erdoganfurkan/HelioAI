@@ -310,6 +310,25 @@ def _version(pkg: str) -> str:
         return "unknown"
 
 
+_CATALOG_CITATIONS = {
+    "helio4cast/icmecat": (
+        "HELIO4CAST ICMECAT v2.3 (https://helioforecast.space/icmecat) — "
+        "Moestl et al. (2017), Space Weather 15, doi:10.1002/2017SW001614"
+    ),
+}
+
+
+def _collect_catalog_refs(history) -> list[str]:
+    """Citations of community catalogs referenced anywhere in the session."""
+    blobs: list[str] = []
+    for m in history:
+        blobs.append(m.content or "")
+        for tc in m.tool_calls or []:
+            blobs.append(str(tc.arguments))
+    joined = "\n".join(blobs)
+    return [cite for cat_id, cite in _CATALOG_CITATIONS.items() if cat_id in joined]
+
+
 def _collect_param_ids(history) -> list[str]:
     found: list[str] = []
     seen: set[str] = set()
@@ -419,7 +438,8 @@ def build_notebook(user_id: str, session_id: str):
 
     # Methods & data acknowledgements — recipes used + references
     recipes = _collect_recipes(history)
-    if recipes or param_ids:
+    catalog_refs = _collect_catalog_refs(history)
+    if recipes or param_ids or catalog_refs:
         methods = ["## Methods & data acknowledgements", ""]
         for r in recipes:
             line = f"- **{r['name']}**"
@@ -432,6 +452,8 @@ def build_notebook(user_id: str, session_id: str):
             methods.append(
                 "- **Data:** " + ", ".join(f"`{p}`" for p in param_ids) + " (via speasy)"
             )
+        for cite in catalog_refs:
+            methods.append(f"- **Event catalog:** {cite}")
         methods.append(
             f"\n_Libraries: speasy {_version('speasy')}, plasmapy {_version('plasmapy')}, "
             f"helioai {_version('helioai')}._"

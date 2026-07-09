@@ -127,10 +127,11 @@ async def test_list_catalogs_returns_all(monkeypatch, tmp_path) -> None:
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await list_catalogs()
-    assert result["total"] == 2
+    assert result["total"] == 3
     ids = [e["id"] for e in result["catalogs"]]
     assert "amda/sharedcatalog_41" in ids
     assert "amda/sharedtimetable_1" in ids
+    assert "helio4cast/icmecat" in ids
 
 
 @pytest.mark.asyncio
@@ -145,19 +146,24 @@ async def test_list_catalogs_type_filter(monkeypatch, tmp_path) -> None:
 
     result = await list_catalogs(type="catalog")
     assert all(e["type"] == "catalog" for e in result["catalogs"])
-    assert result["total"] == 1
+    assert result["total"] == 2
 
 
 @pytest.mark.asyncio
-async def test_list_catalogs_region_filter(monkeypatch) -> None:
+async def test_list_catalogs_region_filter(monkeypatch, tmp_path) -> None:
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
     icme_idx = _make_catalog_index("c1", "ICME list", "Richardson ICMEs", 100, "", "")
     shock_idx = _make_catalog_index("c2", "Bow shock crossings", "MMS bow shock", 2797, "", "")
     mock_spz = _make_spz({"c1": icme_idx, "c2": shock_idx}, {})
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await list_catalogs(region="ICME")
-    assert result["total"] == 1
-    assert result["catalogs"][0]["id"] == "amda/c1"
+    assert result["total"] == 2
+    ids = [e["id"] for e in result["catalogs"]]
+    assert "amda/c1" in ids
+    assert "helio4cast/icmecat" in ids
 
 
 # ── get_catalog ───────────────────────────────────────────────────────────────

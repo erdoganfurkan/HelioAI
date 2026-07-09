@@ -141,3 +141,50 @@ async def test_real_recipes_have_reference():
     for entry in result.get("recipes", []):
         loaded = await _rcp.load_recipe(entry["name"])
         assert loaded["metadata"].get("reference"), f"Missing reference: {entry['name']}"
+
+
+def test_sep_onset_cusum_recipe_detects_synthetic_onset():
+    import types
+    from pathlib import Path
+
+    import matplotlib
+    import numpy as np
+
+    matplotlib.use("Agg")
+
+    src = Path(__file__).parent.parent / "data" / "recipes" / "sep_onset_poisson_cusum.py"
+    code = src.read_text(encoding="utf-8")
+
+    rng = np.random.default_rng(42)
+    n = 600
+    t = np.datetime64("2023-05-01T00:00:00") + np.arange(n) * np.timedelta64(60, "s")
+    x = rng.normal(10.0, 1.0, n)
+    x[300:] += np.linspace(0, 60, n - 300)
+
+    exported: dict = {}
+    ns = {
+        "flux": types.SimpleNamespace(time=t, values=x),
+        "export": lambda name, data: exported.setdefault(name, np.asarray(data)),
+        "bg_hours": 2.0,
+    }
+    exec(code, ns)
+
+    assert ns["onset_time"] is not None
+    onset = np.datetime64(ns["onset_time"])
+    assert np.datetime64("2023-05-01T04:58:00") <= onset <= np.datetime64("2023-05-01T05:30:00")
+    assert "cusum" in exported and exported["cusum"].shape == (n,)
+
+
+def test_solar_mach_recipe_graceful_without_dep():
+    from pathlib import Path
+    from unittest.mock import patch
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    src = Path(__file__).parent.parent / "data" / "recipes" / "solar_mach.py"
+    code = src.read_text(encoding="utf-8")
+    with patch.dict("sys.modules", {"solarmach": None}):
+        ns: dict = {}
+        exec(code, ns)
+    assert ns["SolarMACH"] is None

@@ -175,7 +175,8 @@ class SessionStore:
     def all_sessions(self, user_id: str) -> list[str]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT session_id FROM sessions WHERE user_id = ? ORDER BY updated_at DESC",
+                "SELECT session_id FROM sessions WHERE user_id = ? "
+                "ORDER BY updated_at DESC, rowid DESC",
                 (user_id,),
             ).fetchall()
         return [r[0] for r in rows]
@@ -195,7 +196,7 @@ class SessionStore:
                        s.workspace_dir
                 FROM sessions s
                 WHERE s.user_id = ?
-                ORDER BY s.updated_at DESC LIMIT ?
+                ORDER BY s.updated_at DESC, s.rowid DESC LIMIT ?
                 """,
                 (user_id, limit),
             ).fetchall()

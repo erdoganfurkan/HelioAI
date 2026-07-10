@@ -22,6 +22,7 @@ env/
 # Test & coverage artifacts
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 .pytest_cache/
 .ruff_cache/
@@ -29,6 +30,8 @@ htmlcov/
 # Data (large files, local index, sessions)
 data/chroma/
 data/sessions.db
+data/sessions.db-*
+data/helio4cast/
 data/workspace/
 data/catalogs/
 data/users.json

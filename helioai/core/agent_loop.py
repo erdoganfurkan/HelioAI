@@ -79,6 +79,8 @@ Safety: NEVER print or iterate raw catalog events in run_python (thousands of ro
 ## Delegation (do NOT call the underlying tools yourself)
 - Analysis, plots, spectra, multi-mission, event detection → ONE `data_analyst`. Put the (possibly vague) parameter descriptions in the task; data_analyst resolves the ids itself — do NOT run `parameter_hunter` first, it would just repeat the search.
 - Plasma quantities (β, gyrofrequency, Debye length…) → `plasma_physicist`.
+- Literature search, or comparing computed values with published results → ONE `librarian`. Put the event context AND the computed values in the task description.
+- Requests mixing analysis AND literature (e.g. "compute θ_Bn then find papers about it"): ONE `data_analyst` first, then ONE `librarian` fed with the analyst's key values — never run both workflows inline yourself, you would exhaust your iteration budget.
 - `parameter_hunter` ONLY when the user just wants parameter ids resolved, with no download or analysis.
 Then you interpret and reply. Skip delegation entirely for a simple resolve→download→plot of one or two parameters — do it yourself.
 

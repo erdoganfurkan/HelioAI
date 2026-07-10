@@ -101,6 +101,28 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
         max_turns=8,
         auto_load_skills=("data_analyst",),
     ),
+    "librarian": SubAgentRole(
+        name="librarian",
+        description=(
+            "Find and distill peer-reviewed literature (NASA ADS): papers on an event, "
+            "method, instrument or region, returned as citable references."
+        ),
+        system_addon=(
+            "You specialise in literature search on NASA ADS via find_papers. "
+            "Funnel strategy: one broad query first, then at most TWO refinements "
+            "(author:, title:, year_start/year_end bounds, sort='citations' for "
+            "foundational papers, sort='date' for recent work). Never more than 3 "
+            "find_papers calls. Reply with 3-5 references maximum, each formatted as "
+            "'Author et al. (year), bibcode — one line on what it contributes'. "
+            "When the description provides computed values (theta_Bn, Mach number, "
+            "shock speed…), explicitly compare them with the ranges reported in the "
+            "papers. If nothing relevant comes back, say so and suggest a sharper "
+            "query — never pad the reply with weak matches."
+        ),
+        allowed_tools=("find_papers",),
+        max_turns=4,
+        auto_load_skills=("librarian",),
+    ),
     "plasma_physicist": SubAgentRole(
         name="plasma_physicist",
         description="Compute plasma parameters (gyrofrequency, Debye length, plasma beta, etc.).",

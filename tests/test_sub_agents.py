@@ -10,11 +10,12 @@ from helioai.core.sub_agents import AGENT_ROLES, TASK_TOOL_NAME, task_tool_def
 # ──────────────────────────────── role definitions ──────────────────────────
 
 
-def test_three_roles_defined() -> None:
+def test_four_roles_defined() -> None:
     assert set(AGENT_ROLES.keys()) == {
         "parameter_hunter",
         "data_analyst",
         "plasma_physicist",
+        "librarian",
     }
 
 
@@ -31,6 +32,13 @@ def test_data_analyst_tools() -> None:
     assert "run_python" in role.allowed_tools
     assert "search_parameters" in role.allowed_tools
     assert "get_timeseries" in role.allowed_tools
+
+
+def test_librarian_tools() -> None:
+    role = AGENT_ROLES["librarian"]
+    assert role.allowed_tools == ("find_papers",)
+    assert role.max_turns <= 4
+    assert "librarian" in role.auto_load_skills
 
 
 def test_plasma_physicist_tools() -> None:
@@ -79,6 +87,7 @@ def test_task_tool_def_description_mentions_all_roles() -> None:
         ("parameter_hunter", ["get_timeseries", "run_python"]),
         ("data_analyst", ["list_missions"]),
         ("plasma_physicist", ["get_timeseries"]),
+        ("librarian", ["run_python", "get_timeseries", "search_parameters"]),
     ],
 )
 def test_role_cannot_call_forbidden_tools(role_name: str, forbidden: list[str]) -> None:

@@ -124,14 +124,18 @@ document.getElementById('ad-header').addEventListener('click', () => {
 const SUGGESTED_PROMPTS = [
   'Solar wind speed and density from ACE, 2005-01-17 to 2005-01-18, with a plot',
   'Find an interplanetary shock in WIND data around 2004-11-07 and compute θ_Bn',
-  'Compare the IMF Bz between ACE and Cluster for 2003-10-29',
+  'List the strongest ICMEs seen by Wind in 2023 (HELIO4CAST ICMECAT catalog)',
+  'Superposed epoch of |B| over the 2023 Wind ICMEs from the HELIO4CAST catalog',
+  'Where was MMS1 on 2019-02-27 12:00? Plot its GSM position against the Shue magnetopause and the Jelinek bow shock',
+  'Find recent papers on electron-scale magnetic reconnection at MMS, with bibcodes',
+  'Compute θ_Bn for the 2008-01-01 WIND shock, then find papers reporting similar quasi-perpendicular shocks',
   'Compute the plasma beta in the magnetosheath: B=20 nT, n=15 cm⁻³, T=200 eV',
 ];
 
 function renderWelcome() {
   const wrap = el('div', 'welcome');
   const title = el('div', 'welcome-title', 'What do you want to explore?');
-  const sub = el('div', 'welcome-sub', '70+ missions · 83k parameters · sandboxed Python analysis');
+  const sub = el('div', 'welcome-sub', '70+ missions · 83k parameters · event catalogs · literature search · sandboxed Python analysis');
   const grid = el('div', 'suggested-prompts');
   SUGGESTED_PROMPTS.forEach(prompt => {
     const btn = el('button', 'suggested-prompt', prompt);

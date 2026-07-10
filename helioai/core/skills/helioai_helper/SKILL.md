@@ -96,6 +96,27 @@ User: "proton density at MMS bow-shock crossings in 2017"
 
 **Key rule:** when `get_events_timeseries` returns a `dataset` key, always access the data in `run_python` via `load_data("name")` instead of re-calling speasy.
 
+### 3.8 Literature search (NASA ADS)
+```
+User: "papers on electron-scale reconnection at MMS"
+→ librarian: find_papers("electron-scale magnetic reconnection MMS", sort="citations")
+  → 3-5 references as "Author et al. (year), bibcode — one-line contribution"
+Mixed request "compute θ_Bn then find papers about it":
+→ ONE data_analyst (analysis) THEN ONE librarian fed with the computed values.
+```
+
+### 3.9 Spacecraft position, coordinate frames & boundary models
+```
+User: "was MMS1 inside the magnetosheath on 2019-02-27?"
+→ search_parameters("MMS1 position ephemeris", provider="ssc") → get_timeseries
+→ run_python:
+    xyz_gsm = transform_coords(pos.time, pos.values, "gse", "gsm")
+    theta, r_mp = mp_shue1998(pdyn_nPa=2.0, bz_nT=-3.0)   # Shue et al. 1998
+    theta, r_bs = bs_jelinek2012(pdyn_nPa=2.0)            # Jelinek et al. 2012
+    # compare |xyz| against both profiles → magnetosphere / sheath / solar wind
+```
+Positions are regular parameters (`ssc/` provider). Frames: gse/gsm/sm/geo/mag/gei.
+
 ## 4. Formulating effective queries
 
 | Instead of | Try |
@@ -109,7 +130,7 @@ User: "proton density at MMS bow-shock crossings in 2017"
 
 ## 5. Event catalogs & timetables
 
-AMDA exposes **29 catalogs** and **188 timetables** — curated lists of space physics events. HelioAI exposes them as first-class tools.
+Three catalog sources, one interface: **AMDA** (`amda/` — 29 catalogs, 188 timetables), **HELIO4CAST** (`helio4cast/icmecat` — 1976 ICMEs 1990-2025, multi-spacecraft: Wind, STEREO, PSP, Solar Orbiter, BepiColombo, MAVEN…), and **user catalogs** (`local/` — saved with save_catalog).
 
 **Workflow:**
 ```
@@ -122,6 +143,7 @@ get_events_timeseries(id, param, ...)  → download param for every event (one s
 
 | Catalog | Events | Coverage |
 |---|---|---|
+| HELIO4CAST ICMECAT (`helio4cast/icmecat`) | 1976 ICMEs, multi-spacecraft | 1990–2025 |
 | Richardson & Cane ICME list | 341 ICMEs | 1996–2022 |
 | ICME multi-catalog | 2003 ICMEs, 141 params/event | 1975–2022 |
 | THEMIS magnetopause crossings | ~60k events | THEMIS era |

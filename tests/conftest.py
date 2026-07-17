@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from helioai.core.llm.base import LLMClient, Message
+from helioai.tools.sandbox import _sandbox_env
 
 _SANDBOX_WARMUP = """\
 import os; os.environ['MPLBACKEND'] = 'Agg'
@@ -39,12 +40,17 @@ def _warm_sandbox_imports():
     Best-effort only: a slow/hanging warmup (e.g. speasy doing a network
     inventory refresh) must not fail the whole test session over a perf
     optimization — fall through and let tests cold-start instead.
+
+    Runs under _sandbox_env() so the speasy inventory lands in the exact cache
+    (HOME=/tmp) that sandbox subprocesses will read — warming the runner's real
+    HOME leaves the sandbox cold and every spawn re-downloads the inventory.
     """
     try:
         subprocess.run(
             [sys.executable, "-c", _SANDBOX_WARMUP],
             timeout=180,
             capture_output=True,
+            env=_sandbox_env(),
         )
     except subprocess.TimeoutExpired:
         pass

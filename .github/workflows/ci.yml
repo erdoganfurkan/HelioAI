@@ -62,9 +62,14 @@ jobs:
             hf-minilm-${{ matrix.python-version }}-
             hf-minilm-
 
-      - name: Warm up sandbox imports (.pyc cache)
+      - name: Warm up sandbox imports (.pyc + speasy inventory cache)
+        env:
+          HOME: /tmp
+          XDG_CACHE_HOME: /tmp/.cache
+          XDG_DATA_HOME: /tmp/.local/share
+          XDG_CONFIG_HOME: /tmp/.config
         run: |
-          uv run python - << 'PYEOF'
+          .venv/bin/python - << 'PYEOF'
           import os; os.environ['MPLBACKEND'] = 'Agg'
           import numpy, matplotlib; matplotlib.use('Agg')
           import matplotlib.pyplot

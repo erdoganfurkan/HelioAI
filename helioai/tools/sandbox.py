@@ -487,8 +487,12 @@ async def run_python(
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             _kill_proc_tree(proc)
-            await proc.communicate()
-            return {"error": f"Execution timed out after {timeout}s", "stdout": "", "stderr": ""}
+            stdout_bytes, stderr_bytes = await proc.communicate()
+            return {
+                "error": f"Execution timed out after {timeout}s",
+                "stdout": stdout_bytes.decode("utf-8", errors="replace")[-2000:],
+                "stderr": stderr_bytes.decode("utf-8", errors="replace")[-2000:],
+            }
 
         stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace")

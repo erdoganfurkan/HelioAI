@@ -232,6 +232,27 @@ def test_save_event_collection_no_data_event_absent(session_dir):
     assert "t1" not in z
 
 
+def test_save_event_collection_cap_warning_logged_once(session_dir, monkeypatch, caplog):
+    """Real bug: the cap warning fired once per event PAST the cap, spamming the logs."""
+    from helioai import datastore
+
+    monkeypatch.setattr(datastore, "_MAX_BYTES", 1)  # first event already exceeds it
+    series = [
+        (
+            f"2005-0{i}-01T00:00:00",
+            f"2005-0{i}-02T00:00:00",
+            _make_ts(["2005-01-01T00:00:00"], [[1.0]]),
+        )
+        for i in range(1, 6)
+    ]
+    with caplog.at_level("WARNING"):
+        result = datastore.save_event_collection(
+            "amda/imf_gsm", series=series, param_id="amda/imf_gsm", units="nT", source="test"
+        )
+    assert result is None  # every event truncated, nothing to persist
+    assert sum("exceeds 100 MB cap" in r.message for r in caplog.records) == 1
+
+
 # ── read_manifest ──────────────────────────────────────────────────────────────
 
 

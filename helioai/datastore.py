@@ -159,6 +159,7 @@ def save_event_collection(
         arrays: dict[str, any] = {}
         events_meta: list[dict] = []
         total_bytes = 0
+        capped = False
 
         for i, (ev_start, ev_stop, ts) in enumerate(series):
             if ts is None or not hasattr(ts, "time") or not hasattr(ts, "values"):
@@ -171,10 +172,12 @@ def save_event_collection(
                 v_arr = np.asarray(ts.values, dtype=float)
                 total_bytes += t_arr.nbytes + v_arr.nbytes
                 if total_bytes > _MAX_BYTES:
-                    log.warning(
-                        "datastore: event collection for %r exceeds 100 MB cap, truncating",
-                        param_id,
-                    )
+                    if not capped:
+                        log.warning(
+                            "datastore: event collection for %r exceeds 100 MB cap, truncating",
+                            param_id,
+                        )
+                        capped = True
                     events_meta.append(
                         {"idx": i, "start": ev_start, "stop": ev_stop, "status": "truncated"}
                     )

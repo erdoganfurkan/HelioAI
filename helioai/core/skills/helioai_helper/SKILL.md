@@ -160,6 +160,13 @@ get_events_timeseries(id, param, ...)  → download param for every event (one s
 "how many substorm onsets are there in the Frey catalog?"
 ```
 
+**Ranking/filtering by a metadata metric** (e.g. "strongest ICMEs", "shocks faster than X") is server-side in `get_catalog` — never try to sort in `run_python`, catalog metadata is not available in the sandbox (only `get_events_timeseries` datasets are, via `load_data`):
+```
+get_catalog(id, start, stop, where={"column": "sc_insitu", "op": "contains", "value": "Wind"},
+            sort_by="mo_bmax", descending=True, max_events=10)
+```
+The `sort_by`/`where` column is always included in the returned rows even if not in the default preview columns.
+
 **Note:** `get_events_timeseries` caps at `max_events=20` by default — raise it for large statistical surveys. The data is saved to the workspace for `run_python` post-processing.
 
 ## 6. Derived recipes

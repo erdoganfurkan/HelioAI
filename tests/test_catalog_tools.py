@@ -407,6 +407,30 @@ async def test_get_catalog_columns_projection(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_catalog_sort_by_column_always_visible(monkeypatch) -> None:
+    """sort_by must appear in sample rows even outside the default 8-column preview
+    or an explicit columns= projection — otherwise the caller sorts on a value it
+    can never see (real bug: HELIO4CAST rows have >30 meta columns)."""
+
+    def _meta():
+        m = {f"col{i}": i for i in range(10)}
+        m["mo_bmax"] = 99
+        return m
+
+    cid = _setup_catalog_mock(
+        monkeypatch, [_make_event("2005-01-01T00:00:00", "2005-01-02T00:00:00", meta=_meta())]
+    )
+    result = await get_catalog(cid, sort_by="mo_bmax", descending=True)
+    assert result["sample"][0]["mo_bmax"] == 99
+
+    cid = _setup_catalog_mock(
+        monkeypatch, [_make_event("2005-01-01T00:00:00", "2005-01-02T00:00:00", meta=_meta())]
+    )
+    result = await get_catalog(cid, columns=["col0"], sort_by="mo_bmax", descending=True)
+    assert result["sample"][0]["mo_bmax"] == 99
+
+
+@pytest.mark.asyncio
 async def test_get_catalog_nb_events_filtered_differs_from_total(monkeypatch) -> None:
     events = [
         _make_event("2005-01-01T00:00:00", "2005-01-02T00:00:00", meta={"speed": 400}),

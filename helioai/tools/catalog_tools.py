@@ -413,6 +413,8 @@ async def get_catalog(
             else:
                 for k, v in list(meta.items())[:8]:
                     row[k] = v
+        if sort_by and sort_by not in row:
+            row[sort_by] = _event_value(ev, sort_by)
         rows.append(row)
 
     all_columns = list(rows[0].keys()) if rows else (["start", "stop"] + (columns or []))

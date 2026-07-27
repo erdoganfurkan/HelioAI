@@ -415,7 +415,6 @@ async def test_crash_mid_loop_still_persists_history(monkeypatch, tmp_path) -> N
     (a flaky LLM call, a bug in a post-tool hook) skipped every store.save(), leaving
     a session with the user prompt and nothing else once persisted.
     """
-    from helioai import auth
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
 
@@ -424,7 +423,6 @@ async def test_crash_mid_loop_still_persists_history(monkeypatch, tmp_path) -> N
     db_path = tmp_path / "sessions.db"
     store = SessionStore(db_path)
     monkeypatch.setattr(agent_loop, "store", store)
-    monkeypatch.setattr(auth, "auth_enabled", lambda: False)
 
     # Simulate an existing session (a completed first turn) — the "new session"
     # early-save at the top of stream_chat only fires once, on turn 1, so it can't

@@ -420,6 +420,11 @@ async def stream_chat(
         store.save(user_id, session_id, strip_orphan_tool_calls(history))
         raise
 
+    except Exception:
+        log.exception("agent_loop_crashed", turn=locals().get("turn"))
+        store.save(user_id, session_id, strip_orphan_tool_calls(history))
+        raise
+
     finally:
         _ws.reset_session(_ws_token)
         _ws.reset_label(_label_token)

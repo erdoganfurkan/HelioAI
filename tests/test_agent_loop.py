@@ -405,3 +405,46 @@ async def test_present_plan_emits_plan_event_and_continues(monkeypatch, tmp_path
     # non-blocking: the loop runs to completion (a normal done, no pause)
     assert any(e["event"] == "done" for e in events)
     assert any(e["event"] == "reply" and e["data"]["text"] == "done" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_crash_mid_loop_still_persists_history(monkeypatch, tmp_path) -> None:
+    """A bug/outage anywhere in the loop must not silently drop the user's message.
+
+    Real bug: only `asyncio.CancelledError` was saved on exit — any other exception
+    (a flaky LLM call, a bug in a post-tool hook) skipped every store.save(), leaving
+    a session with the user prompt and nothing else once persisted.
+    """
+    from helioai import auth
+    from helioai.core import agent_loop
+    from helioai.core.session import SessionStore
+
+    from helioai.core.llm.base import Message
+
+    db_path = tmp_path / "sessions.db"
+    store = SessionStore(db_path)
+    monkeypatch.setattr(agent_loop, "store", store)
+    monkeypatch.setattr(auth, "auth_enabled", lambda: False)
+
+    # Simulate an existing session (a completed first turn) — the "new session"
+    # early-save at the top of stream_chat only fires once, on turn 1, so it can't
+    # mask a missing except-Exception save on a later turn.
+    store.save(
+        "web",
+        "s1",
+        [Message(role="user", content="first"), Message(role="assistant", content="ok")],
+    )
+    store.set_workspace_dir("web", "s1", "some-label")
+
+    class _FakeLLM:
+        async def chat(self, messages, tools, **k):
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        async for _ in agent_loop.stream_chat(_FakeLLM(), "web", "s1", "second", restricted=False):
+            pass
+
+    # fresh store, no in-memory cache — proves the crash path hit the DB, not just RAM
+    reloaded = SessionStore(db_path).get_or_create("web", "s1")
+    assert [m.role for m in reloaded] == ["user", "assistant", "user"]
+    assert reloaded[-1].content == "second"

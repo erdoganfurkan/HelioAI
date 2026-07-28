@@ -36,6 +36,7 @@ No API key required for data access. No manual parameter hunting.
 - **Sandboxed Python** — the agent writes and runs analysis code safely (subprocess, timeout). All scripts are saved for reproducibility.
 - **5 specialised skills** — `parameter_hunter`, `data_analyst`, `plasma_physicist`, `plotting`, `helioai_helper` — loaded as markdown, zero coupling to the agent loop.
 - **Derived recipes** — 7 reusable scientific scripts, each with a cited reference: θ_Bn, Walén test, MVAB, Rankine-Hugoniot jump conditions, pressure balance, pitch angle distribution, superposed epoch.
+- **Literature search** — `find_papers` queries NASA ADS for papers relevant to an event or parameter; a dedicated `librarian` sub-agent handles multi-round literature searches without derailing the main analysis.
 - **Fill value masking** — `clean()` helper in the sandbox automatically masks CDF fill values (`|x| ≥ 1e30`, `±inf`) before any plot or analysis.
 - **Data quality checks** — every `get_timeseries` download is scanned (deterministically, no LLM) for missing/fill values, data gaps, and 5σ outliers; the agent flags them only when they matter, so you know what you're working with *before* analysis.
 - **Plan preview** — for a multi-step request the agent first lays out a short structured plan (the steps and the tool/method each will use), then executes — transparent, no black box.
@@ -208,6 +209,12 @@ Full catalog catalogue via `list_catalogs()` or `helioai "what event catalogs ar
 | `get_catalog` | Download and inspect a catalog: event count, columns, time-filtered sample |
 | `get_events_timeseries` | Download a parameter across **every event** in a catalog (one speasy call) — core tool for superposed epoch analysis |
 
+### Literature
+
+| Tool | Description |
+|---|---|
+| `find_papers` | Search NASA ADS for papers relevant to an event, parameter, or method |
+
 ### Analysis
 
 | Tool | Description |
@@ -232,6 +239,7 @@ Full catalog catalogue via `list_catalogs()` or `helioai "what event catalogs ar
 | `parameter_hunter` | Resolve vague descriptions → speasy parameter IDs | 4 |
 | `data_analyst` | Download, analyse, plot, multi-mission, event detection | 8 |
 | `plasma_physicist` | PlasmaPy calculations, sanity checks by region | 4 |
+| `librarian` | NASA ADS literature search, multi-round funnel | 4 |
 
 ---
 

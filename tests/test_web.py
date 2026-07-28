@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
+
+STATIC_DIR = Path(__file__).parent.parent / "helioai" / "interfaces" / "web" / "static"
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -582,3 +585,22 @@ def test_figure_path_ownership(auth_client, tmp_path, monkeypatch):
     # vincent can
     r = auth_client.get("/figure", params={"path": str(fig)}, headers={"X-Helio-Token": "tok-v"})
     assert r.status_code == 200
+
+
+# ── XSS hardening: vendored deps + sanitized markdown ──────────────────────────
+
+
+def test_index_html_loads_no_external_cdn_scripts():
+    """No third-party CDN in the trust chain — everything served from /static/vendor/."""
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    assert "cdn.jsdelivr.net" not in html
+    assert "cdnjs.cloudflare.com" not in html
+    assert "/static/vendor/marked.min.js" in html
+    assert "/static/vendor/purify.min.js" in html
+
+
+def test_app_js_sanitizes_markdown_before_innerHTML():
+    """LLM/tool output rendered as markdown must go through DOMPurify before innerHTML."""
+    js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    assert js.count("DOMPurify.sanitize(marked.parse(") >= 2  # live reply + history replay
+    assert "= marked.parse(" not in js  # no unsanitized innerHTML assignment left

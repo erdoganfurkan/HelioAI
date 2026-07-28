@@ -192,7 +192,7 @@ function renderEvent(ev) {
 
   } else if (event === 'reply') {
     const bubble = el('div', 'msg-ai');
-    bubble.innerHTML = marked.parse(data.text || '');
+    bubble.innerHTML = DOMPurify.sanitize(marked.parse(data.text || ''));
     chatArea.append(bubble);
     scrollBottom();
 
@@ -279,7 +279,11 @@ function renderArtifact(data) {
       if (!value) return;
       const chip = document.createElement('span');
       chip.className = 'param-chip';
-      chip.innerHTML = `<span class="chip-label">${label}</span>${value}`;
+      const lbl = document.createElement('span');
+      lbl.className = 'chip-label';
+      lbl.textContent = label;
+      chip.append(lbl);
+      chip.append(String(value));
       if (title) chip.title = title;
       chips.append(chip);
     });
@@ -295,7 +299,8 @@ function renderArtifact(data) {
   } else if (data.kind === 'code' && data.code_path) {
     const chip = el('div', 'artifact-code');
     const lines = data.n_lines != null ? ` · ${data.n_lines} lines` : '';
-    chip.innerHTML = `<span class="ac-icon">📄</span>${data.name || 'code.py'}${lines}`;
+    { const ico = document.createElement('span'); ico.className = 'ac-icon'; ico.textContent = '\u{1F4C4}'; chip.append(ico); }
+    chip.append(document.createTextNode((data.name || 'code.py') + lines));
     chip.addEventListener('click', () => openCodePanel(data.code_path, data.name));
     chatArea.append(chip);
     scrollBottom();
@@ -303,7 +308,9 @@ function renderArtifact(data) {
   } else if (data.kind === 'recipe_used') {
     const chip = el('div', 'artifact-recipe');
     const ref = data.reference ? ` — ${data.reference}` : '';
-    chip.innerHTML = `<span class="ar-icon">📐</span><span class="ar-name">${data.name}</span>${ref}`;
+    { const ico = document.createElement('span'); ico.className = 'ar-icon'; ico.textContent = '\u{1F4D0}'; chip.append(ico); }
+    { const nm = document.createElement('span'); nm.className = 'ar-name'; nm.textContent = data.name || ''; chip.append(nm); }
+    chip.append(document.createTextNode(ref));
     if (data.description) chip.title = data.description;
     chatArea.append(chip);
     scrollBottom();
@@ -327,7 +334,11 @@ function renderArtifact(data) {
       if (!value) return;
       const chip = document.createElement('span');
       chip.className = 'param-chip';
-      chip.innerHTML = `<span class="chip-label">${label}</span>${value}`;
+      const lbl = document.createElement('span');
+      lbl.className = 'chip-label';
+      lbl.textContent = label;
+      chip.append(lbl);
+      chip.append(String(value));
       chips.append(chip);
     });
     if (chips.children.length) card.append(chips);
@@ -561,7 +572,7 @@ async function resumeSession(sid, itemEl) {
           renderArtifact({ kind: 'image', figure_paths: m.figures });
         }
         const div = el('div', 'msg-ai');
-        div.innerHTML = marked.parse(m.content);
+        div.innerHTML = DOMPurify.sanitize(marked.parse(m.content));
         chatArea.append(div);
       }
     });

@@ -66,6 +66,34 @@ def test_session_db_is_not_inside_the_package():
     assert not Path(DEFAULT_DB).resolve().is_relative_to(PACKAGE_DIR)
 
 
+def test_version_is_single_sourced():
+    """pyproject reads the version from __init__; they cannot drift apart.
+
+    They were duplicated, which is the kind of thing nobody notices until a
+    release ships with the wrong number on it.
+    """
+    import tomllib
+
+    pyproject = tomllib.loads((PACKAGE_DIR.parent / "pyproject.toml").read_text())
+    assert "version" in pyproject["project"].get("dynamic", []), (
+        "project.version should be dynamic, sourced from helioai/__init__.py"
+    )
+    assert pyproject["tool"]["hatch"]["version"]["path"] == "helioai/__init__.py"
+    assert helioai.__version__
+
+
+def test_changelog_documents_the_current_version():
+    changelog = (PACKAGE_DIR.parent / "CHANGELOG.md").read_text()
+    assert f"[{helioai.__version__}]" in changelog, (
+        f"CHANGELOG.md has no entry for {helioai.__version__}"
+    )
+
+
+def test_citation_matches_the_current_version():
+    citation = (PACKAGE_DIR.parent / "CITATION.cff").read_text()
+    assert f"version: {helioai.__version__}" in citation
+
+
 # ── example notebooks ──────────────────────────────────────────────────────────
 
 EXAMPLES = sorted((PACKAGE_DIR.parent / "examples").glob("*.ipynb"))
@@ -101,8 +129,12 @@ def _cell_bodies(path):
         if cell.cell_type != "code" or cell.source.lstrip().startswith("%%"):
             continue
         # Line magics are valid in a notebook but not in plain Python.
-        yield i, "\n".join(
-            "pass" if ln.lstrip().startswith(("%", "!")) else ln for ln in cell.source.split("\n")
+        yield (
+            i,
+            "\n".join(
+                "pass" if ln.lstrip().startswith(("%", "!")) else ln
+                for ln in cell.source.split("\n")
+            ),
         )
 
 
@@ -130,9 +162,7 @@ def test_example_notebook_calls_async_tools_with_await(path):
     offenders = []
     for i, body in _cell_bodies(path):
         tree = ast.parse("async def _cell():\n" + "\n".join("    " + ln for ln in body.split("\n")))
-        awaited = {
-            id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Await)
-        }
+        awaited = {id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Await)}
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Call)

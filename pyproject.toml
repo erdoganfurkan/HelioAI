@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "helioai"
-version = "0.1.0"
+dynamic = ["version"]
 description = "AI agent for heliophysics and space plasma data analysis"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -39,12 +39,12 @@ dependencies = [
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "structlog>=24.0",
-    "numpy>=1.26",
-    "matplotlib>=3.8",
+    "numpy>=2.1",
+    "matplotlib>=3.10",
     "pillow>=10",
-    "scipy>=1.12",
+    "scipy>=1.15",
     "astropy>=6.0",
-    "ipython>=8.0",
+    "ipython>=8.27",
     "ipywidgets>=8.0",
     "ipykernel>=6.0",
     "nbformat>=5.0",
@@ -82,6 +82,10 @@ constraint-dependencies = ["torch>=2.6"]
 [project.scripts]
 helioai = "helioai.interfaces.cli:main"
 helioai-mcp = "helioai.mcp_server:main"
+
+[tool.hatch.version]
+# Single source of truth: helioai/__init__.py
+path = "helioai/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["helioai"]

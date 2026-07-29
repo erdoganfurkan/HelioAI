@@ -40,11 +40,23 @@ jobs:
 
   test:
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    # Windows is reported but not gating. The sandbox's real isolation is
+    # bubblewrap, which is Linux-only; elsewhere run_python degrades to a plain
+    # subprocess (see SECURITY.md). Testing Windows tells us the truth about that
+    # path without pretending it is a supported deployment target yet.
+    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.12", "3.13", "3.14"]
+        include:
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
+            experimental: true
 
     steps:
       - uses: actions/checkout@v4
@@ -65,12 +77,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface/hub
-          key: hf-minilm-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
+          key: hf-minilm-${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
-            hf-minilm-${{ matrix.python-version }}-
-            hf-minilm-
+            hf-minilm-${{ matrix.os }}-${{ matrix.python-version }}-
+            hf-minilm-${{ matrix.os }}-
 
+      # The warmup must run with the SAME env as the sandbox subprocess it warms:
+      # a different HOME/XDG means a different cache, so the warmup would heat a
+      # cache the sandbox never reads. Bash heredoc, hence POSIX only.
       - name: Warm up sandbox imports (.pyc + speasy inventory cache)
+        if: runner.os != 'Windows'
         env:
           HOME: /tmp
           XDG_CACHE_HOME: /tmp/.cache
@@ -100,7 +116,7 @@ jobs:
         run: uv run pytest --cov-report=xml
 
       - name: Upload coverage to Codecov
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.xml

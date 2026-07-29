@@ -9,6 +9,7 @@ Write an `async` function and register it in `helioai/tools/setup.py`:
 ```python
 from helioai.tools.registry import registry
 
+
 @registry.register(
     name="magnetopause_distance",
     description="Standoff distance of the magnetopause from the Shue et al. (1997) model.",

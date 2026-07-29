@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+title: "HelioAI: a natural-language agent for heliophysics data discovery and analysis"
+message: >-
+  If HelioAI contributes to published work, please cite it. Please also cite the
+  data providers you used (AMDA/CDPP, CDAWeb/NASA, CSA/ESA) and any scientific
+  method references listed in the session's exported acknowledgements.
+type: software
+authors:
+  - given-names: Furkan
+    family-names: Erdogan
+    email: furkan.erdogan.pro@gmail.com
+repository-code: "https://github.com/erdoganfurkan/HelioAI"
+url: "https://erdoganfurkan.github.io/HelioAI"
+abstract: >-
+  HelioAI is an AI agent for heliophysics and space plasma physics. It resolves
+  natural-language descriptions to parameter identifiers across more than 70
+  missions using hybrid semantic and lexical retrieval over the speasy catalogue,
+  downloads the data, runs the analysis in a sandboxed Python environment, and
+  exports the session as a self-contained, re-runnable Jupyter notebook. Derived
+  quantities are computed from cited recipes so that every result carries its
+  method and reference.
+keywords:
+  - heliophysics
+  - space physics
+  - plasma physics
+  - solar wind
+  - magnetosphere
+  - reproducibility
+  - large language models
+  - AI agent
+license: MIT
+version: 0.2.0
+date-released: "2026-07-29"

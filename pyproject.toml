@@ -80,16 +80,13 @@ packages = ["helioai"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--cov=helioai --cov-report=term-missing --cov-fail-under=60"
+addopts = "--cov=helioai --cov-report=term-missing --cov-fail-under=70"
 
 [tool.coverage.run]
-omit = [
-    "helioai/core/llm/gemini.py",
-    "helioai/interfaces/cli.py",
-    "helioai/interfaces/web/app.py",
-    "helioai/logging_config.py",
-    "helioai/tools/setup.py",
-]
+source = ["helioai"]
+# No omit list. Measuring only the modules you already test tells you nothing;
+# the excluded set turned out to include tools/setup.py at 100% and
+# interfaces/web/app.py at 76%, while genuinely thin modules were never on it.
 
 [tool.ruff]
 line-length = 100

@@ -286,7 +286,7 @@ helioai/
 
 ```bash
 uv sync --extra dev
-uv run pytest                          # 460 tests
+uv run pytest                          # 627 tests, 77% coverage (no exclusions)
 uv run ruff check helioai/ tests/      # lint
 uv run ruff format helioai/ tests/     # format
 ```

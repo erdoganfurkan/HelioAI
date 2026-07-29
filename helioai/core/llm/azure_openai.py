@@ -1,24 +1,32 @@
-"""AzureOpenAIClient: Azure-hosted OpenAI → neutral Message model.
+"""Azure-hosted OpenAI.
 
-Wire format identique à Groq/OpenAI. Différences Azure :
-  - endpoint = {azure_endpoint}/openai/deployments/{deployment}/...
-  - `model` dans la requête = nom du deployment, pas le nom du modèle
-  - temperature=None → kwarg omis (requis pour GPT-5 et o-series)
+Same wire format as every other OpenAI-compatible provider, so the conversion
+logic lives in `openai_compat`. Azure only differs in how the client is built —
+the endpoint embeds the deployment name and an `api-version` — plus two dialect
+details the base class already exposes as parameters: the system prompt is sent
+with the `developer` role, and `temperature` is omitted when unset because GPT-5
+and the o-series reject it.
 """
 
 from __future__ import annotations
 
-import json
-import logging
-
 from openai import AsyncAzureOpenAI
 
-from .base import LLMClient, Message, ToolCall, ToolDef, call_with_retry
-
-log = logging.getLogger(__name__)
+from .openai_compat import OpenAICompatClient
 
 
-class AzureOpenAIClient(LLMClient):
+class AzureOpenAIClient(OpenAICompatClient):
+    """Chat client for an Azure OpenAI deployment.
+
+    Args:
+        api_key: Azure OpenAI API key.
+        endpoint: Resource root, e.g. `https://myresource.openai.azure.com`.
+        api_version: Azure API version, e.g. `2024-12-01-preview`.
+        deployment: Deployment name, sent as the request's `model`.
+        max_output_tokens: Cap on generated tokens.
+        temperature: Sampling temperature; `None` omits the field.
+    """
+
     def __init__(
         self,
         api_key: str,
@@ -28,113 +36,16 @@ class AzureOpenAIClient(LLMClient):
         max_output_tokens: int = 4096,
         temperature: float | None = None,
     ):
-        self._client = AsyncAzureOpenAI(
-            api_key=api_key,
-            azure_endpoint=endpoint,
-            api_version=api_version,
-            max_retries=0,
+        super().__init__(
+            client=AsyncAzureOpenAI(
+                api_key=api_key,
+                azure_endpoint=endpoint,
+                api_version=api_version,
+                max_retries=0,
+            ),
+            model=deployment,
+            system_role="developer",
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            provider="azure",
         )
-        self._deployment = deployment
-        self._max_output_tokens = max_output_tokens
-        self._temperature = temperature
-
-    async def chat(
-        self,
-        messages: list[Message],
-        tools: list[ToolDef],
-        system_prompt: str | None = None,
-        tool_choice: str = "auto",
-    ) -> Message:
-        openai_messages: list[dict] = []
-        if system_prompt:
-            openai_messages.append({"role": "developer", "content": system_prompt})
-        openai_messages.extend(self._to_openai_messages(messages))
-        openai_tools = self._to_openai_tools(tools) if tools else None
-
-        kwargs: dict = {
-            "model": self._deployment,
-            "messages": openai_messages,
-            "max_tokens": self._max_output_tokens,
-        }
-        if self._temperature is not None:
-            kwargs["temperature"] = self._temperature
-        if openai_tools:
-            kwargs["tools"] = openai_tools
-            kwargs["tool_choice"] = tool_choice
-
-        response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
-        return self._from_openai_response(response)
-
-    @staticmethod
-    def _to_openai_messages(messages: list[Message]) -> list[dict]:
-        out: list[dict] = []
-        for msg in messages:
-            if msg.role == "system":
-                continue
-            if msg.role == "user":
-                out.append({"role": "user", "content": msg.content})
-            elif msg.role == "assistant":
-                if msg.tool_calls:
-                    out.append(
-                        {
-                            "role": "assistant",
-                            "content": msg.content or None,
-                            "tool_calls": [
-                                {
-                                    "id": tc.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tc.name,
-                                        "arguments": json.dumps(tc.arguments or {}),
-                                    },
-                                }
-                                for tc in msg.tool_calls
-                            ],
-                        }
-                    )
-                else:
-                    out.append({"role": "assistant", "content": msg.content})
-            elif msg.role == "tool":
-                out.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": msg.tool_call_id or "",
-                        "content": msg.content,
-                    }
-                )
-        return out
-
-    @staticmethod
-    def _to_openai_tools(tools: list[ToolDef]) -> list[dict]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters or {"type": "object", "properties": {}},
-                },
-            }
-            for t in tools
-        ]
-
-    @staticmethod
-    def _from_openai_response(response) -> Message:
-        choice = response.choices[0]
-        msg = choice.message
-        tool_calls_raw = getattr(msg, "tool_calls", None) or []
-        if tool_calls_raw:
-            tool_calls: list[ToolCall] = []
-            for tc in tool_calls_raw:
-                try:
-                    args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                except json.JSONDecodeError:
-                    log.warning(
-                        "azure tool_call %s bad JSON args: %r",
-                        tc.function.name,
-                        tc.function.arguments,
-                    )
-                    args = {}
-                tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
-            return Message(role="assistant", content=msg.content or "", tool_calls=tool_calls)
-        return Message(role="assistant", content=msg.content or "")

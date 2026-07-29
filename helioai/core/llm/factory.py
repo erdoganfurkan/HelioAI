@@ -1,10 +1,43 @@
+"""Build the configured LLM client.
+
+Providers that speak the OpenAI wire format are table entries, not classes — see
+`OPENAI_COMPAT`. Azure and Gemini need their own SDK client objects and stay
+explicit below.
+"""
+
 from __future__ import annotations
 
 from helioai.config import settings
 from helioai.core.llm.base import LLMClient
 
+# provider -> (settings attribute, base_url template). `key_required` is False for
+# local endpoints that authenticate no one.
+OPENAI_COMPAT: dict[str, dict] = {
+    "groq": {
+        "config": "groq",
+        "base_url": "https://api.groq.com/openai/v1",
+        "key_env": "GROQ_API_KEY",
+    },
+    "ollama": {
+        "config": "ollama",
+        "base_url": None,  # taken from settings.llm.ollama.base_url
+        "key_env": None,
+    },
+}
+
 
 def build_llm_client(provider: str | None = None) -> LLMClient:
+    """Return a client for the requested provider.
+
+    Args:
+        provider: Provider name. Defaults to `HELIOAI_LLM_PROVIDER`.
+
+    Returns:
+        A ready-to-use client.
+
+    Raises:
+        RuntimeError: If the provider is unknown or its API key is missing.
+    """
     p = (provider or settings.llm.provider).lower()
 
     if p == "azure":
@@ -24,19 +57,6 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
             temperature=cfg.temperature,
         )
 
-    if p == "groq":
-        from helioai.core.llm.groq import GroqClient
-
-        cfg = settings.llm.groq
-        if not cfg.api_key:
-            raise RuntimeError("GROQ_API_KEY is not set")
-        return GroqClient(
-            api_key=cfg.api_key,
-            model=cfg.model,
-            max_output_tokens=cfg.max_output_tokens,
-            temperature=cfg.temperature,
-        )
-
     if p == "gemini":
         from helioai.core.llm.gemini import GeminiClient
 
@@ -50,4 +70,23 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
             temperature=cfg.temperature,
         )
 
-    raise RuntimeError(f"Unknown LLM provider: {p!r}. Use azure|groq|gemini")
+    if p in OPENAI_COMPAT:
+        from helioai.core.llm.openai_compat import OpenAICompatClient
+
+        spec = OPENAI_COMPAT[p]
+        cfg = getattr(settings.llm, spec["config"])
+        api_key = getattr(cfg, "api_key", "")
+        if spec["key_env"] and not api_key:
+            raise RuntimeError(f"{spec['key_env']} is not set")
+        base_url = spec["base_url"] or f"{getattr(cfg, 'base_url', '').rstrip('/')}/v1"
+        return OpenAICompatClient(
+            provider=p,
+            model=cfg.model,
+            api_key=api_key,
+            base_url=base_url,
+            max_output_tokens=cfg.max_output_tokens,
+            temperature=cfg.temperature,
+        )
+
+    known = "|".join(["azure", "gemini", *OPENAI_COMPAT])
+    raise RuntimeError(f"Unknown LLM provider: {p!r}. Use {known}")

@@ -48,6 +48,9 @@ class GroqConfig:
 class OllamaConfig:
     base_url: str = "http://localhost:11434"
     model: str = "qwen2.5:14b-instruct"
+    max_output_tokens: int = 4096
+    temperature: float = 0.2
+    api_key: str = ""
 
 
 @dataclass
@@ -210,6 +213,10 @@ def _load() -> Settings:
             ),
             groq=GroqConfig(
                 api_key=os.environ.get("GROQ_API_KEY", ""),
+            ),
+            ollama=OllamaConfig(
+                base_url=os.environ.get("HELIOAI_OLLAMA_URL", "http://localhost:11434"),
+                model=os.environ.get("HELIOAI_OLLAMA_MODEL", "qwen2.5:14b-instruct"),
             ),
         ),
         agent=AgentConfig(max_iterations=max_iterations),

@@ -25,7 +25,6 @@ dependencies = [
     "chromadb>=0.5",
     "sentence-transformers>=3.0",
     "openai>=1.30",
-    "groq>=0.9",
     "google-genai>=0.8",
     "fastapi>=0.115",
     "httpx>=0.27",
@@ -77,10 +76,7 @@ addopts = "--cov=helioai --cov-report=term-missing --cov-fail-under=60"
 
 [tool.coverage.run]
 omit = [
-    "helioai/core/llm/groq.py",
     "helioai/core/llm/gemini.py",
-    "helioai/core/llm/azure_openai.py",
-    "helioai/core/llm/ollama.py",
     "helioai/interfaces/cli.py",
     "helioai/interfaces/web/app.py",
     "helioai/logging_config.py",

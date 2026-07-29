@@ -9,7 +9,6 @@ Ask questions in natural language — HelioAI finds the right parameter across 7
 [![PyPI](https://img.shields.io/pypi/v/helioai)](https://pypi.org/project/helioai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](pyproject.toml)
-[![PyHC](https://img.shields.io/badge/PyHC-compatible-orange)](https://heliopython.org)
 
 ---
 
@@ -86,14 +85,21 @@ GEMINI_API_KEY=your_key_here
 AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=...
 AZURE_OPENAI_DEPLOYMENT=gpt-4o
+
+# Ollama (if using ollama — no API key needed)
+HELIOAI_OLLAMA_URL=http://localhost:11434
+HELIOAI_OLLAMA_MODEL=qwen2.5:14b-instruct
 ```
 
 | Provider | Model | Notes |
 |---|---|---|
 | `groq` | `llama-3.3-70b-versatile` | Free tier, fast — **recommended to start** |
 | `gemini` | `gemini-2.5-flash` | Better reasoning, generous free quota |
-| `azure` | configurable | Enterprise / CNES deployments |
+| `azure` | configurable | Enterprise deployments |
 | `ollama` | `qwen2.5:14b-instruct` | Fully local, no API key |
+
+Any other OpenAI-compatible endpoint works too — providers are a `base_url` entry in
+`helioai/core/llm/factory.py`, not a class.
 
 ---
 
@@ -278,7 +284,7 @@ helioai/
 
 ```bash
 uv sync --extra dev
-uv run pytest                          # 320+ tests
+uv run pytest                          # 460 tests
 uv run ruff check helioai/ tests/      # lint
 uv run ruff format helioai/ tests/     # format
 ```

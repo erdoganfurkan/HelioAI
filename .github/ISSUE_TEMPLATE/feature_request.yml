@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest a capability or a scientific method
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Before filing, please skim the "What will not be accepted" section of
+        [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md) — in particular,
+        interactive visual exploration belongs in SciQLop rather than here.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What scientific question is hard to answer today?
+      description: Describe the analysis you are trying to do, not the implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like HelioAI to do?
+    validations:
+      required: true
+
+  - type: input
+    id: reference
+    attributes:
+      label: Reference
+      description: >
+        For a scientific method, the paper it comes from. Recipes must carry a
+        citation.
+      placeholder: "Sonnerup & Scheible (1998), ISSI SR-001, Ch. 8"
+
+  - type: input
+    id: dependencies
+    attributes:
+      label: Would this need a new dependency?
+      description: If so, which one, and under what licence?

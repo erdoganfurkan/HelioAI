@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,25 @@ async def test_timeout_hard() -> None:
     result = await run_python("import time; time.sleep(100)", timeout=5.0)
     assert "error" in result
     assert "timed out" in result["error"].lower()
+
+
+async def test_timeout_is_capped_server_side(monkeypatch) -> None:
+    """Real bug: an arbitrarily large caller-supplied timeout was honored as-is —
+    nothing clamped it before asyncio.wait_for, so a single run could tie up a
+    sandbox subprocess far longer than intended."""
+    real_wait_for = asyncio.wait_for
+    seen_timeouts: list[float] = []
+
+    async def spy_wait_for(aw, timeout=None, **kw):
+        seen_timeouts.append(timeout)
+        return await real_wait_for(aw, timeout=timeout, **kw)
+
+    monkeypatch.setattr(sandbox.asyncio, "wait_for", spy_wait_for)
+
+    await run_python("print('ok')", timeout=10_000_000.0)
+
+    assert seen_timeouts, "asyncio.wait_for was not called"
+    assert seen_timeouts[0] <= sandbox._MAX_TIMEOUT_S
 
 
 async def test_syntax_error_returns_error_not_exception() -> None:

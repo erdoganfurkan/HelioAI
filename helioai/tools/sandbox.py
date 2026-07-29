@@ -23,6 +23,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+_MAX_TIMEOUT_S = 300.0  # hard ceiling regardless of the caller-supplied timeout
+
 # Environment whitelist for the sandbox subprocess. Only these (and the prefixes
 # below) are passed through; everything else — notably LLM provider API keys —
 # is dropped so LLM-generated code cannot read secrets from os.environ.
@@ -431,7 +433,7 @@ async def run_python(
               numpy (np), scipy, matplotlib (Agg — plt.show() saves to disk),
               astropy units (u).
               Call export(name, array) to share numerical results with the LLM.
-        timeout: maximum execution time in seconds
+        timeout: maximum execution time in seconds — clamped to _MAX_TIMEOUT_S
         _plot_dir: injected by the agent loop — workspace dir for this run.
                    Not exposed in the LLM tool schema.
 
@@ -442,6 +444,7 @@ async def run_python(
         - exports: dict of named numerical summaries (from export() calls)
         - error: error message if execution failed
     """
+    timeout = min(timeout, _MAX_TIMEOUT_S)
     if _plot_dir is None:
         from helioai.workspace import get_run_dir_for_sandbox
 

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import helioai
 from helioai.config import _PKG_RECIPES, settings
 
@@ -62,3 +64,103 @@ def test_session_db_is_not_inside_the_package():
     from helioai.core.session import DEFAULT_DB
 
     assert not Path(DEFAULT_DB).resolve().is_relative_to(PACKAGE_DIR)
+
+
+# ── example notebooks ──────────────────────────────────────────────────────────
+
+EXAMPLES = sorted((PACKAGE_DIR.parent / "examples").glob("*.ipynb"))
+
+
+def test_example_notebooks_exist():
+    assert EXAMPLES, "the examples/ notebooks are part of the documented onboarding path"
+
+
+@pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name)
+def test_example_notebook_is_valid(path):
+    nbformat = pytest.importorskip("nbformat")
+    nbformat.validate(nbformat.read(path, as_version=4))
+
+
+@pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name)
+def test_example_notebook_has_no_committed_outputs(path):
+    """Outputs are a snapshot of one run and bloat the repository.
+
+    PyHC standard 14 asks that notebooks not be committed as binary files; keeping
+    them output-free is what makes shipping them here defensible.
+    """
+    nbformat = pytest.importorskip("nbformat")
+    nb = nbformat.read(path, as_version=4)
+    with_outputs = [i for i, c in enumerate(nb.cells) if c.cell_type == "code" and c.get("outputs")]
+    assert not with_outputs, f"{path.name} has outputs in cells {with_outputs}"
+
+
+def _cell_bodies(path):
+    """Yield (index, parseable-source) for every non-magic code cell."""
+    nbformat = pytest.importorskip("nbformat")
+    for i, cell in enumerate(nbformat.read(path, as_version=4).cells):
+        if cell.cell_type != "code" or cell.source.lstrip().startswith("%%"):
+            continue
+        # Line magics are valid in a notebook but not in plain Python.
+        yield i, "\n".join(
+            "pass" if ln.lstrip().startswith(("%", "!")) else ln for ln in cell.source.split("\n")
+        )
+
+
+@pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name)
+def test_example_notebook_calls_async_tools_with_await(path):
+    """The bug that actually shipped: an async tool called without `await`.
+
+    Every registered tool is a coroutine function. Calling one without awaiting is
+    perfectly valid Python — it just returns a coroutine, so the notebook fails at
+    runtime with a confusing formatting error rather than at parse time. A syntax
+    check cannot see this; only an AST walk can.
+    """
+    import ast
+    import inspect
+
+    from helioai.tools import plasmapy_tools
+
+    async_names = {
+        name
+        for name, obj in vars(plasmapy_tools).items()
+        if inspect.iscoroutinefunction(obj) and not name.startswith("_")
+    }
+    assert async_names, "expected plasmapy_tools to expose coroutine functions"
+
+    offenders = []
+    for i, body in _cell_bodies(path):
+        tree = ast.parse("async def _cell():\n" + "\n".join("    " + ln for ln in body.split("\n")))
+        awaited = {
+            id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Await)
+        }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in async_names
+                and id(node) not in awaited
+            ):
+                offenders.append(f"cell {i}: {node.func.id}() is not awaited")
+
+    assert not offenders, f"{path.name} — " + "; ".join(offenders)
+
+
+@pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name)
+def test_example_notebook_code_parses(path):
+    """A cell that stopped being valid Python at all."""
+    import ast
+
+    nbformat = pytest.importorskip("nbformat")
+    for i, cell in enumerate(nbformat.read(path, as_version=4).cells):
+        if cell.cell_type != "code" or cell.source.lstrip().startswith("%%"):
+            continue
+        # Line magics are valid in a notebook but not in plain Python.
+        body = "\n".join(
+            "pass" if ln.lstrip().startswith(("%", "!")) else ln for ln in cell.source.split("\n")
+        )
+        # Wrapped in async def so top-level `await` parses, as it does in Jupyter.
+        wrapped = "async def _cell():\n" + "\n".join("    " + ln for ln in body.split("\n"))
+        try:
+            ast.parse(wrapped)
+        except SyntaxError as exc:
+            raise AssertionError(f"{path.name} cell {i} is not valid Python: {exc}") from exc

@@ -248,6 +248,8 @@ def _dispatch_internal_tool(name: str, arguments: dict) -> str:
 
 @dataclass
 class ChatResult:
+    """Final outcome of a non-streaming `chat()` call."""
+
     reply: str
     n_iterations: int
     artifacts: list[dict] = field(default_factory=list)

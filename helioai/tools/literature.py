@@ -24,6 +24,11 @@ async def find_papers(
     sort: str = "relevance",
     _transport: httpx.AsyncBaseTransport | None = None,
 ) -> dict:
+    """Search NASA ADS for papers relevant to an event, parameter or method.
+
+    Requires `ADS_API_TOKEN`; without it the tool returns an error rather than
+    raising, so the agent can tell the user what is missing.
+    """
     token = settings.literature.ads_token
     if not token:
         return {

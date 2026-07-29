@@ -87,11 +87,13 @@ class _ProfileBody(BaseModel):
 
 @app.get("/")
 async def index():
+    """Serve the single-page web UI."""
     return FileResponse(_STATIC / "index.html")
 
 
 @app.get("/health")
 async def health():
+    """Liveness probe. Returns `{"status": "ok"}`."""
     return {"status": "ok"}
 
 
@@ -101,6 +103,11 @@ async def chat_stream(
     x_helio_dev_token: str | None = Header(default=None),
     user_id: str = Depends(require_user),
 ):
+    """Stream one agent turn as Server-Sent Events.
+
+    Each agent event — tool calls, results, artifacts, sub-agent activity — is
+    forwarded as it happens, which is what drives the live activity dock.
+    """
     # Authenticated nominative users are trusted → unrestricted; the legacy dev
     # token still unlocks scope when no users are configured (local dev).
     restricted = not (bool(settings.web_auth.users) or dev_unlock(x_helio_dev_token))
@@ -124,11 +131,13 @@ async def chat_stream(
 
 @app.get("/api/sessions")
 async def list_sessions(user_id: str = Depends(require_user)):
+    """List the calling user's sessions, most recent first."""
     return store.list_summaries(user_id)
 
 
 @app.get("/api/sessions/{session_id}/messages")
 async def get_session_messages(session_id: str, user_id: str = Depends(require_user)):
+    """Replay a session: its messages plus any figures and figure reviews."""
     history = store.get_or_create(user_id, session_id)
     out: list[dict] = []
     pending_figures: list[str] = []
@@ -248,6 +257,7 @@ async def get_session_messages(session_id: str, user_id: str = Depends(require_u
 
 @app.get("/api/profile")
 async def get_profile(user_id: str = Depends(require_user)):
+    """Return the caller's profile markdown."""
     p = _profile_path(user_id)
     content = p.read_text(encoding="utf-8").strip() if p.exists() else ""
     return {"content": content}
@@ -255,6 +265,7 @@ async def get_profile(user_id: str = Depends(require_user)):
 
 @app.put("/api/profile")
 async def put_profile(body: _ProfileBody, user_id: str = Depends(require_user)):
+    """Replace the caller's profile markdown."""
     p = _profile_path(user_id)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(body.content, encoding="utf-8")
@@ -263,6 +274,7 @@ async def put_profile(body: _ProfileBody, user_id: str = Depends(require_user)):
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str, user_id: str = Depends(require_user)):
+    """Delete one of the caller's sessions and its workspace."""
     wdir = store.get_workspace_dir(user_id, session_id)
     store.reset(user_id, session_id)
     if wdir:
@@ -274,6 +286,7 @@ async def delete_session(session_id: str, user_id: str = Depends(require_user)):
 
 @app.get("/api/export")
 async def export_notebook(session_id: str, user_id: str = Depends(require_user)):
+    """Export a session as a standalone `.ipynb` and return it."""
     from helioai.export import export_session_notebook
 
     if session_id not in store.all_sessions(user_id):
@@ -288,6 +301,11 @@ async def export_notebook(session_id: str, user_id: str = Depends(require_user))
 
 @app.get("/code")
 async def serve_code(path: str, user_id: str = Depends(require_user)):
+    """Return a generated script, rewritten to standalone form.
+
+    Ownership is checked against the caller before anything is read, so a path
+    outside the caller's workspace is a 404 rather than a leak.
+    """
     path = path.strip()
     if not is_under_workspace(path) or not _owns_path(user_id, path):
         log.warning("code_rejected", path=path, reason="outside workspace or not owner")
@@ -309,6 +327,7 @@ _FIGURE_TYPES = {".png": "image/png", ".pdf": "application/pdf"}
 
 @app.get("/figure")
 async def serve_figure(path: str, user_id: str = Depends(require_user)):
+    """Serve a figure (PNG or PDF) from the caller's workspace."""
     path = path.strip()
     if not is_under_workspace(path) or not _owns_path(user_id, path):
         log.warning("figure_rejected", path=path, reason="outside workspace or not owner")
@@ -325,6 +344,12 @@ async def serve_figure(path: str, user_id: str = Depends(require_user)):
 
 
 def serve_web(host: str = "127.0.0.1", port: int = 7890) -> None:
+    """Run the web UI with uvicorn.
+
+    Binds to localhost by default. The open-source build ships no authentication
+    and `run_python` executes model-written code, so do not expose this on a
+    network without putting auth in front of it.
+    """
     import uvicorn
 
     from helioai.workspace import cleanup_old_runs

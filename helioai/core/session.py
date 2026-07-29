@@ -63,6 +63,13 @@ SessionKey = tuple[str, str]
 
 
 class SessionStore:
+    """Conversation history keyed by (user_id, session_id), persisted to SQLite.
+
+    Histories are cached in memory per key and written back whole on `save`.
+    Tests use a real database on `tmp_path` rather than a mock: a mocked store
+    passed happily through a schema migration that broke production.
+    """
+
     def __init__(self, db_path: Path = DEFAULT_DB) -> None:
         self._db_path = db_path
         self._cache: dict[SessionKey, list[Message]] = {}
@@ -91,6 +98,7 @@ class SessionStore:
             conn.close()
 
     def get_or_create(self, user_id: str, session_id: str) -> list[Message]:
+        """Return the cached history for a session, loading it from disk if needed."""
         key: SessionKey = (user_id, session_id)
         with self._lock:
             if key in self._cache:
@@ -117,6 +125,13 @@ class SessionStore:
         ]
 
     def save(self, user_id: str, session_id: str, history: list[Message]) -> None:
+        """Replace a session's stored history.
+
+        Args:
+            user_id: Owner of the session.
+            session_id: Session identifier.
+            history: Full message list; it replaces whatever was stored.
+        """
         with self._lock, self._connect() as conn:
             conn.execute(
                 "INSERT INTO sessions(user_id, session_id) VALUES(?, ?) "
@@ -145,6 +160,7 @@ class SessionStore:
             conn.commit()
 
     def reset(self, user_id: str, session_id: str) -> None:
+        """Delete a session and its messages, and drop it from the cache."""
         with self._lock, self._connect() as conn:
             conn.execute(
                 "DELETE FROM sessions WHERE user_id = ? AND session_id = ?",
@@ -154,6 +170,7 @@ class SessionStore:
         self._cache.pop((user_id, session_id), None)
 
     def set_workspace_dir(self, user_id: str, session_id: str, workspace_dir: str) -> None:
+        """Record which workspace directory a session's artifacts live in."""
         with self._lock, self._connect() as conn:
             conn.execute(
                 "UPDATE sessions SET workspace_dir = ? WHERE user_id = ? AND session_id = ?",
@@ -162,6 +179,7 @@ class SessionStore:
             conn.commit()
 
     def get_workspace_dir(self, user_id: str, session_id: str) -> str | None:
+        """Return a session's workspace directory label, or None."""
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT workspace_dir FROM sessions WHERE user_id = ? AND session_id = ?",
@@ -180,6 +198,7 @@ class SessionStore:
         return {r[0] for r in rows}
 
     def all_sessions(self, user_id: str) -> list[str]:
+        """Return a user's session ids, most recently updated first."""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT session_id FROM sessions WHERE user_id = ? "
@@ -189,6 +208,16 @@ class SessionStore:
         return [r[0] for r in rows]
 
     def list_summaries(self, user_id: str, limit: int = 50) -> list[dict]:
+        """Summarise a user's recent sessions for the history view.
+
+        Args:
+            user_id: Owner of the sessions.
+            limit: Maximum number of sessions to return.
+
+        Returns:
+            Dicts with session_id, updated_at, first_message, n_messages and
+            workspace_dir, most recent first.
+        """
         from datetime import datetime
 
         with self._connect() as conn:

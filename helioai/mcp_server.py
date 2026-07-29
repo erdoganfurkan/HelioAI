@@ -45,6 +45,7 @@ def _init_options() -> InitializationOptions:
 
 
 async def serve_stdio() -> None:
+    """Run the MCP server over stdio, for clients like Claude Desktop."""
     from mcp.server.stdio import stdio_server
 
     async with stdio_server() as (read, write):
@@ -52,6 +53,7 @@ async def serve_stdio() -> None:
 
 
 def build_http_app():
+    """Build the streamable-HTTP ASGI app exposing the MCP server."""
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
     from starlette.routing import Mount
@@ -67,6 +69,7 @@ def build_http_app():
 
 
 def serve_http(host: str, port: int) -> None:
+    """Run the MCP server over streamable HTTP."""
     import uvicorn
 
     uvicorn.run(build_http_app(), host=host, port=port)
@@ -80,6 +83,7 @@ def _arg(args: list[str], flag: str, default: str) -> str:
 
 
 def main() -> None:
+    """Entry point for the `helioai-mcp` command."""
     setup_logging("WARNING")
     args = sys.argv[1:]
     if "--http" in args:

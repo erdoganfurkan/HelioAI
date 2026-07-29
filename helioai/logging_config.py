@@ -21,6 +21,15 @@ def _format_from_env() -> str:
 
 
 def setup_logging(level: str | int = "INFO") -> None:
+    """Configure structlog and the root logger.
+
+    Output format follows `HELIOAI_LOG_FORMAT`: `console` (default) or `json`.
+    Safe to call more than once — every entry point calls it, and repeated calls
+    replace the handler rather than stacking duplicates.
+
+    Args:
+        level: Log level name or numeric value. Unknown names fall back to INFO.
+    """
     if isinstance(level, str):
         level = getattr(logging, level.upper(), logging.INFO)
 
@@ -65,4 +74,5 @@ def setup_logging(level: str | int = "INFO") -> None:
 
 
 def get_logger(name: str | None = None) -> Any:
+    """Return a structlog logger, optionally bound to a module name."""
     return structlog.get_logger(name) if name else structlog.get_logger()

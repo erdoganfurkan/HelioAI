@@ -17,6 +17,8 @@ from helioai.core.llm.base import ToolDef
 
 @dataclass
 class Tool:
+    """A registered tool: an async function plus the schema shown to the model."""
+
     name: str
     description: str
     parameters: dict  # JSON Schema object
@@ -24,6 +26,12 @@ class Tool:
 
 
 class ToolRegistry:
+    """Maps tool names to async functions and their JSON Schemas.
+
+    The agent loop dispatches through here and never imports tool modules, which
+    keeps the dependency surface small and makes per-role whitelisting trivial.
+    """
+
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
 
@@ -42,6 +50,12 @@ class ToolRegistry:
         return decorator
 
     def list_tool_defs(self, only: set[str] | None = None) -> list[ToolDef]:
+        """Return tool definitions for the model.
+
+        Args:
+        only: Restrict to these names — how sub-agent whitelists are applied.
+        None returns every registered tool.
+        """
         tools = self._tools.values()
         if only is not None:
             tools = [t for t in tools if t.name in only]

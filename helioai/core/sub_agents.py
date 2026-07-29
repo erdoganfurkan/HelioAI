@@ -30,6 +30,12 @@ TASK_TOOL_NAME = "task"
 
 @dataclass(frozen=True)
 class SubAgentRole:
+    """A specialised agent: its prompt, its tool whitelist and its turn budget.
+
+    `allowed_tools` is enforced, not advisory — a role calling outside its set
+    gets an error naming what it may use, and the tool is never dispatched.
+    """
+
     name: str
     description: str
     system_addon: str
@@ -142,6 +148,8 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
 
 @dataclass
 class SubAgentResult:
+    """What a finished sub-agent hands back to the lead agent."""
+
     summary: str = ""
     artifacts: list[dict] = field(default_factory=list)
     n_iterations: int = 0
@@ -149,6 +157,14 @@ class SubAgentResult:
 
 
 def task_tool_def() -> ToolDef:
+    """Build the `task` tool definition offered to the lead agent.
+
+    Deliberately not registered in the ToolRegistry: the agent loop intercepts
+    `task` and spawns a sub-agent instead of dispatching a function.
+
+    Returns:
+        A ToolDef whose `agent_role` enum lists every available role.
+    """
     role_lines = "\n".join(f"  - `{r.name}`: {r.description}" for r in AGENT_ROLES.values())
     return ToolDef(
         name=TASK_TOOL_NAME,

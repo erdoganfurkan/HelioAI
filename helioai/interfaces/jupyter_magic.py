@@ -165,8 +165,14 @@ def _render_jupyter_event(ev: dict) -> None:
 
 @magics_class
 class HelioAIMagics(Magics):
+    """IPython magics exposing the agent inside a notebook."""
+
     @cell_magic
     def helioai(self, line: str, cell: str) -> None:
+        """`%%helioai` — send a natural-language query to the agent.
+
+        Figures render inline; parameter cards and catalog previews render as HTML.
+        """
         import helioai.tools.setup  # noqa: F401
         from helioai.core.agent_loop import stream_chat
         from helioai.logging_config import setup_logging
@@ -183,6 +189,7 @@ class HelioAIMagics(Magics):
 
     @line_magic
     def helioai_session(self, line: str) -> None:
+        """`%helioai_session [id]` — show or switch the active session."""
         global _SESSION_ID
         parts = line.strip().split(maxsplit=1)
         cmd = parts[0] if parts else ""
@@ -225,6 +232,7 @@ class HelioAIMagics(Magics):
 
     @line_magic
     def helioai_provider(self, line: str) -> None:
+        """`%helioai_provider [name]` — show or switch the LLM provider."""
         global _llm
         provider = line.strip().lower()
         if provider not in ("groq", "gemini", "azure"):
@@ -238,6 +246,7 @@ class HelioAIMagics(Magics):
 
     @line_magic
     def helioai_history(self, line: str) -> None:
+        """`%helioai_history` — list recent sessions."""
         from helioai.core.session import store
 
         summaries = store.list_summaries(_USER_ID)
@@ -263,6 +272,7 @@ class HelioAIMagics(Magics):
 
     @line_magic
     def helioai_profile(self, line: str) -> None:
+        """`%helioai_profile` — show or edit the user profile."""
         from helioai.config import settings
 
         parts = line.strip().split(maxsplit=1)
@@ -286,6 +296,7 @@ class HelioAIMagics(Magics):
 
     @line_magic
     def helioai_export(self, line: str) -> None:
+        """`%helioai_export` — export the session as a standalone notebook."""
         from helioai.core.session import store
         from helioai.export import export_session_notebook
 
@@ -304,6 +315,7 @@ class HelioAIMagics(Magics):
 
     @line_magic
     def helioai_resume(self, line: str) -> None:
+        """`%helioai_resume` — pick a previous session to continue."""
         global _SESSION_ID
         prefix = line.strip()
         if not prefix:
@@ -322,6 +334,7 @@ class HelioAIMagics(Magics):
 
     @line_magic
     def helioai_dev(self, line: str) -> None:
+        """`%helioai_dev <token>` — unlock unrestricted mode for this session."""
         global _dev_restricted
         from helioai.config import dev_unlock, settings
 
@@ -341,4 +354,5 @@ class HelioAIMagics(Magics):
 
 
 def load_ipython_extension(ipython) -> None:
+    """Register the HelioAI magics. Called by `%load_ext`."""
     ipython.register_magics(HelioAIMagics)

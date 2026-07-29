@@ -24,11 +24,15 @@ REQUIRED_FIELDS = ("name", "description", "when_to_use")
 
 
 class SkillError(RuntimeError):
+    """Raised when a skill is missing, unreadable, or fails its path check."""
+
     pass
 
 
 @dataclass(frozen=True)
 class SkillMeta:
+    """Header of a skill, as listed to the agent before it loads the body."""
+
     name: str
     description: str
     when_to_use: str
@@ -88,6 +92,7 @@ def _discover() -> dict[str, SkillMeta]:
 
 
 def load_index() -> str:
+    """Return the markdown index of available skills, for the agent to browse."""
     skills = _discover()
     if not skills:
         return "(no skills available)"
@@ -99,6 +104,18 @@ def load_index() -> str:
 
 
 def load_skill(name: str) -> str:
+    """Return a skill's full markdown body.
+
+    Args:
+        name: Skill name as listed by `list_skill_names`.
+
+    Returns:
+        The skill body, ready to append to a system prompt.
+
+    Raises:
+        SkillError: If the skill does not exist or the name escapes the skills
+            directory.
+    """
     skills = _discover()
     if name not in skills:
         known = ", ".join(sorted(skills)) or "(none)"
@@ -109,4 +126,5 @@ def load_skill(name: str) -> str:
 
 
 def list_skill_names() -> list[str]:
+    """Return the names of all available skills."""
     return list(_discover().keys())

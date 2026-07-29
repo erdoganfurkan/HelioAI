@@ -15,6 +15,22 @@ log = logging.getLogger(__name__)
 
 
 class GeminiClient(LLMClient):
+    """Chat client for Google Gemini, using the native `google-genai` SDK.
+
+    Kept separate from `OpenAICompatClient` because the wire format genuinely
+    differs: turns are `Content` objects with typed parts, the assistant role is
+    called `model`, and tool results are matched by function *name* rather than
+    by id. Since Gemini issues no call ids, this client synthesises `name::hex`
+    and parses the name back out on the way in — a format that is persisted in
+    existing sessions, so it must stay readable.
+
+    Args:
+        api_key: Gemini API key.
+        model: Model name, e.g. `gemini-2.5-flash`.
+        max_output_tokens: Cap on generated tokens.
+        temperature: Sampling temperature.
+    """
+
     def __init__(
         self, api_key: str, model: str, max_output_tokens: int = 4096, temperature: float = 0.2
     ):
@@ -30,6 +46,11 @@ class GeminiClient(LLMClient):
         system_prompt: str | None = None,
         tool_choice: str = "auto",
     ) -> Message:
+        """Send one turn to Gemini and return the assistant's reply.
+
+        When `system_prompt` is not given, it is recovered from any system message
+        left in the history. `tool_choice="required"` maps to Gemini's ANY mode.
+        """
         contents = self._to_gemini_contents(messages)
         gemini_tools = self._to_gemini_tools(tools) if tools else None
 

@@ -103,6 +103,15 @@ def _safe_name(alias: str, tool_name: str) -> str:
 
 
 async def discover_and_register() -> list[str]:
+    """Connect to every configured MCP server and register its tools.
+
+    Idempotent: only the first call does any work. Servers that are unreachable
+    are logged and skipped rather than fatal — a dead remote must not stop
+    HelioAI from starting.
+
+    Returns:
+        The names under which remote tools were registered, prefixed by alias.
+    """
     global _discovered
     if _discovered:
         return []

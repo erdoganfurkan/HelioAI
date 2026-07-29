@@ -41,6 +41,13 @@ _DATA = _default_data_dir()
 
 @dataclass
 class AzureOpenAIConfig:
+    """Azure OpenAI deployment settings.
+
+    Azure routes by deployment name rather than model name, and reasoning models
+    (GPT-5, o-series) reject an explicit temperature — hence `temperature=None`
+    by default, which omits the field entirely.
+    """
+
     deployment: str = "models-gpt-53-chat"
     api_version: str = "2024-12-01-preview"
     max_output_tokens: int = 2048
@@ -51,6 +58,8 @@ class AzureOpenAIConfig:
 
 @dataclass
 class GeminiConfig:
+    """Google Gemini settings, used with the native `google-genai` client."""
+
     model: str = "gemini-2.5-flash"
     max_output_tokens: int = 4096
     temperature: float = 0.2
@@ -59,6 +68,8 @@ class GeminiConfig:
 
 @dataclass
 class GroqConfig:
+    """Groq settings. Reached through the shared OpenAI-compatible client."""
+
     model: str = "llama-3.3-70b-versatile"
     max_output_tokens: int = 4096
     temperature: float = 0.2
@@ -67,6 +78,12 @@ class GroqConfig:
 
 @dataclass
 class OllamaConfig:
+    """Local Ollama settings.
+
+    Ollama serves an OpenAI-compatible API on `/v1`, so it needs no client of its
+    own and no API key. Point `base_url` elsewhere for any other local endpoint.
+    """
+
     base_url: str = "http://localhost:11434"
     model: str = "qwen2.5:14b-instruct"
     max_output_tokens: int = 4096
@@ -76,6 +93,8 @@ class OllamaConfig:
 
 @dataclass
 class LLMConfig:
+    """Which provider to use, and the settings for each one."""
+
     provider: str = "azure"
     azure: AzureOpenAIConfig = field(default_factory=AzureOpenAIConfig)
     gemini: GeminiConfig = field(default_factory=GeminiConfig)
@@ -85,11 +104,28 @@ class LLMConfig:
 
 @dataclass
 class AgentConfig:
+    """Agent loop limits.
+
+    `max_iterations` caps how many tool-calling rounds one question may take
+    before the loop gives up, bounding both runtime and token spend.
+    """
+
     max_iterations: int = 10
 
 
 @dataclass
 class RAGConfig:
+    """Parameter search settings.
+
+    Retrieval is hybrid: dense embeddings for descriptions, BM25 for exact tokens
+    like `BGSEc`, fused by Reciprocal Rank Fusion with parameter `rrf_k`.
+
+    `rerank_enabled` stays False on purpose. A generic MS MARCO cross-encoder was
+    measured to *degrade* results here: trained on web prose, it discards the
+    dense+sparse consensus that makes exact-code matching work. Only a
+    domain-tuned reranker would help.
+    """
+
     chroma_dir: Path = field(default_factory=lambda: _DATA / "chroma")
     collection_name: str = "speasy_catalog"
     catalogs_collection_name: str = "speasy_catalogs"
@@ -104,37 +140,60 @@ class RAGConfig:
 
 @dataclass
 class WorkspaceConfig:
+    """Per-session working directories, cleaned up after `ttl_seconds`."""
+
     workspace_dir: Path = field(default_factory=lambda: _DATA / "workspace")
     ttl_seconds: int = 86400 * 7  # 7 days
 
 
 @dataclass
 class ProfileConfig:
+    """Location of the user profile injected into the system prompt."""
+
     profile_path: Path = field(default_factory=lambda: _DATA / "profile.md")
 
 
 @dataclass
 class RecipesConfig:
+    """Where scientific recipes are loaded from.
+
+    Defaults to the copy shipped inside the package so `pip install` works;
+    override with `HELIOAI_RECIPES_DIR` to use your own set.
+    """
+
     recipes_dir: Path = field(default_factory=lambda: _PKG_RECIPES)
 
 
 @dataclass
 class CatalogsConfig:
+    """Where user-saved event catalogs are written, in speasy format."""
+
     catalogs_dir: Path = field(default_factory=lambda: _DATA / "catalogs")
 
 
 @dataclass
 class LiteratureConfig:
+    """NASA ADS credentials for `find_papers`. Free token, no key means no tool."""
+
     ads_token: str = ""
 
 
 @dataclass
 class MCPConfig:
+    """Remote MCP servers to mount, as a JSON object keyed by alias."""
+
     servers_json: str = ""
 
 
 @dataclass
 class VisionConfig:
+    """Multimodal review of generated figures.
+
+    A stateless side-call outside the agent loop: the image is downscaled, sent
+    once, and only the text verdict enters the history — never the image, which
+    would otherwise be resent on every subsequent turn. Off by default.
+    """
+
     # Reviews sandbox figures with a multimodal side-call; only the text
     # verdict enters the history, never the image.
     enabled: bool = False
@@ -145,6 +204,12 @@ class VisionConfig:
 
 @dataclass
 class DevConfig:
+    """Shared secret unlocking unrestricted mode past the heliophysics guardrail.
+
+    Empty by default, which means no token is valid and every request stays
+    scoped. Compared in constant time.
+    """
+
     # Shared-secret that unlocks unrestricted LLM access (bypasses scope guardrail).
     # Empty (default) → no token is valid → all requests stay restricted.
     token: str = ""
@@ -152,6 +217,12 @@ class DevConfig:
 
 @dataclass
 class WebAuthConfig:
+    """Nominative tokens for the web UI, parsed from `HELIOAI_USERS`.
+
+    Empty means no authentication and a single local user, which is the intended
+    behaviour for local development only.
+    """
+
     # Nominative tokens for the web UI: {token: user_id}. Parsed from
     # HELIOAI_USERS="tok1:vincent,tok2:alice". Empty → no auth, single local user.
     # ponytail: env-driven map, fine for a handful of researchers; move to a DB
@@ -161,6 +232,13 @@ class WebAuthConfig:
 
 @dataclass
 class Settings:
+    """Root settings object.
+
+    Imported as the module-level `settings` singleton and read everywhere; built
+    once at import by `_load()`, which fails fast when the selected provider has
+    no API key.
+    """
+
     data_dir: Path = field(default_factory=lambda: _DATA)
     llm: LLMConfig = field(default_factory=LLMConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)

@@ -299,6 +299,11 @@ def _run_migrate_storage() -> None:
 
 
 def main() -> None:
+    """Entry point for the `helioai` command.
+
+    Routes subcommands (index, export, history, delete, profile, serve, ...) and
+    otherwise runs either a one-shot query or the interactive prompt.
+    """
     global _SESSION_ID
     from helioai.config import dev_unlock, settings
     from helioai.workspace import cleanup_old_runs, set_user

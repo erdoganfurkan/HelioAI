@@ -23,6 +23,7 @@ DEFAULT_USER = "web"
 
 
 def current_user() -> str:
+    """Return the user owning the current context, or the default user."""
     return _current_user.get() or DEFAULT_USER
 
 
@@ -32,6 +33,7 @@ def set_user(user_id: str) -> object:
 
 
 def reset_user(token: object) -> None:
+    """Restore the user contextvar from a token returned by `set_user`."""
     _current_user.reset(token)  # type: ignore[arg-type]
 
 
@@ -58,6 +60,7 @@ def set_session(session_id: str) -> object:
 
 
 def reset_session(token: object) -> None:
+    """Restore the session contextvar from a token returned by `set_session`."""
     _current_session.reset(token)  # type: ignore[arg-type]
 
 
@@ -67,6 +70,7 @@ def set_label(label: str) -> object:
 
 
 def reset_label(token: object) -> None:
+    """Restore the label contextvar from a token returned by `set_label`."""
     _current_label.reset(token)  # type: ignore[arg-type]
 
 

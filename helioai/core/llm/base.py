@@ -53,6 +53,17 @@ async def call_with_retry(
 
 @dataclass
 class ToolCall:
+    """A tool invocation requested by the model.
+
+    Attributes:
+        id: Provider-assigned identifier, echoed back on the matching tool
+            result. Gemini has no native ids, so its client synthesises
+            `name::hex` and parses the name back out.
+        name: Registered tool name.
+        arguments: Decoded JSON arguments. Empty when the model emitted
+            malformed JSON — a bad tool call must not kill the loop.
+    """
+
     id: str
     name: str
     arguments: dict
@@ -60,6 +71,19 @@ class ToolCall:
 
 @dataclass
 class Message:
+    """One turn of conversation, in a provider-neutral form.
+
+    Every client converts to and from this shape, so the agent loop, the session
+    store and the interfaces never see a provider's wire format.
+
+    Attributes:
+        role: Who produced the turn.
+        content: Text content. Present alongside `tool_calls` when the model
+            narrated what it was about to do.
+        tool_calls: Tools the assistant wants invoked, when it requested any.
+        tool_call_id: For `tool` messages, the `ToolCall.id` being answered.
+    """
+
     role: Literal["system", "user", "assistant", "tool"]
     content: str = ""
     tool_calls: list[ToolCall] | None = None
@@ -68,12 +92,27 @@ class Message:
 
 @dataclass
 class ToolDef:
+    """A tool as advertised to the model.
+
+    Attributes:
+        name: Tool name the model will call.
+        description: What the tool does and when to reach for it — the model's
+            only clue about applicability.
+        parameters: JSON Schema object describing the accepted arguments.
+    """
+
     name: str
     description: str
     parameters: dict = field(default_factory=dict)
 
 
 class LLMClient(ABC):
+    """Interface every provider client implements.
+
+    One method, deliberately: the agent loop only ever needs a single completion
+    with optional tool calling. Streaming happens at the loop level, not here.
+    """
+
     @abstractmethod
     async def chat(
         self,
@@ -82,4 +121,17 @@ class LLMClient(ABC):
         system_prompt: str | None = None,
         tool_choice: str = "auto",
     ) -> Message:
+        """Send one turn and return the assistant's reply.
+
+        Args:
+            messages: Conversation history.
+            tools: Tools the model may call this turn.
+            system_prompt: Instructions placed before the history.
+            tool_choice: `auto` to let the model decide, `required` to force a
+                tool call — used on a sub-agent's first turn so it cannot answer
+                from memory without looking anything up.
+
+        Returns:
+            The assistant reply, carrying `tool_calls` when the model requested any.
+        """
         raise NotImplementedError

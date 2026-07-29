@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,31 @@ def test_get_or_create_returns_same_list(db: Path) -> None:
     h1 = s.get_or_create("alice", "t1")
     h2 = s.get_or_create("alice", "t1")
     assert h1 is h2
+
+
+def test_connect_closes_connection_after_use(db: Path, monkeypatch) -> None:
+    """Real bug: `with self._connect() as conn` only relies on sqlite3.Connection's
+    own context manager, which commits/rolls back but never calls close() — every
+    call leaked a connection."""
+    closed: list[bool] = []
+
+    class _TrackedConnection(sqlite3.Connection):
+        def close(self):
+            closed.append(True)
+            super().close()
+
+    real_connect = sqlite3.connect
+
+    def spy_connect(*args, **kwargs):
+        kwargs["factory"] = _TrackedConnection
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", spy_connect)
+
+    s = SessionStore(db)
+    s.save("alice", "t1", [Message(role="user", content="hi")])
+
+    assert closed, "SessionStore must explicitly close() its sqlite3 connections"
 
 
 def test_save_and_reload_round_trips_all_fields(db: Path) -> None:

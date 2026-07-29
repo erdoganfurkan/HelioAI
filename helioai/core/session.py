@@ -6,6 +6,8 @@ import json
 import os
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from helioai.core.llm.base import Message, ToolCall
@@ -76,12 +78,16 @@ class SessionStore:
                 pass
             conn.commit()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA busy_timeout = 5000")
-        return conn
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def get_or_create(self, user_id: str, session_id: str) -> list[Message]:
         key: SessionKey = (user_id, session_id)

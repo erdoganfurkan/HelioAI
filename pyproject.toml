@@ -7,7 +7,7 @@ name = "helioai"
 version = "0.1.0"
 description = "AI agent for heliophysics and space plasma data analysis"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Furkan Erdogan", email = "furkan.erdogan.pro@gmail.com" }]
 keywords = ["heliophysics", "plasma", "space physics", "AI agent", "MCP"]
@@ -16,8 +16,9 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Astronomy",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
     "speasy>=1.4",
@@ -41,7 +42,6 @@ dependencies = [
     "ipython>=8.0",
     "ipywidgets>=8.0",
     "ipykernel>=6.0",
-    "transformers<5.0",
     "nbformat>=5.0",
     "rank-bm25>=0.2",
     "geopack>=1.0.11",
@@ -61,6 +61,14 @@ dev = [
     "ruff>=0.4",
     "httpx2>=0.28",
 ]
+
+[tool.uv]
+# torch is transitive (sentence-transformers). Left alone, the universal resolve
+# settles on 2.4.1, which ships no cp313/cp314 wheels and so breaks `uv sync` on
+# the Python versions PHEP 3 requires us to test. This is a lockfile concern
+# only — it is deliberately not a `dependencies` entry, since HelioAI never
+# imports torch and PyPI users should resolve it themselves.
+constraint-dependencies = ["torch>=2.6"]
 
 [project.scripts]
 helioai = "helioai.interfaces.cli:main"
@@ -85,5 +93,5 @@ omit = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 exclude = ["data/", "tasks/"]

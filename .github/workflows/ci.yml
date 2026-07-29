@@ -30,13 +30,21 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
 
+  phep3:
+    # PyHC PHEP 3: Python versions supported for 36 months, upstream core
+    # Scientific Python packages for 24, both adopted within 6 of release.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: heliophysicsPy/pyhc-actions/phep3-compliance@v1
+
   test:
     needs: lint
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@v4

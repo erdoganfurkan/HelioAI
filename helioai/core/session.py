@@ -8,6 +8,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC
 from pathlib import Path
 
 from helioai.config import settings
@@ -188,7 +189,7 @@ class SessionStore:
         return [r[0] for r in rows]
 
     def list_summaries(self, user_id: str, limit: int = 50) -> list[dict]:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         with self._connect() as conn:
             rows = conn.execute(
@@ -212,9 +213,7 @@ class SessionStore:
             if len(preview) > 80:
                 preview = preview[:77] + "..."
             unix_ts = (jd - 2440587.5) * 86400
-            iso = (
-                datetime.fromtimestamp(unix_ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
-            )
+            iso = datetime.fromtimestamp(unix_ts, tz=UTC).isoformat().replace("+00:00", "Z")
             out.append(
                 {
                     "session_id": session_id,

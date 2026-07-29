@@ -9,7 +9,6 @@ import pytest
 from helioai.config import settings
 from helioai.tools import recipes as _rcp
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 

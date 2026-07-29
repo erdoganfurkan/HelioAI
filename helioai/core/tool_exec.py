@@ -13,10 +13,9 @@ This module imports neither agent_loop nor sub_agents, so there is no cycle.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
-from typing import Iterator
-
 
 # Tools whose results contain large lists (per_event_stats, sample rows) that would
 # flood the LLM context. All other tools pass through untouched so the LLM can reason

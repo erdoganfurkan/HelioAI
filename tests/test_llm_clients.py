@@ -18,7 +18,6 @@ import pytest
 
 from helioai.core.llm.base import Message, ToolCall, ToolDef
 
-
 # ── OpenAI-shaped fakes ────────────────────────────────────────────────────────
 
 

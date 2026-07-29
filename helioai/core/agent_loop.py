@@ -27,14 +27,15 @@ import asyncio
 import functools
 import json
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import AsyncIterator
 
 from helioai.config import settings
 from helioai.core.llm.base import LLMClient, Message, ToolDef
 from helioai.core.session import store, strip_orphan_tool_calls
-from helioai.core.skills_loader import SkillError, load_index as load_skills_index
-from helioai.core.skills_loader import load_skill as load_skill_body, list_skill_names
+from helioai.core.skills_loader import SkillError, list_skill_names
+from helioai.core.skills_loader import load_index as load_skills_index
+from helioai.core.skills_loader import load_skill as load_skill_body
 from helioai.core.sub_agents import TASK_TOOL_NAME, stream_subagent, task_tool_def
 from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
     _extract_artifact,

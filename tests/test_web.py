@@ -154,8 +154,8 @@ def test_sessions_empty(web_client):
 
 def test_sessions_after_save(monkeypatch, tmp_path):
     """Sessions list reflects saved conversations."""
-    from helioai.core.session import SessionStore
     from helioai.core.llm.base import Message
+    from helioai.core.session import SessionStore
 
     test_store = SessionStore(tmp_path / "sessions.db")
     history = [Message(role="user", content="solar wind")]
@@ -183,8 +183,9 @@ def test_sessions_after_save(monkeypatch, tmp_path):
 
 def test_session_messages(monkeypatch, tmp_path):
     import json
-    from helioai.core.session import SessionStore
+
     from helioai.core.llm.base import Message
+    from helioai.core.session import SessionStore
 
     test_store = SessionStore(tmp_path / "sessions.db")
     tool_result = json.dumps(
@@ -331,8 +332,9 @@ def test_code_valid(web_client, tmp_path, monkeypatch):
 
 def test_session_messages_attach_code(monkeypatch, tmp_path):
     import json
-    from helioai.core.session import SessionStore
+
     from helioai.core.llm.base import Message
+    from helioai.core.session import SessionStore
 
     test_store = SessionStore(tmp_path / "sessions.db")
     code_path = str(tmp_path / "sess" / "code_0.py")
@@ -358,8 +360,9 @@ def test_session_messages_attach_code(monkeypatch, tmp_path):
     monkeypatch.setattr("helioai.interfaces.web.app.build_llm_client", lambda provider=None: None)
     monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
 
-    from helioai.interfaces.web.app import app
     from starlette.testclient import TestClient
+
+    from helioai.interfaces.web.app import app
 
     client = TestClient(app)
 
@@ -401,6 +404,7 @@ def test_factory_default_returns_client():
 
 def test_export_endpoint(monkeypatch, tmp_path):
     import nbformat
+
     import helioai.export as export_module
     from helioai.core.llm.base import Message
     from helioai.core.session import SessionStore

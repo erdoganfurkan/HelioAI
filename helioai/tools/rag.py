@@ -117,7 +117,8 @@ def _load_bm25():
                     _bm25_docs.extend(data.get("documents", []) or [])
                     _bm25_meta.extend(data.get("metadatas", []) or [])
                 corpus = [
-                    _tokenize(f"{pid} {doc or ''}") for pid, doc in zip(_bm25_ids, _bm25_docs)
+                    _tokenize(f"{pid} {doc or ''}")
+                    for pid, doc in zip(_bm25_ids, _bm25_docs, strict=False)
                 ]
                 _bm25 = BM25Okapi(corpus) if corpus else None
             except Exception as e:
@@ -182,7 +183,7 @@ def _fuse_query(
     # info[id] = {name, full_text, cosine}; dense_ranking preserves order
     info: dict[str, dict] = {}
     dense_ranking: list[str] = []
-    for pid, doc_text, meta, dist in zip(ids, documents, metadatas, distances):
+    for pid, doc_text, meta, dist in zip(ids, documents, metadatas, distances, strict=False):
         dense_ranking.append(pid)
         similarity = 1.0 - float(dist)
         info[pid] = {
@@ -242,7 +243,7 @@ def _fuse_query(
     if reranker is not None and len(candidates) > 1:
         head = candidates[: max(top_k, settings.rag.rerank_fetch_k)]
         rerank_scores = reranker.predict([(query, c["_full_text"]) for c in head])
-        for c, s in zip(head, rerank_scores):
+        for c, s in zip(head, rerank_scores, strict=False):
             c["score"] = round(1.0 / (1.0 + math.exp(-float(s))), 4)
         head.sort(key=lambda c: c["score"], reverse=True)
         candidates = head
@@ -392,7 +393,11 @@ def search_catalogs(
         )
         results: list[dict] = []
         for pid, doc, meta, dist in zip(
-            res["ids"][0], res["documents"][0], res["metadatas"][0], res["distances"][0]
+            res["ids"][0],
+            res["documents"][0],
+            res["metadatas"][0],
+            res["distances"][0],
+            strict=False,
         ):
             score = round(max(0.0, min(1.0, (1.0 - float(dist) + 1.0) / 2.0)), 4)
             results.append(

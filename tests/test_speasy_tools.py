@@ -16,7 +16,6 @@ from helioai.tools.speasy_tools import (
     search_parameters,
 )
 
-
 # ─────────────────────────────── _data_quality ──────────────────────────────
 
 

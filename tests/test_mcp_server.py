@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 
+from mcp import types
 
 import helioai.tools.setup  # noqa: F401
 from helioai import mcp_server as ms
-from mcp import types
 
 
 async def test_list_tools_count():

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -421,7 +421,7 @@ def build_notebook(user_id: str, session_id: str):
     cells = []
 
     # Provenance
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    now = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
     param_ids = _collect_param_ids(history)
     prov = [
         "# HelioAI session export",

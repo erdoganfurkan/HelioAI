@@ -13,7 +13,6 @@ import re
 import shutil
 import time
 
-
 # SPASE Region vocabulary — maps mission/spacecraft name fragments to SPASE Region values.
 # Covers both AMDA-style names and CDA/CSA-style spacecraft codes.
 # Source: https://spase-group.org/data/model/spase-2.6.0 — Region simpleType

@@ -10,13 +10,14 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import AsyncIterator
 
 import structlog
 
 from helioai.core.llm.base import LLMClient, Message, ToolDef
-from helioai.core.skills_loader import SkillError, load_skill as load_skill_body
+from helioai.core.skills_loader import SkillError
+from helioai.core.skills_loader import load_skill as load_skill_body
 from helioai.core.tool_exec import compact_history, emit_post_tool_events, inject_run_python_args
 from helioai.core.vision import maybe_review
 from helioai.logging_config import get_logger

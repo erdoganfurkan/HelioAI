@@ -59,14 +59,16 @@ async def _session(spec: dict):
                 await session.initialize()
                 yield session
     elif "url" in spec:
-        async with streamablehttp_client(spec["url"], headers=spec.get("headers")) as (
-            read,
-            write,
-            _,
+        async with (
+            streamablehttp_client(spec["url"], headers=spec.get("headers")) as (
+                read,
+                write,
+                _,
+            ),
+            ClientSession(read, write) as session,
         ):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
+            await session.initialize()
+            yield session
     else:
         raise ValueError("MCP server spec needs 'command' or 'url'")
 
@@ -109,8 +111,10 @@ async def discover_and_register() -> list[str]:
     registered: list[str] = []
     for alias, spec in _server_specs().items():
         try:
-
-            async def _list():
+            # `spec` is bound as a default: the closure would otherwise read the
+            # loop variable at await time, so every server after the first would
+            # be discovered against the last spec if this were ever deferred.
+            async def _list(spec=spec):
                 async with _session(spec) as session:
                     return await session.list_tools()
 

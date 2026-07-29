@@ -10,11 +10,10 @@ import pytest
 import helioai.tools.catalog_tools as ct_module
 from helioai.tools.catalog_tools import (
     _walk_catalogs,
-    list_catalogs,
     get_catalog,
     get_events_timeseries,
+    list_catalogs,
 )
-
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 

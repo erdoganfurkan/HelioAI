@@ -54,7 +54,7 @@ def test_session_reset_changes_id(monkeypatch, capsys):
     monkeypatch.setattr(s, "store", _make_store())
     original_id = magic._SESSION_ID
     _make_magic().helioai_session("reset")
-    assert magic._SESSION_ID != original_id
+    assert original_id != magic._SESSION_ID
     assert "Session reset" in capsys.readouterr().out
 
 
@@ -125,7 +125,7 @@ def test_resume_valid_prefix(monkeypatch, capsys):
     full_id = "abc12345-0000-rest"
     monkeypatch.setattr(s, "store", _make_store(all_ids=[full_id], messages=[]))
     _make_magic().helioai_resume("abc12345")
-    assert magic._SESSION_ID == full_id
+    assert full_id == magic._SESSION_ID
     assert "Resumed" in capsys.readouterr().out
 
 
@@ -151,7 +151,7 @@ def test_resume_exact_match(monkeypatch, capsys):
         s, "store", _make_store(all_ids=[full_id], messages=[MagicMock(), MagicMock()])
     )
     _make_magic().helioai_resume(full_id)
-    assert magic._SESSION_ID == full_id
+    assert full_id == magic._SESSION_ID
     assert "2 messages" in capsys.readouterr().out
 
 

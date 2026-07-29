@@ -24,6 +24,7 @@ _USER_ID = "cli"
 
 def _delete_session(prefix: str) -> None:
     import shutil
+
     from helioai.core.session import store
     from helioai.workspace import _root as _ws_root
 
@@ -215,6 +216,7 @@ def _run_export(prefix: str | None = None) -> None:
 def _run_profile() -> None:
     import os
     import subprocess
+
     from helioai.config import settings
 
     p = settings.profile.profile_path

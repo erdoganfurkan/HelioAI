@@ -104,8 +104,9 @@ async def test_system_prompt_is_recovered_from_history_when_not_passed(client):
 
 
 def test_explicit_system_prompt_wins():
-    from helioai.core.llm.gemini import GeminiClient
     import asyncio
+
+    from helioai.core.llm.gemini import GeminiClient
 
     c = GeminiClient(api_key="k", model="m")
     fake = _FakeGenAIClient()

@@ -8,7 +8,6 @@ import pytest
 
 from helioai.core.agent_loop import _extract_artifact, _history_tool_result, _summarize_tool_result
 
-
 # ──────────────────────────────── _summarize_tool_result ────────────────────
 
 
@@ -416,9 +415,8 @@ async def test_crash_mid_loop_still_persists_history(monkeypatch, tmp_path) -> N
     a session with the user prompt and nothing else once persisted.
     """
     from helioai.core import agent_loop
-    from helioai.core.session import SessionStore
-
     from helioai.core.llm.base import Message
+    from helioai.core.session import SessionStore
 
     db_path = tmp_path / "sessions.db"
     store = SessionStore(db_path)

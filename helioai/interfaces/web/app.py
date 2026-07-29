@@ -17,7 +17,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import helioai.tools.setup  # noqa: F401 — registers all tools at import time
-
 from helioai.config import dev_unlock, settings
 from helioai.core.agent_loop import stream_chat
 from helioai.core.llm.factory import build_llm_client

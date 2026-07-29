@@ -6,7 +6,6 @@ import pytest
 
 from helioai.indexer import _build_text, _get_region, _walk
 
-
 # ─────────────────────────────── _get_region ────────────────────────────────
 
 

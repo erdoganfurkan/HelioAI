@@ -6,14 +6,13 @@ available to the agent loop. Tools are registered via the registry singleton.
 
 from __future__ import annotations
 
-from helioai.tools.registry import registry
-from helioai.tools import sandbox as _sb
-from helioai.tools import speasy_tools as _spz
-from helioai.tools import plasmapy_tools as _ppy
-from helioai.tools import recipes as _rcp
 from helioai.tools import catalog_tools as _cat
 from helioai.tools import literature as _lit
-
+from helioai.tools import plasmapy_tools as _ppy
+from helioai.tools import recipes as _rcp
+from helioai.tools import sandbox as _sb
+from helioai.tools import speasy_tools as _spz
+from helioai.tools.registry import registry
 
 registry.register(
     name="search_parameters",

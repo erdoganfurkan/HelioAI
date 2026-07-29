@@ -15,7 +15,6 @@ from helioai.tools.plasmapy_tools import (
     power_spectrum,
 )
 
-
 # ──────────────────────────────── plasma_beta ────────────────────────────────
 
 

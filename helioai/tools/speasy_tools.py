@@ -33,8 +33,8 @@ async def get_timeseries(
     Returns dict with: param_id, start, stop, units, shape, n_points, preview (first 10 rows as CSV)
     """
     try:
-        import speasy as spz
         import numpy as np
+        import speasy as spz
     except ImportError:
         return {"error": "speasy is not installed. Run: pip install speasy"}
 
@@ -278,7 +278,9 @@ async def search_parameters(
             batch = rag_search_batch(queries, top_k=top_k, provider=provider)
             return {
                 "provider": provider,
-                "groups": [{"query": q, "results": r} for q, r in zip(queries, batch)],
+                "groups": [
+                    {"query": q, "results": r} for q, r in zip(queries, batch, strict=False)
+                ],
             }
         except Exception as e:
             log.warning("RAG batch search failed (%s), falling back to text scan", e)

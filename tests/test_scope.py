@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 # ── build_lead_system_prompt ──────────────────────────────────────────────────
 
 

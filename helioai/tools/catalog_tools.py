@@ -529,7 +529,7 @@ async def get_events_timeseries(
     import numpy as np
 
     stats: list[dict] = []
-    for i, (ev, ts) in enumerate(zip(selected, timeseries_list)):
+    for i, (ev, ts) in enumerate(zip(selected, timeseries_list, strict=False)):
         ev_start = _ev_iso(ev, "start_time", "start")
         ev_stop = _ev_iso(ev, "stop_time", "stop")
         if ts is None or len(ts.time) == 0:
@@ -595,7 +595,7 @@ async def get_events_timeseries(
     from helioai.datastore import save_event_collection
 
     series = []
-    for ev, ts in zip(selected, timeseries_list):
+    for ev, ts in zip(selected, timeseries_list, strict=False):
         ev_start = _ev_iso(ev, "start_time", "start")
         ev_stop = _ev_iso(ev, "stop_time", "stop")
         series.append((ev_start, ev_stop, ts if (ts is not None and len(ts.time) > 0) else None))
@@ -745,7 +745,7 @@ async def save_catalog(
     payload = {
         "name": name,
         "description": description,
-        "created": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "created": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "events": validated,
     }
     path = _catalogs_dir() / f"{name}.json"

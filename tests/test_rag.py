@@ -256,6 +256,7 @@ def test_search_batch_partial_cache(isolated_rag, monkeypatch) -> None:
 
 def test_search_catalogs_memoizes_collection(isolated_rag, monkeypatch) -> None:
     import chromadb
+
     from helioai.tools.rag import search_catalogs
 
     fake_col = MagicMock()

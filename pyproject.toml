@@ -59,6 +59,11 @@ Issues = "https://github.com/erdoganfurkan/HelioAI/issues"
 
 [project.optional-dependencies]
 solarmach = ["solarmach>=0.5"]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+    "mkdocs-jupyter>=0.25",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -98,4 +103,30 @@ line-length = 100
 target-version = "py312"
 # Recipes are snippets exec'd inside the sandbox with an injected namespace
 # (`export`, the loaded parameters, ...), so they are undefined-name by design.
-exclude = ["helioai/data/recipes/", "data/", "tasks/"]
+exclude = [
+    "helioai/data/recipes/",
+    # Prompt assets, not source. ruff 0.16 started reformatting Python blocks
+    # inside Markdown, which silently rewrites the text the model is shown —
+    # and prompt wording is functional here, not cosmetic.
+    "helioai/core/skills/",
+    "data/",
+    "tasks/",
+]
+
+[tool.ruff.lint]
+# Pinned explicitly. Leaving this unset inherits ruff's built-in defaults, which
+# widened between 0.9 and 0.16 and broke CI on a routine dependency bump — the
+# lint config must not depend on which ruff happens to resolve.
+#
+# Deliberately NOT selected:
+#   BLE, S110  broad excepts are the design: a failing tool must degrade to an
+#              error string, never kill the agent loop mid-conversation.
+#   S102       the sandbox and the recipe loader run exec() on purpose.
+#   PLW1510    subprocess calls whose return code is handled explicitly.
+#   SIM        stylistic rewrites only; not worth churning code we are not
+#              otherwise touching.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+ignore = [
+    "B008",  # FastAPI expresses dependencies as call-in-default: Depends(...)
+    "B904",  # tool errors are returned as values, not re-raised from context
+]

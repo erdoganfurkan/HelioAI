@@ -92,8 +92,9 @@ def save_timeseries(
 ) -> dict | None:
     """Persist a timeseries download. Returns {"dataset": name} or None on failure."""
     try:
-        import numpy as np
         import time as _time
+
+        import numpy as np
 
         data_dir = _session_data_dir()
         if data_dir is None:
@@ -149,8 +150,9 @@ def save_event_collection(
     Returns {"dataset": name} or None on failure.
     """
     try:
-        import numpy as np
         import time as _time
+
+        import numpy as np
 
         data_dir = _session_data_dir()
         if data_dir is None:

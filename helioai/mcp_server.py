@@ -14,14 +14,14 @@ import contextlib
 import sys
 from typing import Any
 
+from mcp import types
+from mcp.server import Server
+from mcp.server.lowlevel import NotificationOptions
+from mcp.server.models import InitializationOptions
+
 import helioai.tools.setup  # noqa: F401 — registers all tools at import time
 from helioai.logging_config import setup_logging
 from helioai.tools.registry import registry
-
-from mcp import types
-from mcp.server import Server
-from mcp.server.models import InitializationOptions
-from mcp.server.lowlevel import NotificationOptions
 
 server = Server("helioai")
 
@@ -52,9 +52,9 @@ async def serve_stdio() -> None:
 
 
 def build_http_app():
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
     from starlette.routing import Mount
-    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
     manager = StreamableHTTPSessionManager(app=server, json_response=False, stateless=False)
 

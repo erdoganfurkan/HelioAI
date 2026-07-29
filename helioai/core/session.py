@@ -10,10 +10,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from helioai.config import settings
 from helioai.core.llm.base import Message, ToolCall
 
-_SERVICE_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_DB = Path(os.environ.get("HELIOAI_SESSION_DB", str(_SERVICE_ROOT / "data" / "sessions.db")))
+DEFAULT_DB = Path(os.environ.get("HELIOAI_SESSION_DB", str(settings.data_dir / "sessions.db")))
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (

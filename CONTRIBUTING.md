@@ -97,10 +97,15 @@ with the PyHC PHEP 3 compliance action.
 
 ## Adding a scientific recipe
 
-Recipes live in `data/recipes/` and are plain Python modules loaded on demand by
-the agent. Each one **must** carry a `# reference:` line naming the paper the
-method comes from — provenance is a core promise of this project, not a nicety.
-Look at `data/recipes/mvab.py` for the shape.
+Recipes live in `helioai/data/recipes/` and are plain Python modules loaded on
+demand by the agent. They sit inside the package so they ship with the wheel.
+Each one **must** carry a `# reference:` line naming the paper the method comes
+from — provenance is a core promise of this project, not a nicety. Look at
+`helioai/data/recipes/mvab.py` for the shape.
+
+Recipes are exec'd in the sandbox with an injected namespace (`export`, the
+loaded parameters), so they legitimately reference undefined names and are
+excluded from linting.
 
 ## Reporting bugs
 

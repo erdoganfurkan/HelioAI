@@ -94,4 +94,6 @@ omit = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-exclude = ["data/", "tasks/"]
+# Recipes are snippets exec'd inside the sandbox with an injected namespace
+# (`export`, the loaded parameters, ...), so they are undefined-name by design.
+exclude = ["helioai/data/recipes/", "data/", "tasks/"]

@@ -17,9 +17,9 @@ RUN uv sync --frozen --no-dev
 FROM python:3.12-slim AS runtime
 
 COPY --from=builder /app/.venv /app/.venv
+# Recipes live in helioai/data/recipes/ and travel with the package; user data
+# (chroma, sessions, workspace) comes from the volume mounted at /app/data.
 COPY --from=builder /app/helioai /app/helioai
-# Recipes ship with the image; user data (chroma, sessions, workspace) comes from the volume
-COPY data/recipes/ /app/data/recipes/
 
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" \

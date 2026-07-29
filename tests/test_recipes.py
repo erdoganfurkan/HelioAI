@@ -109,6 +109,18 @@ async def test_load_recipe_empty_name(recipes_dir):
 # ── Real recipes on disk ──────────────────────────────────────────────────────
 
 
+def _real_recipe(filename: str) -> Path:
+    """Locate a shipped recipe.
+
+    Resolved through `settings` rather than hardcoded, so moving the recipe
+    directory cannot silently break these tests again — they now fail loudly if
+    the configured location is wrong, which is the point.
+    """
+    from helioai.config import _PKG_RECIPES
+
+    return _PKG_RECIPES / filename
+
+
 async def test_real_recipes_all_present():
     """All seven expected recipes must be loadable from the real data/recipes dir."""
     expected = {
@@ -145,14 +157,13 @@ async def test_real_recipes_have_reference():
 
 def test_sep_onset_cusum_recipe_detects_synthetic_onset():
     import types
-    from pathlib import Path
 
     import matplotlib
     import numpy as np
 
     matplotlib.use("Agg")
 
-    src = Path(__file__).parent.parent / "data" / "recipes" / "sep_onset_poisson_cusum.py"
+    src = _real_recipe("sep_onset_poisson_cusum.py")
     code = src.read_text(encoding="utf-8")
 
     rng = np.random.default_rng(42)
@@ -176,13 +187,12 @@ def test_sep_onset_cusum_recipe_detects_synthetic_onset():
 
 
 def test_solar_mach_recipe_graceful_without_dep():
-    from pathlib import Path
     from unittest.mock import patch
 
     import matplotlib
 
     matplotlib.use("Agg")
-    src = Path(__file__).parent.parent / "data" / "recipes" / "solar_mach.py"
+    src = _real_recipe("solar_mach.py")
     code = src.read_text(encoding="utf-8")
     with patch.dict("sys.modules", {"solarmach": None}):
         ns: dict = {}

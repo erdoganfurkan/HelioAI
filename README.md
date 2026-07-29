@@ -66,7 +66,9 @@ uv sync
 helioai index
 ```
 
-This downloads the speasy catalogue and indexes it into a local ChromaDB (`data/chroma/`).
+This downloads the speasy catalogue and indexes it into a local ChromaDB. It lands in
+`<repo>/data/` when running from a clone, and in `~/.local/share/helioai/` when installed
+from PyPI — override either with `HELIOAI_DATA_DIR`.
 
 ---
 

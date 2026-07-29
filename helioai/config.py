@@ -13,9 +13,30 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-_ROOT = Path(__file__).resolve().parent.parent
+_PKG = Path(__file__).resolve().parent
+_ROOT = _PKG.parent
 
 load_dotenv(_ROOT / ".env")
+
+# Recipes ship inside the wheel: they are read-only assets, not user data.
+# Override with HELIOAI_RECIPES_DIR to use your own set.
+_PKG_RECIPES = _PKG / "data" / "recipes"
+
+# Running from a git clone keeps writing to <repo>/data so existing installs and
+# the developer workflow are untouched. Installed as a package, _ROOT would be
+# site-packages/ — write user data to the XDG data dir instead.
+_IN_REPO = (_ROOT / "pyproject.toml").is_file()
+
+
+def _default_data_dir() -> Path:
+    if _IN_REPO:
+        return _ROOT / "data"
+    xdg = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+    return base / "helioai"
+
+
+_DATA = _default_data_dir()
 
 
 @dataclass
@@ -69,7 +90,7 @@ class AgentConfig:
 
 @dataclass
 class RAGConfig:
-    chroma_dir: Path = field(default_factory=lambda: _ROOT / "data" / "chroma")
+    chroma_dir: Path = field(default_factory=lambda: _DATA / "chroma")
     collection_name: str = "speasy_catalog"
     catalogs_collection_name: str = "speasy_catalogs"
     embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -83,23 +104,23 @@ class RAGConfig:
 
 @dataclass
 class WorkspaceConfig:
-    workspace_dir: Path = field(default_factory=lambda: _ROOT / "data" / "workspace")
+    workspace_dir: Path = field(default_factory=lambda: _DATA / "workspace")
     ttl_seconds: int = 86400 * 7  # 7 days
 
 
 @dataclass
 class ProfileConfig:
-    profile_path: Path = field(default_factory=lambda: _ROOT / "data" / "profile.md")
+    profile_path: Path = field(default_factory=lambda: _DATA / "profile.md")
 
 
 @dataclass
 class RecipesConfig:
-    recipes_dir: Path = field(default_factory=lambda: _ROOT / "data" / "recipes")
+    recipes_dir: Path = field(default_factory=lambda: _PKG_RECIPES)
 
 
 @dataclass
 class CatalogsConfig:
-    catalogs_dir: Path = field(default_factory=lambda: _ROOT / "data" / "catalogs")
+    catalogs_dir: Path = field(default_factory=lambda: _DATA / "catalogs")
 
 
 @dataclass
@@ -140,7 +161,7 @@ class WebAuthConfig:
 
 @dataclass
 class Settings:
-    data_dir: Path = field(default_factory=lambda: _ROOT / "data")
+    data_dir: Path = field(default_factory=lambda: _DATA)
     llm: LLMConfig = field(default_factory=LLMConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     rag: RAGConfig = field(default_factory=RAGConfig)
@@ -173,12 +194,12 @@ def _load() -> Settings:
     provider = os.environ.get("HELIOAI_LLM_PROVIDER", "azure").lower()
     max_iterations = int(os.environ.get("HELIOAI_MAX_ITERATIONS", "10"))
 
-    data_dir = Path(os.environ.get("HELIOAI_DATA_DIR", str(_ROOT / "data")))
-    workspace_dir = Path(os.environ.get("HELIOAI_WORKSPACE", str(_ROOT / "data" / "workspace")))
+    data_dir = Path(os.environ.get("HELIOAI_DATA_DIR", str(_DATA)))
+    workspace_dir = Path(os.environ.get("HELIOAI_WORKSPACE", str(_DATA / "workspace")))
     workspace_ttl = int(os.environ.get("HELIOAI_WORKSPACE_TTL_S", str(86400 * 7)))
-    profile_path = Path(os.environ.get("HELIOAI_PROFILE", str(_ROOT / "data" / "profile.md")))
-    recipes_dir = Path(os.environ.get("HELIOAI_RECIPES_DIR", str(_ROOT / "data" / "recipes")))
-    catalogs_dir = Path(os.environ.get("HELIOAI_CATALOGS_DIR", str(_ROOT / "data" / "catalogs")))
+    profile_path = Path(os.environ.get("HELIOAI_PROFILE", str(_DATA / "profile.md")))
+    recipes_dir = Path(os.environ.get("HELIOAI_RECIPES_DIR", str(_PKG_RECIPES)))
+    catalogs_dir = Path(os.environ.get("HELIOAI_CATALOGS_DIR", str(_DATA / "catalogs")))
     hybrid_enabled = os.environ.get("HELIOAI_RAG_HYBRID", "1") != "0"
 
     dev_token = os.environ.get("HELIOAI_DEV_TOKEN", "")

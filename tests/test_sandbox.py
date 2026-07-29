@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -213,9 +212,11 @@ async def test_superposed_epoch_recipe_end_to_end(tmp_path) -> None:
     }
     (data_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
-    # Load recipe source from data/recipes/superposed_epoch.py
-    recipe_path = Path(__file__).parent.parent / "data" / "recipes" / "superposed_epoch.py"
-    recipe_src = recipe_path.read_text(encoding="utf-8")
+    # Load the shipped recipe through settings rather than a hardcoded path, so
+    # relocating the recipe directory cannot silently break this test.
+    from helioai.config import _PKG_RECIPES
+
+    recipe_src = (_PKG_RECIPES / "superposed_epoch.py").read_text(encoding="utf-8")
 
     # Strip the standalone-demo comment block and append events loading
     setup = "events = load_data('bz_events')\n"

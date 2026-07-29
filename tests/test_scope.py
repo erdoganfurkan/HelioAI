@@ -66,3 +66,23 @@ def test_dev_unlock_empty_server_token(monkeypatch):
     assert dev_unlock("anything") is False
     assert dev_unlock("") is False
     assert dev_unlock(None) is False
+
+
+def test_dev_unlock_uses_constant_time_comparison(monkeypatch):
+    """A plain == leaks a timing side-channel on the first mismatched char — must use hmac."""
+    import hmac
+
+    import helioai.config as config_module
+
+    monkeypatch.setattr(config_module.settings.dev, "token", "s3cr3t")
+    calls = []
+    real_compare_digest = hmac.compare_digest
+
+    def spy(a, b):
+        calls.append((a, b))
+        return real_compare_digest(a, b)
+
+    monkeypatch.setattr(hmac, "compare_digest", spy)
+
+    assert config_module.dev_unlock("s3cr3t") is True
+    assert calls, "dev_unlock must compare the token via hmac.compare_digest, not =="

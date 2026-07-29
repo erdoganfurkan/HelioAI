@@ -6,6 +6,7 @@ Fails fast at import time if the configured LLM provider is missing an API key.
 
 from __future__ import annotations
 
+import hmac
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -236,4 +237,8 @@ def dev_unlock(supplied: str | None) -> bool:
     Returns False when the server-side token is empty (guards against
     accidentally unlocking an unconfigured instance).
     """
-    return bool(settings.dev.token) and supplied == settings.dev.token
+    return (
+        bool(settings.dev.token)
+        and supplied is not None
+        and hmac.compare_digest(supplied, settings.dev.token)
+    )

@@ -30,7 +30,12 @@ dependencies = [
     "fastapi>=0.115",
     "httpx>=0.27",
     "uvicorn[standard]>=0.30",
-    "mcp>=1.0",
+    # Capped: mcp 2.0 is a breaking rewrite of BOTH surfaces HelioAI uses — the
+    # client lost `streamablehttp_client(headers=...)` and its 3-tuple yield, and
+    # the server lost the @server.list_tools()/@server.call_tool() decorators
+    # entirely. PHEP 3 allows an upper bound when genuinely necessary; migrating
+    # mcp_server.py is tracked separately and this cap comes off with it.
+    "mcp>=1.0,<2",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "structlog>=24.0",

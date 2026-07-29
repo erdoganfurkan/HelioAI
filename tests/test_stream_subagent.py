@@ -99,11 +99,12 @@ async def test_unknown_role_ends_with_an_error_instead_of_raising():
 # ── happy path ─────────────────────────────────────────────────────────────────
 
 
-async def test_text_only_response_ends_the_sub_agent(stub_registry):
-    events = await drain(**base(ScriptedLLM([text("amda/imf_bz is the one")])))
+async def test_text_only_response_ends_the_sub_agent(stub_registry, monkeypatch):
+    # No id in the answer, so id verification never touches the index.
+    events = await drain(**base(ScriptedLLM([text("resolved the parameter")])))
     data = final(events)
     assert events[-1]["event"] == "sub_agent_end"
-    assert data["summary"] == "amda/imf_bz is the one"
+    assert data["summary"] == "resolved the parameter"
     assert data["error"] is None
     assert data["n_iterations"] == 1
 
@@ -258,3 +259,89 @@ async def test_workspace_session_is_reset_even_on_failure(stub_registry):
     await drain(**base(Boom()))
     after = ws.get_session_id() if hasattr(ws, "get_session_id") else None
     assert before == after, "the session contextvar must be restored"
+
+
+# ── invented parameter ids ─────────────────────────────────────────────────────
+
+
+def test_extract_ids_finds_every_provider_prefix():
+    from helioai.tools.rag import extract_ids
+
+    text = (
+        "Use amda/imf_real_gse and cda/AC_H0_SWE/Np, plus "
+        "csa/C3_CP_CIS-HIA_ONBOARD_MOMENTS/density__C3_CP_CIS-HIA_ONBOARD_MOMENTS."
+    )
+    assert extract_ids(text) == [
+        "amda/imf_real_gse",
+        "cda/AC_H0_SWE/Np",
+        "csa/C3_CP_CIS-HIA_ONBOARD_MOMENTS/density__C3_CP_CIS-HIA_ONBOARD_MOMENTS",
+    ]
+
+
+def test_extract_ids_ignores_prose_without_ids():
+    from helioai.tools.rag import extract_ids
+
+    assert extract_ids("I could not find a suitable parameter for that.") == []
+
+
+@pytest.fixture
+def fake_index(monkeypatch):
+    """Pretend the catalogue holds exactly one id."""
+    real = "csa/C3_CP_CIS-HIA_ONBOARD_MOMENTS/density__C3_CP_CIS-HIA_ONBOARD_MOMENTS"
+
+    class _Collection:
+        def get(self, ids):
+            return {"ids": [i for i in ids if i == real]}
+
+    from helioai.tools import rag
+
+    monkeypatch.setattr(rag, "_collection_only", lambda: _Collection())
+    return real
+
+
+async def test_invented_id_is_contradicted_in_the_summary(stub_registry, fake_index):
+    """The real regression: a spliced id that exists in neither source dataset."""
+    bogus = "csa/C3_PP_CIS/C3_CP_CIS-HIA_ONBOARD_MOMENTS/N_p__C3_CP_CIS-HIA_ONBOARD_MOMENTS"
+    llm = ScriptedLLM([text(f"Use {bogus} for the ion density.")])
+
+    events = await drain(**base(llm))
+
+    flagged = [e for e in events if e["event"] == "invalid_ids"]
+    assert flagged, "an id absent from the catalogue must raise an invalid_ids event"
+    assert flagged[0]["data"]["ids"] == [bogus]
+    assert flagged[0]["data"]["sub_agent_ctx"]["role"] == "parameter_hunter"
+
+
+async def test_real_id_passes_silently(stub_registry, fake_index):
+    llm = ScriptedLLM([text(f"Use {fake_index} for the ion density.")])
+    events = await drain(**base(llm))
+    assert not [e for e in events if e["event"] == "invalid_ids"]
+
+
+def test_correction_names_the_bad_id_and_keeps_the_original_text(fake_index):
+    """The wrong id is contradicted, not silently rewritten.
+
+    The lead agent must be able to see that its sub-agent was unreliable, and
+    guessing a replacement would repeat the original mistake.
+    """
+    from helioai.core.sub_agents import _flag_unknown_ids
+
+    bogus = "csa/C3_PP_CIS/bogus__X"
+    out, flagged = _flag_unknown_ids(f"Recommended: {bogus}")
+
+    assert flagged == [bogus]
+    assert "Recommended:" in out, "the original answer must remain visible"
+    assert bogus in out
+    assert "NOT in the catalogue" in out
+    assert "search_parameters" in out, "the correction should say how to recover"
+
+
+def test_verification_outage_raises_no_false_alarm(monkeypatch):
+    """If the index cannot be read, stay silent rather than cry wolf."""
+    from helioai.tools import rag
+
+    def boom():
+        raise RuntimeError("index missing")
+
+    monkeypatch.setattr(rag, "_collection_only", boom)
+    assert rag.unknown_ids(["cda/whatever/X"]) == []

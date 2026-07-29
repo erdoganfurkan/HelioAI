@@ -69,6 +69,26 @@ def _load():
     return _model, _collection
 
 
+def _collection_only():
+    """Open the Chroma collection without loading the embedding model.
+
+    An id lookup needs no embeddings. Going through `_load()` would pull ~90 MB
+    of model weights just to compare strings, on every sub-agent answer.
+    """
+    global _collection
+    if _collection is not None:
+        return _collection
+    with _lock:
+        if _collection is None:
+            import chromadb
+
+            if not settings.rag.chroma_dir.exists():
+                raise RuntimeError(f"ChromaDB index not found at {settings.rag.chroma_dir}.")
+            client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
+            _collection = client.get_collection(name=settings.rag.collection_name)
+    return _collection
+
+
 def _load_reranker():
     global _reranker, _reranker_loaded
     if not settings.rag.rerank_enabled:
@@ -444,3 +464,45 @@ def search(
     return search_batch(
         [query], top_k, provider=provider, region=region, measurement_type=measurement_type
     )[0]
+
+
+_ID_RE = re.compile(r"\b(?:amda|cda|csa|ssc)/[A-Za-z0-9_\-./]*[A-Za-z0-9_]")
+
+
+def extract_ids(text: str) -> list[str]:
+    """Find speasy-looking parameter ids in free text, in order, deduplicated.
+
+    Args:
+        text: Prose that may quote parameter ids.
+
+    Returns:
+        Candidate ids, each seen once.
+    """
+    seen: dict[str, None] = {}
+    for match in _ID_RE.findall(text or ""):
+        seen.setdefault(match.rstrip(".,;:)"), None)
+    return list(seen)
+
+
+def unknown_ids(ids: list[str]) -> list[str]:
+    """Return the ids that are absent from the index.
+
+    A direct key lookup — no embedding, no ranking — so this is cheap enough to
+    run on every sub-agent answer. Returns an empty list if the index cannot be
+    reached, because a verification outage must not manufacture false alarms.
+
+    Args:
+        ids: Candidate parameter ids.
+
+    Returns:
+        Those that do not exist in the catalogue.
+    """
+    if not ids:
+        return []
+    try:
+        collection = _collection_only()
+        known = set(collection.get(ids=list(ids)).get("ids") or [])
+    except Exception as e:  # index missing, corrupt, or not yet built
+        log.warning("id_verification_unavailable: %s", e)
+        return []
+    return [i for i in ids if i not in known]

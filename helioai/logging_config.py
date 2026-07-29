@@ -71,6 +71,23 @@ def setup_logging(level: str | int = "INFO") -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(level)
+    _quiet_third_party_advisories()
+
+
+def _quiet_third_party_advisories() -> None:
+    """Keep other libraries' non-actionable notices out of the agent transcript.
+
+    huggingface_hub echoes the server's `X-HF-Warning` header, so every load of
+    the cached embedding model printed "set a HF_TOKEN to enable higher rate
+    limits" into the middle of a conversation — twice, since structlog's stdlib
+    bridge re-emitted it decorated with the sub-agent context, making it look
+    like HelioAI was warning about something.
+
+    Nothing is wrong when it fires: the model is cached and the request is only a
+    freshness check. Real HTTP failures still raise, and the notice is still
+    visible at DEBUG.
+    """
+    logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
 
 
 def get_logger(name: str | None = None) -> Any:

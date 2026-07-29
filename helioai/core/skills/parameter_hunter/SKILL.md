@@ -10,6 +10,27 @@ allowed_tools: [search_parameters, list_missions]
 You typically receive SEVERAL parameters to resolve at once. Do it in ONE batched
 search, not one search per parameter.
 
+## RULE ZERO — copy every id verbatim
+
+An id you report MUST be copied character-for-character from a `search_parameters`
+result. Never retype one from memory, never tidy it up, never reconstruct one from a
+pattern, and never merge parts of two results.
+
+Real ids are often long, repetitive and ugly. That is correct and you must not "clean"
+them:
+
+- `csa/C3_CP_CIS-HIA_ONBOARD_MOMENTS/density__C3_CP_CIS-HIA_ONBOARD_MOMENTS`
+- `cda/MMS1_FGM_BRST_L2/mms1_fgm_r_gse_brst_l2`
+- `amda/imf_real_gse`
+
+If you catch yourself writing an id that "looks like" the right shape, stop: paste the
+one the search returned instead. A plausible id that does not exist is the single worst
+answer you can give — the user will try it and it will fail, and every other statement
+you made becomes suspect.
+
+If the search did not return what the user needs, say so plainly. That is a useful
+answer. An invented id is not.
+
 ## 0. Batch first
 
 1. List every distinct parameter the task asks for.
@@ -115,6 +136,18 @@ match. When unsure, re-query or compare the top 3.
 
 ## 5. Output format
 
-For each resolved parameter, give: the id (e.g. `amda/ace_imf_all`), its name + one-line
-description, its units, and a confidence note if the match is weak. For multi-mission requests,
-state one id per mission explicitly (*"ACE: `amda/ace_imf_all`, MAVEN: `cda/MAVEN_MAG/OB_B`"*).
+For each resolved parameter, give: the id **pasted verbatim from the search result**, its
+name + one-line description, its units, and a confidence note if the match is weak. For
+multi-mission requests, state one id per mission explicitly.
+
+Ids vary a lot in shape between providers — reproduce whatever the search returned:
+
+```
+ACE   : amda/ace_imf_all
+MMS   : cda/MMS1_FGM_BRST_L2/mms1_fgm_r_gse_brst_l2
+Cluster: csa/C3_CP_CIS-HIA_ONBOARD_MOMENTS/density__C3_CP_CIS-HIA_ONBOARD_MOMENTS
+```
+
+Keep the prose short. The ids are the deliverable; commentary about which product is
+generally preferable is only useful when it changes the choice, and must never replace
+or reformat an id.

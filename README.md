@@ -8,7 +8,7 @@ Ask questions in natural language — HelioAI finds the right parameter across 7
 [![codecov](https://codecov.io/gh/erdoganfurkan/HelioAI/branch/main/graph/badge.svg)](https://codecov.io/gh/erdoganfurkan/HelioAI)
 [![PyPI](https://img.shields.io/pypi/v/helioai)](https://pypi.org/project/helioai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue)](pyproject.toml)
 
 ---
 
@@ -17,7 +17,7 @@ Ask questions in natural language — HelioAI finds the right parameter across 7
 ```
 You:      "IP shock in WIND data, January 2005 — compute θ_Bn"
 
-HelioAI:  → resolves param IDs for B, Vp, Np across 65k speasy products
+HelioAI:  → resolves param IDs for B, Vp, Np across 83k speasy products
           → downloads the time series via speasy (AMDA / CDAWeb / CSA)
           → runs shock detection + coplanarity theorem in a sandboxed Python env
           → returns a plot, the θ_Bn value, and a reproducible .ipynb notebook
@@ -32,9 +32,9 @@ No API key required for data access. No manual parameter hunting.
 - **Hybrid RAG** — semantic (MiniLM) + lexical (BM25) search over 83k parameters, fused by Reciprocal Rank Fusion. Finds both vague descriptions *and* exact codes (`BGSEc`, `FGM`, `igrf_8sec_gse`).
 - **Event catalogs & timetables** — access 217 curated AMDA catalogs (ICMEs, bow-shock crossings, reconnection events, substorms, …). Download a parameter across every event in one call — the foundation for superposed epoch analysis and statistical surveys.
 - **PlasmaPy tools** — plasma β, gyrofrequency, Debye length, Alfvén speed, inertial length, power spectrum — ready-made for the agent.
-- **Sandboxed Python** — the agent writes and runs analysis code safely (subprocess, timeout). All scripts are saved for reproducibility.
-- **5 specialised skills** — `parameter_hunter`, `data_analyst`, `plasma_physicist`, `plotting`, `helioai_helper` — loaded as markdown, zero coupling to the agent loop.
-- **Derived recipes** — 7 reusable scientific scripts, each with a cited reference: θ_Bn, Walén test, MVAB, Rankine-Hugoniot jump conditions, pressure balance, pitch angle distribution, superposed epoch.
+- **Sandboxed Python** — the agent writes and runs analysis code under bubblewrap isolation on Linux (see SECURITY.md). All scripts are saved for reproducibility.
+- **6 specialised skills** — `parameter_hunter`, `data_analyst`, `plasma_physicist`, `librarian`, `plotting`, `helioai_helper` — loaded as markdown, zero coupling to the agent loop.
+- **Derived recipes** — 9 reusable scientific scripts, each with a cited reference: θ_Bn, Walén test, MVAB, Rankine-Hugoniot jump conditions, pressure balance, pitch angle distribution, superposed epoch, SEP onset (Poisson-CUSUM), Parker spiral connectivity.
 - **Literature search** — `find_papers` queries NASA ADS for papers relevant to an event or parameter; a dedicated `librarian` sub-agent handles multi-round literature searches without derailing the main analysis.
 - **Fill value masking** — `clean()` helper in the sandbox automatically masks CDF fill values (`|x| ≥ 1e30`, `±inf`) before any plot or analysis.
 - **Data quality checks** — every `get_timeseries` download is scanned (deterministically, no LLM) for missing/fill values, data gaps, and 5σ outliers; the agent flags them only when they matter, so you know what you're working with *before* analysis.

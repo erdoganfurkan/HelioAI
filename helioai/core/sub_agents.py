@@ -212,6 +212,42 @@ def _build_system_prompt(role: SubAgentRole) -> tuple[str, list[str]]:
     return prompt, loaded
 
 
+def _flag_unknown_ids(text: str) -> tuple[str, list[str]]:
+    """Append a correction when a sub-agent quotes parameter ids that do not exist.
+
+    Prompting alone does not stop this. Asked whether to use Cluster onboard
+    moments or prime parameters, a `parameter_hunter` run searched correctly and
+    then spliced two real products into one id that exists in neither:
+    `csa/C3_PP_CIS/...` grafted the CDAWeb prime-parameter dataset onto the CSA
+    onboard-moments path. A confidently wrong id is the most damaging possible
+    answer, so it is checked against the index rather than trusted.
+
+    The wrong ids are left in place and contradicted, not silently rewritten:
+    the lead agent needs to see that its sub-agent was unreliable, and guessing a
+    replacement would repeat the original mistake.
+
+    Args:
+        text: The sub-agent's final answer.
+
+    Returns:
+        The text (with a correction appended when needed) and the unknown ids.
+    """
+    from helioai.tools.rag import extract_ids, unknown_ids
+
+    bogus = unknown_ids(extract_ids(text))
+    if not bogus:
+        return text, []
+    listed = "\n".join(f"  - {i}" for i in bogus)
+    return (
+        f"{text}\n\n"
+        f"⚠️ AUTOMATED CORRECTION — the following ids are NOT in the catalogue and "
+        f"must not be used:\n{listed}\n"
+        f"They were not returned by any search. Call `search_parameters` again and "
+        f"copy the ids from its output verbatim.",
+        bogus,
+    )
+
+
 async def stream_subagent(
     role: str,
     description: str,
@@ -349,6 +385,14 @@ async def stream_subagent(
             capped=capped,
             n_artifacts=len(artifacts),
         )
+
+        final_text, bogus = _flag_unknown_ids(final_text)
+        if bogus:
+            log.warning("subagent_invented_ids", role=role, ids=bogus)
+            yield {
+                "event": "invalid_ids",
+                "data": {"ids": bogus, "sub_agent_ctx": ctx},
+            }
 
         yield {
             "event": "sub_agent_end",

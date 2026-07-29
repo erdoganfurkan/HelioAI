@@ -9,13 +9,18 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def reset_magic_state():
+    """`_SESSION_ID` is the only module state left to restore.
+
+    There used to be a cached `_llm` here too. It is gone: `_run_async` gives each
+    cell its own event loop, and a cached async client kept sockets from a loop
+    that had since closed, so the second `%%helioai` of a session died in the
+    connection pool with `RuntimeError: Event loop is closed`.
+    """
     import helioai.interfaces.jupyter_magic as magic
 
     original_session = magic._SESSION_ID
-    original_llm = magic._llm
     yield
     magic._SESSION_ID = original_session
-    magic._llm = original_llm
 
 
 def _make_store(summaries=None, all_ids=None, messages=None):
@@ -67,15 +72,25 @@ def test_session_unknown_command(capsys):
 
 
 def test_provider_valid_switches_llm(monkeypatch, capsys):
-    import helioai.interfaces.jupyter_magic as magic
+    """Switching sets the env var; the next cell picks it up when it builds.
 
-    magic._llm = MagicMock()
-    _make_magic().helioai_provider("gemini")
+    This used to also assert that the cached `_llm` was cleared. There is no
+    cache any more — see `test_get_llm_is_never_cached_across_cells`.
+    """
     import os
 
+    monkeypatch.setenv("HELIOAI_LLM_PROVIDER", "azure")
+    _make_magic().helioai_provider("gemini")
+
     assert os.environ.get("HELIOAI_LLM_PROVIDER") == "gemini"
-    assert magic._llm is None
     assert "gemini" in capsys.readouterr().out
+
+
+def test_provider_accepts_ollama(capsys):
+    """The README advertises ollama; the magic used to reject it."""
+    _make_magic().helioai_provider("ollama")
+    assert "ollama" in capsys.readouterr().out.lower()
+    assert "Unknown provider" not in capsys.readouterr().out
 
 
 def test_provider_invalid(capsys):
@@ -230,3 +245,31 @@ def test_render_jupyter_event_parameter_card_calls_display(monkeypatch):
     from IPython.display import HTML
 
     assert isinstance(displayed[0], HTML)
+
+
+def test_get_llm_is_never_cached_across_cells():
+    """Each cell must get its own client.
+
+    `_run_async` runs every cell in a fresh `asyncio.run` loop. An async HTTP
+    client binds its connection pool to the loop that first used it, so a client
+    reused across cells holds sockets from a closed loop and the next request
+    fails inside httpcore with `RuntimeError: Event loop is closed` — surfaced to
+    the user as a bare `APIConnectionError: Connection error`.
+
+    Returning a distinct object each call is the invariant that prevents it.
+    """
+    import helioai.interfaces.jupyter_magic as magic
+
+    built = []
+
+    def fake_build_llm_client(provider=None):
+        client = object()
+        built.append(client)
+        return client
+
+    with patch("helioai.core.llm.factory.build_llm_client", fake_build_llm_client):
+        first = magic._get_llm()
+        second = magic._get_llm()
+
+    assert first is not second, "a cached client would carry a dead event loop into the next cell"
+    assert len(built) == 2

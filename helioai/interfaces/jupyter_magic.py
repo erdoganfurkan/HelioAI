@@ -27,7 +27,6 @@ from IPython.display import HTML, Image, Markdown, display
 
 _SESSION_ID = str(uuid.uuid4())
 _USER_ID = "jupyter"
-_llm = None
 
 
 def _param_card_html(data: dict) -> str:
@@ -98,13 +97,20 @@ def _run_async(coro):
 
 
 def _get_llm():
-    global _llm
-    if _llm is not None:
-        return _llm
+    """Build a fresh client for this cell.
+
+    Deliberately not cached. `_run_async` gives every cell its own event loop via
+    `asyncio.run`, and an async HTTP client binds its connection pool to the loop
+    that first used it. A client kept across cells therefore ends up holding
+    sockets from a loop that has since been closed, and the next request dies in
+    the pool with `RuntimeError: Event loop is closed`.
+
+    Construction opens no connection — the pool binds lazily on first request —
+    so rebuilding per cell costs nothing next to the model call that follows.
+    """
     from helioai.core.llm.factory import build_llm_client
 
-    _llm = build_llm_client()
-    return _llm
+    return build_llm_client()
 
 
 def _render_jupyter_event(ev: dict) -> None:
@@ -233,15 +239,13 @@ class HelioAIMagics(Magics):
     @line_magic
     def helioai_provider(self, line: str) -> None:
         """`%helioai_provider [name]` — show or switch the LLM provider."""
-        global _llm
         provider = line.strip().lower()
-        if provider not in ("groq", "gemini", "azure"):
-            print(f"Unknown provider {provider!r}. Use: groq | gemini | azure")
+        if provider not in ("groq", "gemini", "azure", "ollama"):
+            print(f"Unknown provider {provider!r}. Use: groq | gemini | azure | ollama")
             return
         import os
 
         os.environ["HELIOAI_LLM_PROVIDER"] = provider
-        _llm = None
         print(f"Provider switched to {provider!r}.")
 
     @line_magic

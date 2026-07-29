@@ -56,3 +56,6 @@ Thumbs.db
 
 # uv
 .uv/
+
+# Built documentation (deployed by CI, never committed)
+site/

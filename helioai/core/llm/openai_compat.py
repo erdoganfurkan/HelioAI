@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -92,7 +93,7 @@ def to_openai_tools(tools: list[ToolDef]) -> list[dict]:
     ]
 
 
-def from_openai_response(response, provider: str = "openai") -> Message:
+def from_openai_response(response: Any, provider: str = "openai") -> Message:
     """Convert an OpenAI chat-completions response to a neutral message.
 
     Text content is preserved even when tool calls are present, and a tool call
@@ -162,7 +163,7 @@ class OpenAICompatClient(LLMClient):
         max_output_tokens: int = 4096,
         temperature: float | None = 0.2,
         provider: str = "openai",
-        client=None,
+        client: Any = None,
     ):
         self._client = client or AsyncOpenAI(
             api_key=api_key or "unused", base_url=base_url, max_retries=0

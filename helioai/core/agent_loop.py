@@ -149,6 +149,17 @@ def _read_profile(path_str: str, mtime: float) -> str:
         return ""
 
 
+def _active_output_budget() -> tuple[str, int]:
+    """Return (provider name, its max_output_tokens) for the active provider.
+
+    Only used to make the empty-response error actionable — it names the exact
+    setting to raise rather than leaving the user to find it.
+    """
+    provider = (settings.llm.provider or "").lower()
+    cfg = getattr(settings.llm, provider, None)
+    return provider, int(getattr(cfg, "max_output_tokens", 0) or 0)
+
+
 def _load_user_profile(user_id: str) -> str:
     """Return the user's profile content, or '' when the file does not exist."""
     from helioai.workspace import user_home
@@ -309,6 +320,28 @@ async def stream_chat(
 
             if not response.tool_calls:
                 store.save(user_id, session_id, history)
+                # No tool calls AND no text is a failed turn, not an answer. It was
+                # being yielded as an empty reply, so the caller saw the request
+                # simply produce nothing — silence indistinguishable from success.
+                # The usual cause is the output budget: on Azure, reasoning tokens
+                # are drawn from the same allowance, so a long generation can spend
+                # it entirely on reasoning and emit no content at all.
+                if not (response.content or "").strip():
+                    provider, cap = _active_output_budget()
+                    log.warning("empty_llm_response", turn=turn, provider=provider, cap=cap)
+                    yield {
+                        "event": "error",
+                        "data": {
+                            "message": (
+                                "the model returned neither text nor a tool call. This is "
+                                "usually the output token budget running out — set "
+                                f"HELIOAI_MAX_OUTPUT_TOKENS above {cap} (the current "
+                                f"{provider} limit) and retry, or ask for a shorter answer."
+                            )
+                        },
+                    }
+                    yield {"event": "done", "data": {"n_iterations": turn}}
+                    return
                 yield {"event": "reply", "data": {"text": response.content}}
                 yield {"event": "done", "data": {"n_iterations": turn}}
                 return

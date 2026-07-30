@@ -50,7 +50,12 @@ class AzureOpenAIConfig:
 
     deployment: str = "models-gpt-53-chat"
     api_version: str = "2024-12-01-preview"
-    max_output_tokens: int = 2048
+    # 8192, not the 2048 this used to be and not the 4096 the other providers use.
+    # Azure draws reasoning tokens from this same allowance, so a reasoning
+    # deployment can spend the whole budget thinking and return an empty message —
+    # no text, no tool call. At 2048 that happened on any request that generates a
+    # file: the standalone-script export in examples/02 produced nothing at all.
+    max_output_tokens: int = 8192
     temperature: float | None = None
     api_key: str = ""
     endpoint: str = ""
@@ -271,6 +276,12 @@ def _parse_users(raw: str) -> dict[str, str]:
 def _load() -> Settings:
     provider = os.environ.get("HELIOAI_LLM_PROVIDER", "azure").lower()
     max_iterations = int(os.environ.get("HELIOAI_MAX_ITERATIONS", "10"))
+    # One knob for every provider rather than four: what a user wants when a long
+    # generation comes back empty is simply "give the model more room", and the
+    # error raised in that case points here. Left unset, each provider keeps its
+    # own default.
+    max_out = os.environ.get("HELIOAI_MAX_OUTPUT_TOKENS", "")
+    out_override = int(max_out) if max_out.strip().isdigit() else None
 
     data_dir = Path(os.environ.get("HELIOAI_DATA_DIR", str(_DATA)))
     workspace_dir = Path(os.environ.get("HELIOAI_WORKSPACE", str(_DATA / "workspace")))
@@ -320,6 +331,10 @@ def _load() -> Settings:
         ),
         agent=AgentConfig(max_iterations=max_iterations),
     )
+
+    if out_override:
+        for name in ("azure", "gemini", "groq", "ollama"):
+            getattr(s.llm, name).max_output_tokens = out_override
 
     if provider == "azure":
         if not s.llm.azure.api_key:

@@ -467,3 +467,28 @@ def test_sandbox_env_pins_the_matplotlib_cache_under_home(tmp_path) -> None:
     env = sandbox._sandbox_env(home=str(tmp_path))
     assert env["MPLCONFIGDIR"].startswith(str(tmp_path))
     assert env["XDG_CACHE_HOME"].startswith(str(tmp_path))
+
+
+async def test_sandbox_runs_inside_the_session_workspace(tmp_path, monkeypatch):
+    """Agent code must be able to write files, and they must land in the workspace.
+
+    Regression: the cwd was inherited from the server — the repo root, which bwrap
+    mounts read-only — so `open(..., "w")` failed with EROFS. Act VI of examples/02
+    asks the agent to save a standalone script and could never succeed, whatever
+    the prompt or the token budget. On the non-bwrap fallback there is no read-only
+    mount at all, so the same cwd meant agent code could write into the repo.
+    """
+    import helioai.workspace as ws
+    from helioai.tools.sandbox import run_python
+
+    ws.set_user("t_cwd")
+    ws.set_session("s_cwd")
+
+    result = await run_python(
+        'import os\nprint(os.getcwd())\nopen("artifact.txt", "w").write("written by agent code")\n'
+    )
+
+    assert not result.get("error"), result
+    session_dir = ws.get_session_dir()
+    assert (session_dir / "artifact.txt").read_text() == "written by agent code"
+    assert str(session_dir) in (result.get("stdout") or "")

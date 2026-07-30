@@ -175,6 +175,11 @@ def _build_sandbox_cmd(plot_dir: str, full_code: str) -> list[str]:
         # Re-bind THIS session's workspace writable LAST, so no earlier tmpfs
         # (/tmp or data/) can mask it — plot_dir may live under either.
         cmd += ["--bind", plot_dir, plot_dir]
+        # Start IN the workspace. Without this the cwd is inherited from the server,
+        # which is the repo root under --ro-bind / /, so `open("out.py", "w")` failed
+        # with EROFS — the standalone-script export in examples/02 could not write
+        # its file no matter how the model was prompted.
+        cmd += ["--chdir", plot_dir]
         cmd += [sys.executable, "-c", full_code]
         return cmd
     return [sys.executable, "-c", full_code]
@@ -519,6 +524,7 @@ async def run_python(
                 env=sandbox_env,
                 start_new_session=True,
                 preexec_fn=_preexec_fn(),
+                cwd=plot_dir,  # same working directory as the bwrap path's --chdir
             )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)

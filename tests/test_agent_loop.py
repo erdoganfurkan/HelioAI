@@ -444,3 +444,37 @@ async def test_crash_mid_loop_still_persists_history(monkeypatch, tmp_path) -> N
     reloaded = SessionStore(db_path).get_or_create("web", "s1")
     assert [m.role for m in reloaded] == ["user", "assistant", "user"]
     assert reloaded[-1].content == "second"
+
+
+async def test_empty_llm_turn_is_reported_not_swallowed(monkeypatch, tmp_path):
+    """A turn with no text and no tool call is a failure, not an answer.
+
+    Regression: it was yielded as an empty `reply`, so the caller saw the request
+    produce nothing at all — silence indistinguishable from success. Act VI of
+    examples/02 hit this on Azure, whose reasoning tokens come out of the same
+    output allowance.
+    """
+    from helioai.core.agent_loop import stream_chat
+    from helioai.core.llm.base import Message
+
+    class _EmptyClient:
+        async def chat(self, messages, tools, system_prompt=""):
+            return Message(role="assistant", content="   ", tool_calls=None)
+
+        async def aclose(self):
+            return None
+
+    events = [
+        e
+        async for e in stream_chat(
+            _EmptyClient(), "web", "s_empty", "write me a long script", restricted=False
+        )
+    ]
+
+    kinds = [e["event"] for e in events]
+    assert "error" in kinds, f"an empty turn must surface an error, got {kinds}"
+    assert "reply" not in kinds, "an empty reply must not be emitted"
+
+    message = next(e["data"]["message"] for e in events if e["event"] == "error")
+    assert "HELIOAI_MAX_OUTPUT_TOKENS" in message, "the error must name the knob to raise"
+    assert kinds[-1] == "done"

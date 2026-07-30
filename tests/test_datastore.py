@@ -348,3 +348,18 @@ async def test_sandbox_load_data_rejects_traversal(session_dir):
         or result.get("returncode") != 0
         or "invalid" in result.get("stderr", "").lower()
     )
+
+
+def test_slug_avoids_sandbox_names():
+    """ACE density is `.../Np`, which would slug to `np` and rebind numpy.
+
+    load_data itself calls np.load, so a rebound `np` kills every later
+    load_data in the same cell — one plasma variable poisons the rest.
+    """
+    from helioai.datastore import _slug
+
+    assert _slug("cda/AC_H0_SWE/Np") == "np_data"
+    assert _slug("cda/AC_H0_MFI/BGSM") == "bgsm"
+    assert _slug("amda/imf_gsm") == "imf_gsm"
+    for reserved in ("np", "plt", "os", "json", "u"):
+        assert _slug(f"cda/X/{reserved}") != reserved

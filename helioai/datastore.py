@@ -34,9 +34,20 @@ def _session_data_dir() -> Path | None:
         return None
 
 
+# Names the sandbox preamble binds. A dataset may not take one of these: the model
+# writes `np = load_data("np")` for ACE density, which rebinds numpy — and since
+# load_data itself calls np.load, every LATER load_data in the same cell dies with
+# "SimpleNamespace has no attribute 'load'". One plasma variable poisons the rest.
+_SANDBOX_NAMES = frozenset(
+    "np plt spz pf u os json sys re math scipy matplotlib plasmapy "
+    "load_data clean export time".split()
+)
+
+
 def _slug(param_id: str) -> str:
     last = param_id.rstrip("/").split("/")[-1]
-    return re.sub(r"[^a-z0-9]+", "_", last.lower()).strip("_") or "dataset"
+    slug = re.sub(r"[^a-z0-9]+", "_", last.lower()).strip("_") or "dataset"
+    return f"{slug}_data" if slug in _SANDBOX_NAMES else slug
 
 
 def _read_manifest_file(data_dir: Path) -> dict:

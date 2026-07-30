@@ -187,3 +187,82 @@ async def test_get_timeseries_parameter_range_guard(monkeypatch) -> None:
     assert "suggestion" in result
     assert "available_start" in result
     mock_spz.get_data.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_timeseries_rejects_an_all_fill_series(monkeypatch, tmp_path):
+    """100% CDF fill is as empty as zero rows — reporting success gets it plotted.
+
+    Regression: ACE/SWEPAM during the 2003 Halloween storm returns 1913 rows of
+    -1e31, which used to come back as a successful download with a quality note.
+    """
+    import numpy as np
+
+    import helioai.tools.speasy_tools as st
+
+    n = 40
+    times = np.arange("2003-10-29T00:00", n, dtype="datetime64[m]")
+    values = np.full(n, -9.9999998e30)
+
+    class _Var:
+        unit = "cm^-3"
+        columns = ["Np"]
+        meta: dict = {}
+        name = "Np"
+
+        def __init__(self):
+            self.time = times
+            self.values = values
+
+        def __len__(self):
+            return n
+
+    import speasy
+
+    monkeypatch.setattr(speasy, "get_data", lambda *a, **k: _Var(), raising=False)
+
+    res = await st.get_timeseries("cda/AC_H0_SWE/Np", "2003-10-29", "2003-10-29T00:40")
+
+    assert "error" in res
+    assert res["missing_pct"] == 100.0
+    assert res["n_points"] == n
+    assert "dataset" not in res, "garbage must not be persisted"
+
+
+def test_data_quality_honours_the_declared_fillval():
+    """Not every mission fills with ~1e31 — Wind/SWE uses 99999.9.
+
+    That value passed the magnitude test and reached the agent as a plausible
+    solar-wind speed. Only the declared FILLVAL can catch it; a blanket
+    "reject >= 99999" rule would throw away real data such as an OMNI proton
+    temperature of 99093 K.
+    """
+    import numpy as np
+
+    from helioai.tools.speasy_tools import _data_quality
+
+    # The sentinel as Wind actually stores it: float32, hence not exactly 99999.9.
+    fill = np.float32(99999.9)
+    times = np.arange("2003-10-29T00:00", 10, dtype="datetime64[m]")
+    values = np.array([400.0, 420.0, fill, fill, 430.0, 440.0, 450.0, 460.0, 470.0, 480.0])
+
+    without = _data_quality(times, values, np)
+    assert without["missing_pct"] == 0.0, "documents the old blind spot"
+
+    with_fv = _data_quality(times, values, np, fill)
+    assert with_fv["missing_pct"] == 20.0
+    assert with_fv["notable"] is True
+
+
+def test_data_quality_keeps_real_values_near_the_sentinel():
+    """An OMNI proton temperature of 99093 K is real data, not a fill value."""
+    import numpy as np
+
+    from helioai.tools.speasy_tools import _data_quality
+
+    times = np.arange("2003-10-29T00:00", 4, dtype="datetime64[m]")
+    values = np.array([77695.0, 99093.0, 88000.0, 91000.0])
+
+    q = _data_quality(times, values, np, 99999.8984375)
+
+    assert q["missing_pct"] == 0.0

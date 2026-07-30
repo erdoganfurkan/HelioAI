@@ -75,6 +75,29 @@ async def get_timeseries(
     if n_points == 0:
         return {"error": f"Empty dataset for {param_id!r}"}
 
+    # Data quality on the full-resolution arrays (deterministic, before downsampling)
+    quality = _data_quality(times, values, np, (getattr(var, "meta", {}) or {}).get("FILLVAL"))
+
+    # An all-fill series is functionally as empty as a zero-length one: the rows
+    # exist but every value is a CDF fill (|x| >= 1e30). Reporting it as a
+    # successful download of n points is a lie the agent then plots — the
+    # ACE/SWEPAM saturation during the 2003 Halloween storm returns 1913 such
+    # rows. Fail here instead, and do not persist the garbage.
+    if quality.get("missing_pct") == 100.0:
+        return {
+            "error": (
+                f"{param_id!r} returned {n_points} rows between {start} and {stop} but "
+                f"every value is a fill value — the instrument has no valid data for "
+                f"this window."
+            ),
+            "suggestion": (
+                "Try another instrument or spacecraft for this quantity; the parameter "
+                "id is fine, the coverage is not."
+            ),
+            "n_points": n_points,
+            "missing_pct": 100.0,
+        }
+
     # Persist full-resolution data before downsampling
     from helioai.datastore import save_timeseries
 
@@ -89,9 +112,6 @@ async def get_timeseries(
         columns=list(getattr(var, "columns", None) or []),
         source="get_timeseries",
     )
-
-    # Data quality on the full-resolution arrays (deterministic, before downsampling)
-    quality = _data_quality(times, values, np)
 
     # Downsample if needed
     if n_points > max_points:
@@ -173,16 +193,33 @@ async def get_timeseries(
     return result
 
 
-def _data_quality(times, values, np) -> dict:
+def _data_quality(times, values, np, fillval=None) -> dict:
     """Deterministic data-quality checks on full-resolution arrays.
 
     Returns {} when the data is not numeric/datetime (provider-agnostic, like the
     cadence block). The `notable` flag gates whether the agent and the web card
     surface it: missing > 5%, any gap, or any 5σ outlier.
+
+    Args:
+        fillval: the dataset's declared CDF FILLVAL, when the provider exposes it.
+            Not every mission uses the ~1e31 convention — Wind/SWE fills with
+            99999.9, which passed the magnitude test and reached the agent as a
+            plausible solar-wind speed. The declared value is the only reliable
+            source: a blanket "reject >= 99999" heuristic would discard real
+            data, e.g. an OMNI proton temperature of 99093 K.
     """
     try:
         finite = np.isfinite(values)
         bad = ~finite | (np.abs(values) >= 1e30)
+        if fillval is not None:
+            try:
+                fv = float(np.asarray(fillval).ravel()[0])
+                if np.isfinite(fv):
+                    # rtol suits a float32 round-trip (Wind stores 99999.8984375);
+                    # far tighter than the ~1% gap to real values near the sentinel.
+                    bad = bad | np.isclose(values, fv, rtol=1e-6)
+            except (TypeError, ValueError, IndexError):
+                pass
         total = values.size
         missing_pct = round(100 * float(bad.sum()) / total, 1) if total else 0.0
 

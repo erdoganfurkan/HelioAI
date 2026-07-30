@@ -19,7 +19,11 @@ registry.register(
     description=(
         "Semantic search over 83 000+ speasy parameters (CDAWeb, AMDA, CSA, SSC). "
         "English natural-language queries. To resolve SEVERAL parameters pass `queries` "
-        "(a list) in ONE call (preferred); use `query` (string) for a single parameter."
+        "(a list) in ONE call (preferred); use `query` (string) for a single parameter. "
+        "When a `provider` filter is set, a few strong matches from OTHER providers are "
+        "appended and marked `outside_filter: true` — the filter still worked, these are "
+        "there so a wrong provider guess cannot hide the parameter you need. If they look "
+        "like a better match than the filtered hits, use them."
     ),
     parameters={
         "type": "object",
@@ -42,8 +46,11 @@ registry.register(
                 "type": "string",
                 "enum": ["amda", "cda", "csa", "ssc"],
                 "description": (
-                    "Optional: restrict to one provider (applies to all queries). CDA dominates "
-                    "the catalog (~68k of 83k) — set amda or csa when hunting their products."
+                    "Optional: restrict to one provider (applies to all queries). Leave it "
+                    "UNSET unless the user named a provider or an unfiltered search came back "
+                    "noisy — guessing it wrong costs you the best matches. CDA holds ~68k of "
+                    "the 83k, so amda/csa products rank low in generic queries; that is what "
+                    "the filter is for."
                 ),
             },
         },

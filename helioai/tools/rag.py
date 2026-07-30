@@ -148,6 +148,48 @@ def _load_bm25():
     return _bm25
 
 
+# How many out-of-filter hits to append when a provider filter is in force.
+_CROSS_PROVIDER_EXTRA = 2
+
+
+def _provider_of(param_id: str) -> str:
+    """Provider prefix of a speasy id — `csa/C3_.../density` → `csa`."""
+    return param_id.split("/", 1)[0] if "/" in param_id else ""
+
+
+def _append_cross_provider(
+    filtered: list[dict], unfiltered: list[dict], provider: str, limit: int
+) -> list[dict]:
+    """Append the best hits the provider filter excluded, flagged as such.
+
+    A `provider` filter is exclusive: asking for `cda` makes an AMDA product
+    unreachable rather than merely lower-ranked, so an over-eager filter turns a
+    findable parameter into "not found" — indistinguishable from it not existing.
+    The model over-applies the filter in practice, so the tool stops making that
+    mistake fatal instead of relying on the model to stop making it.
+
+    Args:
+        filtered: Results from the filtered search, best first.
+        unfiltered: Results from the same query with no provider filter.
+        provider: The requested provider.
+        limit: How many out-of-filter hits to append at most.
+
+    Returns:
+        `filtered`, followed by up to `limit` hits from other providers, each
+        carrying `outside_filter: True` so the caller can see the filter held.
+    """
+    seen = {r["id"] for r in filtered}
+    extra = []
+    for r in unfiltered:
+        if len(extra) >= limit:
+            break
+        if r["id"] in seen or _provider_of(r["id"]) == provider:
+            continue
+        extra.append({**r, "outside_filter": True})
+        seen.add(r["id"])
+    return filtered + extra
+
+
 def _rrf_fuse(rankings: list[list[str]], k: int) -> dict[str, float]:
     """Reciprocal Rank Fusion: sum of 1/(k + rank) across each ranked id list."""
     scores: dict[str, float] = {}
@@ -346,6 +388,24 @@ def search_batch(
     all_metas = res.get("metadatas", []) or []
     all_dists = res.get("distances", []) or []
 
+    # Second pass without the provider constraint, so an over-eager filter cannot
+    # hide a parameter entirely. The embeddings are already computed, so this
+    # costs one extra ANN search per batch and no re-encoding.
+    open_hits: list[tuple] | None = None
+    if provider:
+        open_res = collection.query(
+            query_embeddings=vecs,
+            n_results=dense_k,
+            where=_build_where(None, region, measurement_type),
+            include=["documents", "metadatas", "distances"],
+        )
+        open_hits = (
+            open_res.get("ids", []) or [],
+            open_res.get("documents", []) or [],
+            open_res.get("metadatas", []) or [],
+            open_res.get("distances", []) or [],
+        )
+
     for j, (i, q) in enumerate(active):
         dense_hit = (
             all_ids[j] if j < len(all_ids) else [],
@@ -362,6 +422,17 @@ def search_batch(
             measurement_type=measurement_type,
             hybrid=hybrid,
         )
+        if open_hits is not None:
+            unfiltered = _fuse_query(
+                q,
+                tuple(col[j] if j < len(col) else [] for col in open_hits),
+                top_k,
+                provider=None,
+                region=region,
+                measurement_type=measurement_type,
+                hybrid=hybrid,
+            )
+            res = _append_cross_provider(res, unfiltered, provider, _CROSS_PROVIDER_EXTRA)
         results[i] = res
         key = _cache_key(q)
         if len(_search_cache) >= _SEARCH_CACHE_MAX:

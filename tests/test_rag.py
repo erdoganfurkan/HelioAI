@@ -107,10 +107,20 @@ def test_search_top_k_respected_when_collection_has_more(isolated_rag) -> None:
 
 
 def test_search_provider_filter(isolated_rag) -> None:
+    """Filtered hits come first; out-of-filter hits are appended and flagged.
+
+    The filter used to be purely exclusive. It is now additive, so this asserts
+    the stronger property: nothing from another provider can appear *unmarked*.
+    """
     _seed_mixed(isolated_rag)
     results = search("solar wind magnetic field", top_k=10, provider="amda")
     assert results
-    assert all(r["id"].startswith("amda/") for r in results)
+    in_filter = [r for r in results if not r.get("outside_filter")]
+    assert in_filter, "the requested provider must still be searched"
+    assert all(r["id"].startswith("amda/") for r in in_filter)
+    assert all(not r["id"].startswith("amda/") for r in results if r.get("outside_filter")), (
+        "a flagged hit should genuinely be from another provider"
+    )
 
 
 def test_search_no_filter_returns_all_providers(isolated_rag) -> None:
@@ -164,13 +174,21 @@ def test_hybrid_disabled_is_dense_only(isolated_rag, monkeypatch) -> None:
 
 
 def test_hybrid_respects_provider_filter(isolated_rag, monkeypatch) -> None:
+    """The filter still holds — anything outside it is appended and flagged.
+
+    Tightened when the filter became additive: rather than "every result is from
+    the provider", the contract is now "every result is from the provider, or is
+    explicitly marked as not being". A silent leak would fail this too.
+    """
     from helioai.config import settings
 
     monkeypatch.setattr(settings.rag, "hybrid_enabled", True)
     _seed_mixed(isolated_rag)  # amda/* and cda/*
     results = search("solar wind magnetic field", top_k=10, provider="amda")
     assert results
-    assert all(r["id"].startswith("amda/") for r in results)
+    for r in results:
+        assert r["id"].startswith("amda/") or r.get("outside_filter") is True
+    assert results[0]["id"].startswith("amda/")
 
 
 # ──────────────────────────────── batch search ──────────────────────────────
@@ -311,3 +329,98 @@ def test_reranker_composes_with_hybrid_and_batch(isolated_rag, monkeypatch) -> N
         assert g[0]["id"] == "param_5"  # reranker re-ordered the fused set
         assert g[0]["score"] > 0.9  # sigmoid(10) ≈ 1.0 (absolute score)
         assert all(0.0 <= r["score"] <= 1.0 for r in g)
+
+
+# ── additive provider filter ───────────────────────────────────────────────────
+
+
+def _seed_two_providers(collection) -> None:
+    """Seed the same physical quantity under two providers, with realistic ids."""
+    rng = np.random.default_rng(7)
+    entries = [
+        ("cda/WI_H0_MFI/BGSEa", "cda"),
+        ("cda/AC_H2_MFI/BGSEc", "cda"),
+        ("cda/AC_H1_MFI/BGSEc", "cda"),
+        ("amda/imf_real_gse", "amda"),
+        ("amda/dsc_b_gse", "amda"),
+    ]
+    vecs = rng.random((len(entries), 128)).astype("float32")
+    vecs = vecs / np.maximum(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9)
+    collection.add(
+        ids=[i for i, _ in entries],
+        embeddings=vecs.tolist(),
+        documents=["interplanetary magnetic field GSE. Units: nT." for _ in entries],
+        metadatas=[{"name": i, "units": "nT", "provider": p} for i, p in entries],
+    )
+
+
+def test_provider_of_extracts_the_prefix():
+    assert rag_module._provider_of("csa/C3_CP_X/density__C3_CP_X") == "csa"
+    assert rag_module._provider_of("amda/imf_real_gse") == "amda"
+    assert rag_module._provider_of("no-slash") == ""
+
+
+def test_append_cross_provider_flags_and_appends_after():
+    filtered = [{"id": "cda/a", "score": 0.9}, {"id": "cda/b", "score": 0.8}]
+    unfiltered = [{"id": "cda/a", "score": 0.9}, {"id": "amda/x", "score": 0.7}]
+
+    out = rag_module._append_cross_provider(filtered, unfiltered, "cda", 2)
+
+    assert [r["id"] for r in out] == ["cda/a", "cda/b", "amda/x"]
+    assert out[-1]["outside_filter"] is True
+    assert "outside_filter" not in out[0], "in-filter hits must not be flagged"
+
+
+def test_append_cross_provider_skips_duplicates_and_same_provider():
+    filtered = [{"id": "cda/a"}]
+    unfiltered = [{"id": "cda/a"}, {"id": "cda/c"}, {"id": "amda/x"}]
+
+    out = rag_module._append_cross_provider(filtered, unfiltered, "cda", 5)
+
+    assert [r["id"] for r in out] == ["cda/a", "amda/x"]
+
+
+def test_append_cross_provider_respects_the_limit():
+    filtered = [{"id": "cda/a"}]
+    unfiltered = [{"id": "amda/x"}, {"id": "csa/y"}, {"id": "ssc/z"}]
+
+    out = rag_module._append_cross_provider(filtered, unfiltered, "cda", 2)
+
+    assert len(out) == 3
+
+
+def test_provider_filter_no_longer_hides_other_providers(isolated_rag):
+    """The point of the change: an over-eager filter must not make a hit unreachable.
+
+    A `provider` filter is exclusive, so asking for `cda` used to put AMDA out of
+    reach entirely — "not found" rather than "ranked lower", which is
+    indistinguishable from the parameter not existing. The model over-applies the
+    filter in practice, so the tool stops making that fatal.
+    """
+    _seed_two_providers(isolated_rag)
+
+    results = search("interplanetary magnetic field GSE", top_k=3, provider="cda")
+
+    providers = {rag_module._provider_of(r["id"]) for r in results}
+    assert "cda" in providers
+    assert "amda" in providers, "the excluded provider should still be reachable"
+
+
+def test_filtered_hits_still_come_first(isolated_rag):
+    _seed_two_providers(isolated_rag)
+
+    results = search("interplanetary magnetic field GSE", top_k=3, provider="cda")
+
+    flags = [bool(r.get("outside_filter")) for r in results]
+    assert flags == sorted(flags), "out-of-filter hits must be appended, not interleaved"
+    assert not flags[0], "the requested provider still ranks first"
+
+
+def test_unfiltered_search_flags_nothing(isolated_rag):
+    """With no filter there is nothing to be outside of."""
+    _seed_two_providers(isolated_rag)
+
+    results = search("interplanetary magnetic field GSE", top_k=5)
+
+    assert results
+    assert not any("outside_filter" in r for r in results)

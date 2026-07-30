@@ -113,6 +113,7 @@ async def chat_stream(
     restricted = not (bool(settings.web_auth.users) or dev_unlock(x_helio_dev_token))
 
     async def gen():
+        llm = None
         try:
             llm = build_llm_client(req.provider)
             async for ev in stream_chat(
@@ -121,6 +122,12 @@ async def chat_stream(
                 yield f"data: {json.dumps(ev)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'event': 'error', 'data': {'message': str(e)}})}\n\n"
+        finally:
+            # One client per request, so the pool has to be released per request —
+            # including when the browser disconnects mid-stream and this generator
+            # is closed early.
+            if llm is not None:
+                await llm.aclose()
 
     return StreamingResponse(
         gen(),

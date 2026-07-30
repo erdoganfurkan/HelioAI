@@ -42,6 +42,23 @@ _ENV_KEEP = frozenset(
         "TEMP",
         "VIRTUAL_ENV",
         "MPLBACKEND",
+        # Windows essentials. Absent on POSIX, so listing them unconditionally
+        # changes nothing there. SYSTEMROOT is not optional: Winsock cannot locate
+        # its service providers without it and WSAStartup fails with
+        # `OSError: [WinError 10106]` on the first import that touches sockets —
+        # which is every sandbox run, since the preamble imports speasy.
+        # The APPDATA pair matters too, or matplotlib finds no home and rebuilds
+        # its font cache on every single call.
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "USERPROFILE",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
         "HTTP_PROXY",
         "HTTPS_PROXY",
         "NO_PROXY",
@@ -80,6 +97,10 @@ def _sandbox_env(home: str = "/tmp") -> dict[str, str]:
     env["XDG_CACHE_HOME"] = os.path.join(home, ".cache")
     env["XDG_DATA_HOME"] = os.path.join(home, ".local", "share")
     env["XDG_CONFIG_HOME"] = os.path.join(home, ".config")
+    # matplotlib ignores XDG on Windows, so point it at the writable home
+    # explicitly rather than letting it fall back to a fresh temp directory and
+    # rebuild the font cache on every single run.
+    env["MPLCONFIGDIR"] = os.path.join(home, ".cache", "matplotlib")
     return env
 
 

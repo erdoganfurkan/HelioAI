@@ -1511,7 +1511,6 @@ wheels = [
 
 [[package]]
 name = "helioai"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "astropy" },
@@ -1591,7 +1590,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=24.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
-provides-extras = ["solarmach", "docs", "dev"]
+provides-extras = ["dev", "docs", "solarmach"]
 
 [[package]]
 name = "hf-xet"

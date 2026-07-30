@@ -16,7 +16,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from .base import LLMClient, Message, ToolCall, ToolDef, call_with_retry
+from .base import LLMClient, Message, ToolCall, ToolDef, call_with_retry, close_sdk_client
 
 log = logging.getLogger(__name__)
 
@@ -173,6 +173,10 @@ class OpenAICompatClient(LLMClient):
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
         self._provider = provider
+
+    async def aclose(self) -> None:
+        """Close the httpx pool held by the SDK client."""
+        await close_sdk_client(self._client)
 
     async def chat(
         self,

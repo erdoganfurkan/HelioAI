@@ -9,7 +9,7 @@ import uuid
 from google import genai
 from google.genai import types as gt
 
-from .base import LLMClient, Message, ToolCall, ToolDef, call_with_retry
+from .base import LLMClient, Message, ToolCall, ToolDef, call_with_retry, close_sdk_client
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,10 @@ class GeminiClient(LLMClient):
         self._model = model
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
+
+    async def aclose(self) -> None:
+        """Close the transport held by the genai client (its close() is sync)."""
+        await close_sdk_client(self._client)
 
     async def chat(
         self,

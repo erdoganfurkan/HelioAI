@@ -155,6 +155,27 @@ def _render_jupyter_event(ev: dict) -> None:
             if data.get("preview"):
                 print(data["preview"])
 
+    elif name == "plan":
+        steps = data.get("steps") or []
+        lines = [f"**📋 {data.get('title', 'Plan')}**", ""]
+        for n, step in enumerate(steps, 1):
+            tool = step.get("tool")
+            suffix = f" · `{tool}`" if tool else ""
+            lines.append(f"{n}. {step.get('description', '')}{suffix}")
+        display(Markdown("\n".join(lines)))
+
+    elif name == "figure_review":
+        display(Markdown(f"**🔍 figure review** — {data.get('text', '')}"))
+
+    elif name == "invalid_ids":
+        ids = "\n".join(f"- `{i}`" for i in data.get("ids") or [])
+        display(
+            Markdown(
+                f"**⚠️ ids not found in the catalogue** — do not use these:\n{ids}\n\n"
+                "They were not returned by any search."
+            )
+        )
+
     elif name == "reply":
         display(Markdown(data.get("text", "")))
 
@@ -186,10 +207,16 @@ class HelioAIMagics(Magics):
         setup_logging("WARNING")
 
         async def _run():
-            async for ev in stream_chat(
-                _get_llm(), _USER_ID, _SESSION_ID, cell.strip(), restricted=_dev_restricted
-            ):
-                _render_jupyter_event(ev)
+            llm = _get_llm()
+            try:
+                async for ev in stream_chat(
+                    llm, _USER_ID, _SESSION_ID, cell.strip(), restricted=_dev_restricted
+                ):
+                    _render_jupyter_event(ev)
+            finally:
+                # Must happen inside this loop: the pool is bound to it, and
+                # `_run_async` closes the loop the moment this returns.
+                await llm.aclose()
 
         _run_async(_run())
 

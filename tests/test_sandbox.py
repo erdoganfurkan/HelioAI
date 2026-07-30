@@ -402,3 +402,68 @@ async def test_physics_helpers_available_in_sandbox() -> None:
     )
     assert result.get("error") is None, result.get("stderr", "")
     assert "10.25 13.51 10.0" in result["stdout"]
+
+
+# ── environment allowlist portability ──────────────────────────────────────────
+
+
+def test_sandbox_env_passes_windows_essentials(monkeypatch) -> None:
+    """Windows needs more than the POSIX set to start a usable interpreter.
+
+    Every sandbox test failed on Windows CI with
+    `OSError: [WinError 10106] The requested service provider could not be loaded
+    or initialized` — WSAEPROVIDERFAILEDINIT. Winsock cannot find its service
+    providers without SYSTEMROOT, and the sandbox preamble imports speasy, which
+    touches sockets. Matplotlib also rebuilt its font cache on every run for want
+    of LOCALAPPDATA.
+    """
+    fake = {
+        "SYSTEMROOT": r"C:\Windows",
+        "SYSTEMDRIVE": "C:",
+        "WINDIR": r"C:\Windows",
+        "COMSPEC": r"C:\Windows\system32\cmd.exe",
+        "PATHEXT": ".COM;.EXE;.BAT",
+        "APPDATA": r"C:\Users\me\AppData\Roaming",
+        "LOCALAPPDATA": r"C:\Users\me\AppData\Local",
+        "USERPROFILE": r"C:\Users\me",
+        "NUMBER_OF_PROCESSORS": "8",
+        "PROCESSOR_ARCHITECTURE": "AMD64",
+    }
+    for key, value in fake.items():
+        monkeypatch.setenv(key, value)
+
+    env = sandbox._sandbox_env()
+
+    missing = [k for k in fake if k not in env]
+    assert not missing, f"these would break the Windows sandbox: {missing}"
+    assert env["SYSTEMROOT"] == r"C:\Windows"
+
+
+def test_sandbox_env_still_strips_secrets(monkeypatch) -> None:
+    """Widening the allowlist must not have opened a hole for credentials."""
+    for key in (
+        "AZURE_OPENAI_API_KEY",
+        "GROQ_API_KEY",
+        "GEMINI_API_KEY",
+        "ADS_API_TOKEN",
+        "HELIOAI_DEV_TOKEN",
+        "AWS_SECRET_ACCESS_KEY",
+    ):
+        monkeypatch.setenv(key, "s3cret")
+
+    env = sandbox._sandbox_env()
+
+    leaked = [k for k, v in env.items() if v == "s3cret"]
+    assert not leaked, f"secrets reachable from generated code: {leaked}"
+
+
+def test_sandbox_env_pins_the_matplotlib_cache_under_home(tmp_path) -> None:
+    """matplotlib ignores XDG on Windows, so MPLCONFIGDIR must be explicit.
+
+    Otherwise it falls back to a fresh temporary directory and rebuilds the font
+    cache on every run — the "Matplotlib created a temporary cache directory"
+    line that preceded every Windows CI failure.
+    """
+    env = sandbox._sandbox_env(home=str(tmp_path))
+    assert env["MPLCONFIGDIR"].startswith(str(tmp_path))
+    assert env["XDG_CACHE_HOME"].startswith(str(tmp_path))

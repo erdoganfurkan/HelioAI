@@ -432,3 +432,61 @@ async def test_multiple_tool_calls_preserved_in_order(build):
     )
     result = await client.chat([Message(role="user", content="hi")], tools=[])
     assert [tc.name for tc in result.tool_calls] == ["search_parameters", "list_missions"]
+
+
+# ── connection pool teardown ───────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("build", OPENAI_CLIENTS)
+@pytest.mark.asyncio
+async def test_aclose_closes_the_sdk_client(build):
+    """Callers build a client per request; the pool must be released explicitly.
+
+    An async pool binds to the loop that used it. Left to the garbage collector,
+    the client schedules its own teardown after `asyncio.run` has closed that
+    loop, and asyncio surfaces an unretrieved
+    `RuntimeError: Event loop is closed` while the sockets stay open.
+    """
+    client, fake = build()
+    closed = []
+
+    async def _aclose():
+        closed.append(True)
+
+    fake.close = _aclose
+    await client.aclose()
+    assert closed == [True]
+
+
+@pytest.mark.asyncio
+async def test_aclose_tolerates_a_sync_close():
+    """`google.genai.Client.close` is not a coroutine, unlike openai's."""
+    from helioai.core.llm.base import close_sdk_client
+
+    calls = []
+
+    class SyncOnly:
+        def close(self):
+            calls.append("sync")
+
+    await close_sdk_client(SyncOnly())
+    assert calls == ["sync"]
+
+
+@pytest.mark.asyncio
+async def test_aclose_never_raises_during_teardown():
+    """A pool that will not close must not crash a finished analysis."""
+    from helioai.core.llm.base import close_sdk_client
+
+    class Broken:
+        async def close(self):
+            raise RuntimeError("event loop is closed")
+
+    await close_sdk_client(Broken())
+
+
+@pytest.mark.asyncio
+async def test_aclose_is_a_noop_without_a_close_method():
+    from helioai.core.llm.base import close_sdk_client
+
+    await close_sdk_client(object())

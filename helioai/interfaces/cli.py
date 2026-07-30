@@ -161,6 +161,23 @@ def _render_event(ev: dict) -> None:
                 for line in (data["preview"] or "").split("\n")[:5]:
                     print(f"{pad}\033[90m  {line}\033[0m")
 
+    elif name == "plan":
+        print(f"\n{pad}\033[96m📋 {data.get('title', 'Plan')}\033[0m")
+        for n, step in enumerate(data.get("steps") or [], 1):
+            tool = step.get("tool")
+            suffix = f"  \033[90m[{tool}]\033[0m" if tool else ""
+            print(f"{pad}  \033[96m{n}.\033[0m {step.get('description', '')}{suffix}")
+        print()
+
+    elif name == "figure_review":
+        print(f"{pad}\033[95m🔍 figure review: {data.get('text', '')}\033[0m")
+
+    elif name == "invalid_ids":
+        print(f"\n{pad}\033[91m⚠ ids not in the catalogue — do not use:\033[0m")
+        for pid in data.get("ids") or []:
+            print(f"{pad}  \033[91m✗ {pid}\033[0m")
+        print()
+
     elif name == "error":
         print(f"\n\033[91m✗ {data['message']}\033[0m\n")
 
@@ -179,12 +196,17 @@ async def _run_query(query: str, *, restricted: bool = True) -> None:
     await discover_and_register()
 
     llm = _build_llm_client()
-    async for ev in stream_chat(llm, _USER_ID, _SESSION_ID, query, restricted=restricted):
-        _render_event(ev)
-        if ev["event"] == "done":
-            from helioai.workspace import get_session_dir
+    try:
+        async for ev in stream_chat(llm, _USER_ID, _SESSION_ID, query, restricted=restricted):
+            _render_event(ev)
+            if ev["event"] == "done":
+                from helioai.workspace import get_session_dir
 
-            print(f"  \033[90m📂 workspace: {get_session_dir()}\033[0m")
+                print(f"  \033[90m📂 workspace: {get_session_dir()}\033[0m")
+    finally:
+        # The interactive loop runs one asyncio.run per query, so the pool must be
+        # released here rather than left for the garbage collector.
+        await llm.aclose()
 
 
 def _run_index(rebuild: bool = False) -> None:

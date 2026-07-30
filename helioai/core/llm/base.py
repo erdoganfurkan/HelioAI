@@ -106,12 +106,46 @@ class ToolDef:
     parameters: dict = field(default_factory=dict)
 
 
+async def close_sdk_client(client) -> None:
+    """Close an SDK client's connection pool, whether its close() is sync or async.
+
+    `openai.AsyncOpenAI.close` is a coroutine; `google.genai.Client.close` is not.
+    Failures are swallowed: this only ever runs while tearing down, and a pool
+    that will not close is not worth crashing a finished analysis over.
+    """
+    import inspect
+
+    closer = getattr(client, "close", None) or getattr(client, "aclose", None)
+    if closer is None:
+        return
+    try:
+        result = closer()
+        if inspect.isawaitable(result):
+            await result
+    except Exception as e:
+        log.debug("sdk_client_close_failed: %s", e)
+
+
 class LLMClient(ABC):
     """Interface every provider client implements.
 
-    One method, deliberately: the agent loop only ever needs a single completion
-    with optional tool calling. Streaming happens at the loop level, not here.
+    One method is required, deliberately: the agent loop only ever needs a single
+    completion with optional tool calling. Streaming happens at the loop level.
     """
+
+    async def aclose(self) -> None:
+        """Release the underlying HTTP connection pool.
+
+        Callers that build a client per request — the CLI, the Jupyter magic and
+        the web endpoints all do — must await this before their event loop ends.
+        An async pool binds to the loop that used it, so a client left to the
+        garbage collector schedules its own teardown after `asyncio.run` has
+        closed that loop, and asyncio reports an unretrieved
+        `RuntimeError: Event loop is closed` while the sockets stay open.
+
+        The default is a no-op so a client without a pool needs no override.
+        """
+        return None
 
     @abstractmethod
     async def chat(

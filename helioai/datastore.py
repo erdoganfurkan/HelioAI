@@ -21,6 +21,59 @@ _MAX_BYTES = 100 * 1024 * 1024  # 100 MB cap per dataset
 DATA_SUBDIR = "data"
 
 
+def fill_mask(values, fillval=None):
+    """Boolean mask of samples that carry no measurement.
+
+    Three conventions have to be caught at once, which is why every caller shares
+    this one function instead of applying its own threshold:
+
+    - non-finite (NaN/inf) — already unusable;
+    - the ~1e31 magnitude convention, used by ACE among others;
+    - the value the dataset *declares* in its CDF FILLVAL, which is the only way
+      to catch Wind/SWE's 99999.9. A blanket "reject >= 99999" rule is wrong: OMNI
+      carries a real proton temperature of 99093 K in the 2003 Halloween window.
+
+    Args:
+        fillval: the declared FILLVAL, when the provider exposes it. Compared with
+            rtol=1e-6 to survive a float32 round-trip (Wind stores 99999.8984375)
+            while staying far tighter than the ~1% gap to real nearby values.
+    """
+    import numpy as np
+
+    bad = ~np.isfinite(values) | (np.abs(values) >= 1e30)
+    if fillval is not None:
+        try:
+            fv = float(np.asarray(fillval).ravel()[0])
+            if np.isfinite(fv):
+                bad = bad | np.isclose(values, fv, rtol=1e-6)
+        except (TypeError, ValueError, IndexError):
+            pass
+    return bad
+
+
+def blank_fill(values, fillval=None):
+    """Return (values with fill blanked to NaN, mask), or (values, None) if not numeric.
+
+    Applied at every point where downloaded data is persisted, so that anything
+    reading it back — the sandbox, the exported notebook — sees NaN for "no
+    measurement" rather than a sentinel that looks like a plausible reading.
+    Leaving it to the reader meant remembering to call clean(), which cannot see
+    FILLVAL, so one forgotten call put a 99999.9 "speed" into a plot and a mean.
+
+    Non-numeric parameters (string labels, epochs) have no fill convention and are
+    passed through untouched.
+    """
+    import numpy as np
+
+    try:
+        numeric = np.array(values, dtype="float64")
+    except (TypeError, ValueError):
+        return values, None
+    mask = fill_mask(numeric, fillval)
+    numeric[mask] = np.nan
+    return numeric, mask
+
+
 def _session_data_dir() -> Path | None:
     try:
         from helioai.workspace import get_session_dir
@@ -130,6 +183,10 @@ def save_timeseries(
         np.savez_compressed(data_dir / fname, time=time_arr, values=values_arr)
 
         cols = list(columns) if isinstance(columns, (list, tuple)) else []
+        # Derived from what was actually written rather than passed in, so it can
+        # never drift from the file: get_timeseries blanks fill values to NaN
+        # before saving, so this is the fraction with no measurement.
+        missing_pct = round(100 * float(np.isnan(values_arr).mean()), 1) if values_arr.size else 0.0
         manifest.setdefault("datasets", {})[name] = {
             "kind": "timeseries",
             "file": fname,
@@ -139,6 +196,7 @@ def save_timeseries(
             "stop": stop,
             "shape": list(values_arr.shape),
             "columns": cols,
+            "missing_pct": missing_pct,
             "source": source,
             "created": str(int(_time.time())),
         }
@@ -182,7 +240,8 @@ def save_event_collection(
                 continue
             try:
                 t_arr = np.asarray(ts.time)
-                v_arr = np.asarray(ts.values, dtype=float)
+                v_arr, _ = blank_fill(ts.values, (getattr(ts, "meta", {}) or {}).get("FILLVAL"))
+                v_arr = np.asarray(v_arr, dtype=float)
                 total_bytes += t_arr.nbytes + v_arr.nbytes
                 if total_bytes > _MAX_BYTES:
                     if not capped:

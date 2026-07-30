@@ -266,3 +266,50 @@ def test_data_quality_keeps_real_values_near_the_sentinel():
     q = _data_quality(times, values, np, 99999.8984375)
 
     assert q["missing_pct"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_get_timeseries_persists_nan_not_the_sentinel(monkeypatch, tmp_path):
+    """The whole point: what reaches the sandbox must already be NaN.
+
+    Wind/SWE fills with 99999.9. Persisting that raw meant a plot with a spike to
+    99999.9 km/s and a mean wrecked by it, because the reader has to remember to
+    clean — and clean() cannot see FILLVAL anyway.
+    """
+    import numpy as np
+
+    import helioai.datastore as ds
+    import helioai.tools.speasy_tools as st
+
+    fill = np.float32(99999.9)
+    values = np.array([400.0, fill, 420.0, fill, 440.0])
+    times = np.arange("2015-03-17T00:00", 5, dtype="datetime64[m]")
+
+    class _Var:
+        unit = "km/s"
+        columns = ["V"]
+        meta = {"FILLVAL": fill}
+        name = "V"
+
+        def __init__(self):
+            self.time = times
+            self.values = values
+
+        def __len__(self):
+            return len(times)
+
+    import speasy
+
+    monkeypatch.setattr(speasy, "get_data", lambda *a, **k: _Var(), raising=False)
+    monkeypatch.setattr(ds, "_session_data_dir", lambda: tmp_path)
+
+    res = await st.get_timeseries("cda/WI_H1_SWE/V", "2015-03-17", "2015-03-17T00:05")
+
+    assert "error" not in res
+    assert res["quality"]["missing_pct"] == 40.0
+    assert "99999" not in res["preview"], "the agent must not be shown the sentinel"
+
+    stored = np.load(tmp_path / f"{res['dataset']}.npz")["values"]
+    assert np.isnan(stored).sum() == 2
+    assert not (stored > 99000).any()
+    assert np.nanmax(stored) == 440.0

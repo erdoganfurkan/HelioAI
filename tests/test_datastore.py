@@ -363,3 +363,79 @@ def test_slug_avoids_sandbox_names():
     assert _slug("amda/imf_gsm") == "imf_gsm"
     for reserved in ("np", "plt", "os", "json", "u"):
         assert _slug(f"cda/X/{reserved}") != reserved
+
+
+# ── fill values ────────────────────────────────────────────────────────────────
+
+
+def test_fill_mask_catches_all_three_conventions():
+    import numpy as np
+
+    from helioai.datastore import fill_mask
+
+    values = np.array([400.0, np.nan, np.inf, -1e31, 99999.8984375, 450.0])
+
+    mask = fill_mask(values, np.float32(99999.9))
+
+    assert mask.tolist() == [False, True, True, True, True, False]
+
+
+def test_fill_mask_keeps_real_values_near_the_sentinel():
+    """OMNI carries a real proton temperature of 99093 K — not a fill value."""
+    import numpy as np
+
+    from helioai.datastore import fill_mask
+
+    values = np.array([77695.0, 99093.0, 91000.0])
+
+    assert not fill_mask(values, np.float32(99999.9)).any()
+
+
+def test_blank_fill_does_not_mutate_the_caller():
+    import numpy as np
+
+    from helioai.datastore import blank_fill
+
+    original = np.array([1.0, -1e31, 3.0])
+    cleaned, mask = blank_fill(original)
+
+    assert np.isnan(cleaned[1])
+    assert original[1] == -1e31, "the caller's array must be left alone"
+    assert mask.tolist() == [False, True, False]
+
+
+def test_blank_fill_passes_non_numeric_through():
+    from helioai.datastore import blank_fill
+
+    values = np.array(["a", "b"], dtype=object)
+    out, mask = blank_fill(values)
+
+    assert out is values
+    assert mask is None
+
+
+def test_saved_timeseries_records_missing_pct(tmp_path, monkeypatch):
+    """The manifest figure is derived from the file, so it cannot drift from it."""
+    import json
+
+    import numpy as np
+
+    import helioai.datastore as ds
+
+    monkeypatch.setattr(ds, "_session_data_dir", lambda: tmp_path)
+    values = np.array([1.0, np.nan, 3.0, np.nan])
+
+    saved = ds.save_timeseries(
+        "cda/X/Np",
+        time=np.arange("2015-03-17T00:00", 4, dtype="datetime64[m]"),
+        values=values,
+        param_id="cda/X/Np",
+        units="cm^-3",
+        start="2015-03-17T00:00:00",
+        stop="2015-03-17T00:04:00",
+        columns=["Np"],
+        source="test",
+    )
+
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["datasets"][saved["dataset"]]["missing_pct"] == 50.0

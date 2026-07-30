@@ -326,7 +326,13 @@ def export(name, data):
 
 
 def clean(values):
-    \"\"\"Convert CDF fill values (|x|>=1e30) and infinities to NaN before plotting.\"\"\"
+    \"\"\"Blank infinities and ~1e31 fill values to NaN.
+
+    You do NOT need this for load_data() results: get_timeseries already blanks
+    fill to NaN using each dataset's declared FILLVAL, which is the only way to
+    catch conventions like Wind/SWE's 99999.9 that this function cannot see.
+    Use it only on arrays you fetched yourself inside the sandbox.
+    \"\"\"
     arr = np.asarray(values, dtype=float)
     arr[~np.isfinite(arr)] = np.nan
     arr[np.abs(arr) >= 1e30] = np.nan
@@ -334,7 +340,13 @@ def clean(values):
 
 
 def load_data(name):
-    \"\"\"Load a dataset previously saved by get_timeseries or get_events_timeseries.\"\"\"
+    \"\"\"Load a dataset saved by get_timeseries or get_events_timeseries.
+
+    Fill values are ALREADY NaN — do not call clean() on .values, and do not
+    filter on magnitude. Use np.isnan() to mask, or the nan-aware reductions
+    (np.nanmean, np.nanmax, ...). Timeseries carry .missing_pct, the percentage
+    of samples with no measurement.
+    \"\"\"
     import json as _json, types as _types
     if not _re.fullmatch(r"[a-z0-9_]+", str(name)):
         raise ValueError(f"invalid dataset name {name!r} — use only lowercase letters, digits and underscores")
@@ -356,6 +368,7 @@ def load_data(name):
         _ns.columns = _entry.get("columns", [])
         _ns.units = _entry.get("units", "")
         _ns.param_id = _entry.get("param_id", "")
+        _ns.missing_pct = _entry.get("missing_pct", 0.0)
         return _ns
     elif _entry["kind"] == "event_collection":
         _events_meta = _entry.get("events", [])

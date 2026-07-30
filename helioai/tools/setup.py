@@ -64,7 +64,13 @@ registry.register(
     description=(
         "Download a time series from any speasy provider. "
         "Always resolve the parameter id via search_parameters first. "
-        "Returns a data preview (first 10 rows) and metadata."
+        "Returns a data preview (first 10 rows) and metadata. "
+        "Fill values are ALREADY replaced by NaN, using each dataset's declared "
+        "FILLVAL — do NOT filter on magnitude (no `< 1e30`, no `!= 99999.9`) and do "
+        "not call clean() on it; that would only re-do it worse. Mask with np.isnan "
+        "or use np.nanmean/np.nanmax. `quality.missing_pct` reports how much of the "
+        "window has no measurement: above ~20% say so before drawing conclusions "
+        "from it, and a download that is 100% fill is returned as an error."
     ),
     parameters={
         "type": "object",

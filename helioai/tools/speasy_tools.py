@@ -75,14 +75,22 @@ async def get_timeseries(
     if n_points == 0:
         return {"error": f"Empty dataset for {param_id!r}"}
 
-    # Data quality on the full-resolution arrays (deterministic, before downsampling)
-    quality = _data_quality(times, values, np, (getattr(var, "meta", {}) or {}).get("FILLVAL"))
+    # Replace fill values with NaN HERE, once, before anything else sees the array.
+    # Everything downstream — the preview shown to the agent, the .npz the sandbox
+    # loads, the exported notebook — then works on data where "no measurement" is
+    # NaN rather than -1e31 or 99999.9. Leaving it to the caller meant the sandbox
+    # had to remember to call clean(), which cannot see FILLVAL anyway, so a
+    # forgotten call put a 99999.9 "speed" straight into a plot and an average.
+    from helioai.datastore import blank_fill
+
+    values, fill_mask = blank_fill(values, (getattr(var, "meta", {}) or {}).get("FILLVAL"))
+    quality = _data_quality(times, values, np, fill_mask=fill_mask)
 
     # An all-fill series is functionally as empty as a zero-length one: the rows
-    # exist but every value is a CDF fill (|x| >= 1e30). Reporting it as a
-    # successful download of n points is a lie the agent then plots — the
-    # ACE/SWEPAM saturation during the 2003 Halloween storm returns 1913 such
-    # rows. Fail here instead, and do not persist the garbage.
+    # exist but not one of them holds a measurement. Reporting it as a successful
+    # download of n points is a lie the agent then plots — the ACE/SWEPAM
+    # saturation during the 2003 Halloween storm returns 1913 such rows. Fail
+    # here instead, and do not persist the garbage.
     if quality.get("missing_pct") == 100.0:
         return {
             "error": (
@@ -193,7 +201,7 @@ async def get_timeseries(
     return result
 
 
-def _data_quality(times, values, np, fillval=None) -> dict:
+def _data_quality(times, values, np, fillval=None, fill_mask=None) -> dict:
     """Deterministic data-quality checks on full-resolution arrays.
 
     Returns {} when the data is not numeric/datetime (provider-agnostic, like the
@@ -201,25 +209,17 @@ def _data_quality(times, values, np, fillval=None) -> dict:
     surface it: missing > 5%, any gap, or any 5σ outlier.
 
     Args:
-        fillval: the dataset's declared CDF FILLVAL, when the provider exposes it.
-            Not every mission uses the ~1e31 convention — Wind/SWE fills with
-            99999.9, which passed the magnitude test and reached the agent as a
-            plausible solar-wind speed. The declared value is the only reliable
-            source: a blanket "reject >= 99999" heuristic would discard real
-            data, e.g. an OMNI proton temperature of 99093 K.
+        fillval: the dataset's declared CDF FILLVAL. Ignored when `fill_mask` is
+            given.
+        fill_mask: a mask already computed by `_blank_fill_values`. Passed by
+            `get_timeseries`, which blanks fill to NaN before this runs — without
+            it the count would be recomputed from values whose fill is now NaN,
+            which still works but repeats the comparison for nothing.
     """
     try:
-        finite = np.isfinite(values)
-        bad = ~finite | (np.abs(values) >= 1e30)
-        if fillval is not None:
-            try:
-                fv = float(np.asarray(fillval).ravel()[0])
-                if np.isfinite(fv):
-                    # rtol suits a float32 round-trip (Wind stores 99999.8984375);
-                    # far tighter than the ~1% gap to real values near the sentinel.
-                    bad = bad | np.isclose(values, fv, rtol=1e-6)
-            except (TypeError, ValueError, IndexError):
-                pass
+        from helioai.datastore import fill_mask as _mask_of
+
+        bad = _mask_of(values, fillval) if fill_mask is None else fill_mask
         total = values.size
         missing_pct = round(100 * float(bad.sum()) / total, 1) if total else 0.0
 
@@ -237,7 +237,7 @@ def _data_quality(times, values, np, fillval=None) -> dict:
                     )
 
         outliers = 0
-        clean = values[finite & (np.abs(values) < 1e30)]
+        clean = values[~bad]
         if clean.size > 1:
             mean = float(clean.mean())
             std = float(clean.std())

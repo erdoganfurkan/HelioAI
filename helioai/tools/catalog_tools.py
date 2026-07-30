@@ -535,9 +535,9 @@ async def get_events_timeseries(
         if ts is None or len(ts.time) == 0:
             stats.append({"event": i, "start": ev_start, "stop": ev_stop, "status": "no_data"})
             continue
-        vals = ts.values.astype(float)
-        vals[~np.isfinite(vals)] = np.nan
-        vals[np.abs(vals) >= 1e30] = np.nan
+        from helioai.datastore import blank_fill
+
+        vals, _ = blank_fill(ts.values, (getattr(ts, "meta", {}) or {}).get("FILLVAL"))
         with np.errstate(all="ignore"):
             entry: dict = {
                 "event": i,

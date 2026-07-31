@@ -159,10 +159,25 @@ def main() -> None:
     r_n, r_b = b["n"] / a["n"], b["B"] / a["B"]
     v_a = a["B"] * 1e-9 / np.sqrt(MU0 * M_P * a["n"] * 1e6) / 1e3
     c_s = np.sqrt(5 / 3 * K_B * a["T"] / M_P) / 1e3
-    v_shock = b["V"] * r_n / (r_n - 1)
+
+    # Shock speed from mass-flux conservation, n_u(V_u - V_sh) = n_d(V_d - V_sh).
+    # NOT V_d * r/(r-1): that form assumes the upstream plasma is at rest, and here
+    # it is flowing at ~410 km/s, which inflates the answer from 579 to 838 km/s.
+    v_shock = (b["n"] * b["V"] - a["n"] * a["V"]) / (b["n"] - a["n"])
+    # The Mach number needs the shock speed IN THE UPSTREAM FRAME, not in the
+    # spacecraft frame — dividing the latter by V_A gave 16 instead of 3.2.
+    m_a = (v_shock - a["V"]) / v_a
+
+    # Independent check: MHD predicts the compression a given M_A should produce.
+    # r = 3.94 at M_A = 16 against a measured 2.59 is how the wrong M_A shows up.
+    gamma = 5 / 3
+    r_predicted = (gamma + 1) * m_a**2 / ((gamma - 1) * m_a**2 + 2)
+
     print(f"\n  r_n = {r_n:.2f}   r_B = {r_b:.2f}   (agreement is the sanity check)")
     print(f"  V_A = {v_a:.1f} km/s   c_s = {c_s:.1f} km/s")
-    print(f"  V_shock (de Hoffmann-Teller) = {v_shock:.0f} km/s   M_A = {v_shock / v_a:.1f}")
+    print(f"  V_shock = {v_shock:.0f} km/s in the spacecraft frame,")
+    print(f"           {v_shock - a['V']:.0f} km/s relative to the upstream flow")
+    print(f"  M_A = {m_a:.2f}  →  MHD predicts r = {r_predicted:.2f}, measured {r_n:.2f}")
 
     day = (tb >= np.datetime64("2015-03-17T00:00")) & (tb < np.datetime64("2015-03-18T00:00"))
     j = int(np.nanargmin(bvec[day][:, 2]))

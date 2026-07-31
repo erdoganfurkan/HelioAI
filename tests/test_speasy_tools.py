@@ -173,20 +173,85 @@ async def test_get_timeseries_exception_returns_error(monkeypatch) -> None:
     assert "error" in result
 
 
-async def test_get_timeseries_parameter_range_guard(monkeypatch) -> None:
+def _range(start_iso: str, stop_iso: str):
+    """A stand-in for speasy's DateTimeRange, with ITS attribute names.
+
+    This matters more than it looks: the previous version of this test set
+    `.start`/`.stop` on a MagicMock, which the real class does not have. The guard
+    read those, raised AttributeError into a bare `except`, and was a silent no-op
+    in production while this test passed — a mock that agrees with the code instead
+    of with the library proves nothing.
+    """
+    from datetime import UTC, datetime
+
+    class _R:
+        start_time = datetime.fromisoformat(start_iso).replace(tzinfo=UTC)
+        stop_time = datetime.fromisoformat(stop_iso).replace(tzinfo=UTC)
+
+    return _R()
+
+
+def test_speasy_daterange_still_uses_start_time(monkeypatch) -> None:
+    """Guards against the library renaming what the guard reads.
+
+    If speasy ever returns a range whose attributes are not start_time/stop_time,
+    the coverage guard degrades to a no-op again — this fails loudly instead.
+    """
+    import speasy as spz
+
+    rng = spz.cda.parameter_range("AC_H0_MFI/BGSM")
+    assert hasattr(rng, "start_time") and hasattr(rng, "stop_time")
+
+
+async def test_get_timeseries_refuses_a_window_with_no_overlap(monkeypatch) -> None:
     mock_spz = MagicMock()
-    mock_rng = MagicMock()
-    mock_rng.start = "2005-01-01T00:00:00"
-    mock_rng.stop = "2005-12-31T23:59:59"
-    mock_spz.amda.parameter_range.return_value = mock_rng
+    mock_spz.amda.parameter_range.return_value = _range(
+        "2005-01-01T00:00:00", "2005-12-31T23:59:59"
+    )
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
-    # request entirely outside the available range → warning, no download attempted
     result = await get_timeseries("amda/imf", "2020-01-01T00:00:00", "2020-01-02T00:00:00")
-    assert "warning" in result
-    assert "suggestion" in result
-    assert "available_start" in result
+
+    assert "error" in result
+    assert "2005-01-01" in result["error"], "the error must name the coverage"
+    assert result["available_start"].startswith("2005-01-01")
     mock_spz.get_data.assert_not_called()
+
+
+async def test_get_timeseries_downloads_a_partial_overlap(monkeypatch) -> None:
+    """A window overhanging the coverage must still fetch what exists.
+
+    The guard used to refuse whenever the window crossed either edge, which throws
+    away real data — for a parameter ending last month, an ordinary "the last few
+    weeks" request returned nothing at all.
+    """
+    mock_spz = MagicMock()
+    mock_spz.amda.parameter_range.return_value = _range(
+        "2005-01-01T00:00:00", "2005-12-31T23:59:59"
+    )
+    mock_spz.get_data = MagicMock(return_value=_make_fake_var(5))
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+
+    result = await get_timeseries("amda/imf", "2005-12-30T00:00:00", "2006-01-05T00:00:00")
+
+    assert "error" not in result
+    mock_spz.get_data.assert_called_once()
+    assert "coverage_note" in result
+    assert "clipped" in result["coverage_note"]
+
+
+async def test_get_timeseries_is_silent_when_fully_covered(monkeypatch) -> None:
+    mock_spz = MagicMock()
+    mock_spz.amda.parameter_range.return_value = _range(
+        "2005-01-01T00:00:00", "2005-12-31T23:59:59"
+    )
+    mock_spz.get_data = MagicMock(return_value=_make_fake_var(5))
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+
+    result = await get_timeseries("amda/imf", "2005-06-01T00:00:00", "2005-06-02T00:00:00")
+
+    assert "coverage_note" not in result
+    assert "error" not in result
 
 
 @pytest.mark.asyncio

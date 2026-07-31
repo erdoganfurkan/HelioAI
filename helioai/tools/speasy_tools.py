@@ -38,26 +38,9 @@ async def get_timeseries(
     except ImportError:
         return {"error": "speasy is not installed. Run: pip install speasy"}
 
-    # Pre-flight: check data coverage for AMDA params (best-effort, safe to skip)
-    try:
-        if param_id.startswith("amda/"):
-            xmlid = param_id.split("/", 1)[1]
-            rng = spz.amda.parameter_range(xmlid)
-            if rng is not None:
-                rng_start = str(rng.start)[:19]
-                rng_stop = str(rng.stop)[:19]
-                if start < rng_start or stop > rng_stop:
-                    return {
-                        "warning": (
-                            f"Requested [{start}, {stop}] is outside the available range "
-                            f"[{rng_start}, {rng_stop}] for {param_id!r}."
-                        ),
-                        "suggestion": f"Try a time range within {rng_start} → {rng_stop}.",
-                        "available_start": rng_start,
-                        "available_stop": rng_stop,
-                    }
-    except Exception:
-        pass  # provider doesn't support parameter_range → proceed anyway
+    blocking, coverage_note = _coverage_check(spz, np, param_id, start, stop)
+    if blocking is not None:
+        return blocking
 
     try:
         var = spz.get_data(param_id, start, stop)
@@ -194,11 +177,81 @@ async def get_timeseries(
     }
     if quality:
         result["quality"] = quality
+    if coverage_note:
+        result["coverage_note"] = coverage_note
     if saved:
         ds_name = saved["dataset"]
         result["dataset"] = ds_name
         result["dataset_note"] = f"use load_data({ds_name!r}) in run_python — never spz.get_data"
     return result
+
+
+_PROVIDERS_WITH_RANGE = ("amda", "cda", "csa", "ssc")
+
+
+def _coverage_check(
+    spz, np, param_id: str, start: str, stop: str
+) -> tuple[dict | None, str | None]:
+    """Compare the requested window against the parameter's published coverage.
+
+    Returns (blocking_result, note). The blocking result is returned to the agent
+    instead of downloading; the note rides along with a successful download.
+
+    Only a request that does not overlap the coverage AT ALL is refused. A partial
+    overlap still downloads, because refusing it throws away real data: the guard
+    used to reject whenever the window merely extended past either edge, which for
+    a parameter ending last month means an ordinary "the last few weeks" request
+    returns nothing. That mattered little while this ran for AMDA alone; it now
+    covers CDA's ~68k parameters too.
+
+    Answering "no data" without the coverage is what let the agent invent a Wind
+    position for 2015 after `WI_OR_DEF/GSE_POS` (1994-1997) and `WI_K0_3DP`
+    (2019 onward) both came back empty — the dates would have named the problem.
+    """
+    provider = param_id.split("/", 1)[0] if "/" in param_id else ""
+    if provider not in _PROVIDERS_WITH_RANGE:
+        return None, None
+    try:
+        rng = getattr(spz, provider).parameter_range(param_id.split("/", 1)[1])
+        if rng is None:
+            return None, None
+        # speasy's DateTimeRange exposes start_time/stop_time as tz-aware datetimes.
+        # isoformat, not str(): str() renders a space separator that datetime64 rejects.
+        avail_start = rng.start_time.isoformat()[:19]
+        avail_stop = rng.stop_time.isoformat()[:19]
+        req_start = np.datetime64(start[:19])
+        req_stop = np.datetime64(stop[:19])
+        cov_start = np.datetime64(avail_start)
+        cov_stop = np.datetime64(avail_stop)
+    except Exception as e:
+        # Never block a download over a coverage lookup — but log it, because
+        # swallowing this silently is exactly how the previous version stayed
+        # broken: it read rng.start, which does not exist, and the bare except
+        # made the guard a no-op that its mocked test still passed.
+        log.warning("coverage check failed for %r: %s", param_id, e)
+        return None, None
+
+    if req_stop < cov_start or req_start > cov_stop:
+        return {
+            "error": (
+                f"{param_id!r} has no data in [{start}, {stop}] — it covers "
+                f"[{avail_start}, {avail_stop}]."
+            ),
+            "suggestion": (
+                "The window and the parameter do not overlap at all. Pick a different "
+                "parameter for this event rather than a different window, unless you "
+                "meant to study a date inside the coverage."
+            ),
+            "available_start": avail_start,
+            "available_stop": avail_stop,
+        }, None
+
+    if req_start < cov_start or req_stop > cov_stop:
+        return None, (
+            f"Requested [{start}, {stop}] extends past the coverage of {param_id!r} "
+            f"([{avail_start}, {avail_stop}]) — the series is clipped to the overlap."
+        )
+    return None, None
 
 
 def _data_quality(times, values, np, fillval=None, fill_mask=None) -> dict:

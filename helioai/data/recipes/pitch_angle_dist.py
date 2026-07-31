@@ -18,8 +18,8 @@ Requirements:
 - V_particles : shape (N, 3), particle velocity in instrument or GSE frame (km/s)
 - B_field     : shape (N, 3) or (3,), magnetic field in the same frame (nT)
 
-Usage inside run_python:
-    load_recipe("pitch_angle_dist")
+Usage: load_recipe("pitch_angle_dist") returns this source. Paste it into run_python
+and call:
     pa, counts, edges = compute_pad(V_particles, B_field)
 """
 

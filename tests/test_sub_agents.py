@@ -46,6 +46,18 @@ def test_plasma_physicist_tools() -> None:
     assert "get_timeseries" not in role.allowed_tools
 
 
+def test_plasma_physicist_can_reach_the_recipes() -> None:
+    """Its skill points at rankine_hugoniot, theta_bn and walen_test.
+
+    The whitelist is enforced, so without these the skill would advertise tools the
+    role cannot call — and the role reinvented the jump conditions each time instead
+    of using the recipe that ships with its scientific reference.
+    """
+    role = AGENT_ROLES["plasma_physicist"]
+    assert "load_recipe" in role.allowed_tools
+    assert "list_recipes" in role.allowed_tools
+
+
 def test_parameter_hunter_has_lower_max_turns_than_data_analyst() -> None:
     assert AGENT_ROLES["parameter_hunter"].max_turns < AGENT_ROLES["data_analyst"].max_turns
 

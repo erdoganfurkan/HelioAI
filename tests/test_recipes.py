@@ -197,3 +197,52 @@ def test_solar_mach_recipe_graceful_without_dep():
         ns: dict = {}
         exec(code, ns)
     assert ns["SolarMACH"] is None
+
+
+def test_recipe_usage_examples_match_their_signatures():
+    """A usage line in a recipe header is code an agent copies verbatim.
+
+    rankine_hugoniot documented `r, V_shock = rh_jump(...)` while returning
+    (V_shock, r), so a copied line swapped a 579 km/s shock speed with a compression
+    ratio of 2.59 — both plausible numbers, silently in the wrong variables.
+
+    Detects a permutation, not a rename. An arity check passes the inversion, and
+    comparing names outright would reject `pa, counts, edges = compute_pad(...)` for a
+    function returning `pa_deg, ...`, which is an ordinary rename while unpacking.
+    Reusing the SAME names in a DIFFERENT order is the thing that is never deliberate.
+    """
+    import ast
+    from pathlib import Path
+
+    from helioai.config import settings
+
+    checked = 0
+    for path in sorted(Path(settings.recipes.recipes_dir).glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        doc = ast.get_docstring(tree) or ""
+        returns = {
+            node.name: node.body[-1].value
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and isinstance(node.body[-1], ast.Return)
+        }
+        for func, ret in returns.items():
+            elements = ret.elts if isinstance(ret, ast.Tuple) else [ret]
+            if not all(isinstance(e, ast.Name) for e in elements):
+                continue
+            returned = [e.id for e in elements]
+            for line in doc.splitlines():
+                if f"= {func}(" not in line or "=" not in line:
+                    continue
+                unpacked = [t.strip() for t in line.split("=", 1)[0].split(",")]
+                assert len(unpacked) == len(returned), (
+                    f"{path.name}: docstring unpacks {len(unpacked)} value(s) from "
+                    f"{func}() which returns {len(returned)}"
+                )
+                if set(unpacked) == set(returned):
+                    assert unpacked == returned, (
+                        f"{path.name}: docstring unpacks {unpacked} from {func}() "
+                        f"but it returns {returned} — same names, wrong order"
+                    )
+                checked += 1
+
+    assert checked, "no usage example was actually compared — the test would be vacuous"

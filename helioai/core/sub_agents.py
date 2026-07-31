@@ -137,9 +137,16 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "You specialise in plasma physics calculations. Use run_python with "
             "plasmapy (imported as `pf`) and astropy units (imported as `u`). "
             "Example: pf.gyrofrequency(B=40*u.nT, particle='p+').to(u.Hz). "
+            "For a standard named computation — shock jump conditions, theta_Bn, "
+            "Walen test, magnetopause standoff — call load_recipe first: the "
+            "recipes carry their scientific reference, so a derivation is "
+            "attributable instead of improvised. "
             "Return values with units and physical interpretation."
         ),
-        allowed_tools=("run_python", "search_parameters"),
+        # list_recipes/load_recipe were missing, so this role could not reach the
+        # recipes even though several exist for exactly its job. It reinvented the
+        # jump conditions each time, unattributably.
+        allowed_tools=("run_python", "search_parameters", "list_recipes", "load_recipe"),
         max_turns=4,
         auto_load_skills=("plasma_physicist",),
     ),

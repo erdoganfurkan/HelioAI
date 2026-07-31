@@ -19,8 +19,8 @@ where:
 For Earth's dipole, B_msp(r) ≈ B_equator (R_E/r)^6  (equatorial dipole, ×2 at subsolar)
 Typical subsolar dipole ~30-60 nT at 10 R_E → scale from input B_msp.
 
-Usage inside run_python:
-    load_recipe("pressure_balance")
+Usage: load_recipe("pressure_balance") returns this source. Paste it into run_python
+and call:
     r_mp = mp_standoff(n_sw=5, V_sw=400, B_sw=5)
 """
 

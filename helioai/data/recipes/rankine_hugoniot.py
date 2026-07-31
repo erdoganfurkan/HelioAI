@@ -16,9 +16,18 @@ For an oblique shock the full tensor form is needed; this script handles the
 1-D normal-incidence (de Hoffmann-Teller) approximation which is valid for
 quasi-perpendicular shocks (theta_Bn > 45°).
 
-Usage inside run_python:
-    load_recipe("rankine_hugoniot")
-    r, V_shock = rh_jump(n_u=5, n_d=20, V_u=450, V_d=200, B_u=5, B_d=20, T_u=10, T_d=100)
+Usage: load_recipe("rankine_hugoniot") returns this source. Paste it into run_python
+and call:
+    V_shock, r = rh_jump(n_u=5, n_d=20, V_u=450, V_d=200, B_u=5, B_d=20, T_u=10, T_d=100)
+
+V_shock comes back FIRST — this example used to read `r, V_shock`, which silently
+swapped a 579 km/s speed with a compression ratio of 2.59.
+
+V_shock is in the spacecraft frame, derived from mass-flux conservation. Two things
+follow. Do not use V_d * r/(r-1) instead: it assumes the upstream plasma is at rest,
+and against a 400 km/s solar wind it overestimates by ~45%. And the Alfvenic Mach
+number needs the shock speed in the UPSTREAM frame, (V_shock - V_u)/V_A — dividing
+the spacecraft-frame speed by V_A gives a number several times too large.
 """
 
 import numpy as np

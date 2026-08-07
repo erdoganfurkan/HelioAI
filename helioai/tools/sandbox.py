@@ -315,7 +315,16 @@ def export(name, data, units=""):
 
     Pass `units` whenever the quantity has one: the value is kept in the session
     provenance ledger, and without a unit a ratio of 2.53 and 2.53 nT are the same number.
+
+    A dict of summary numbers is exported key by key as `name.key`. Passing one used to
+    fail — float() on a dict raises — and the failure was silent, so the numbers reached
+    the reply through the error repr and nothing else: computed, published, untraceable.
     \"\"\"
+    if isinstance(data, dict):
+        for _k, _v in data.items():
+            if isinstance(_v, (dict, int, float)) and not isinstance(_v, bool):
+                export(str(name) + "." + str(_k), _v, units)
+        return
     try:
         arr = np.asarray(data, dtype=float)
         flat = arr.flatten()

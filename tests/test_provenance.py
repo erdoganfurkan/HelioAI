@@ -105,3 +105,24 @@ def test_export_accepts_units_and_defaults_to_empty():
     assert ns["__sandbox_exports"]["B"]["units"] == "nT"
     assert ns["__sandbox_exports"]["B"]["mean"] == pytest.approx(2.0)
     assert ns["__sandbox_exports"]["r"]["units"] == ""
+
+
+def test_export_flattens_a_summary_dict_instead_of_failing_on_it():
+    import numpy as np
+
+    from helioai.tools.sandbox import _SANDBOX_PREAMBLE
+
+    src = _SANDBOX_PREAMBLE[_SANDBOX_PREAMBLE.index("def export(") :]
+    ns = {"np": np, "__sandbox_exports": {}}
+    exec(src[: src.index("\ndef clean(")], ns)
+
+    ns["export"](
+        "shock",
+        {"time": "2003-10-29 06:25:40", "B_up": 21.24, "downstream": {"B": 42.16}},
+        units="nT",
+    )
+    exports = ns["__sandbox_exports"]
+    assert sorted(exports) == ["shock.B_up", "shock.downstream.B"]
+    assert exports["shock.B_up"]["mean"] == pytest.approx(21.24)
+    assert exports["shock.downstream.B"]["units"] == "nT"
+    assert not any("error" in e for e in exports.values())

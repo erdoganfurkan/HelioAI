@@ -310,13 +310,18 @@ def _capture_show():
 plt.show = _capture_show
 
 
-def export(name, data):
-    \"\"\"Export numerical data for LLM interpretation. Call instead of or in addition to plt.show().\"\"\"
+def export(name, data, units=""):
+    \"\"\"Export numerical data for LLM interpretation. Call instead of or in addition to plt.show().
+
+    Pass `units` whenever the quantity has one: the value is kept in the session
+    provenance ledger, and without a unit a ratio of 2.53 and 2.53 nT are the same number.
+    \"\"\"
     try:
         arr = np.asarray(data, dtype=float)
         flat = arr.flatten()
         finite = flat[np.isfinite(flat)]
         __sandbox_exports[name] = {
+            "units": str(units),
             "shape": list(arr.shape),
             "dtype": str(arr.dtype),
             "min": float(np.nanmin(arr)) if finite.size else None,

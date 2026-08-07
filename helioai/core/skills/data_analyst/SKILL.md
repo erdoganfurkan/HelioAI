@@ -39,7 +39,9 @@ method is recorded with its source.
 - `load_data("name")` → `ns(time, values, unit)` for a dataset from get_timeseries.
 - `param_card(var, param_id)` → metadata card in the UI. Call once per downloaded parameter.
 - `clean(var.values)` → masks CDF fill values (`-1e31`, `9.96e36`) to NaN. Always wrap `.values`.
-- `export(name, value)` → surfaces a key number in the reply. Call for every result that matters.
+- `export(name, value, units="nT")` → surfaces a key number in the reply and records it in the
+  session provenance ledger. Call for every result that matters, with its unit when it has one:
+  a number that is never exported has no traceable origin.
 - `plt.show()` → REQUIRED; it is what saves the figure to disk.
 
 ## Resolve the id first (if needed)

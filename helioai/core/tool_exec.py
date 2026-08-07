@@ -17,6 +17,8 @@ from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
+from helioai import provenance
+
 # Tools whose results contain large lists (per_event_stats, sample rows) that would
 # flood the LLM context. All other tools pass through untouched so the LLM can reason
 # on their content (search results, mission lists, catalog ids, etc.).
@@ -204,6 +206,14 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
     return artifacts
 
 
+def _code_path(result_text: str) -> str:
+    try:
+        data = json.loads(result_text)
+        return data.get("code_path") or "" if isinstance(data, dict) else ""
+    except (ValueError, TypeError):
+        return ""
+
+
 def inject_run_python_args(name: str) -> dict:
     """Trusted per-run sandbox args (_plot_dir/_run_idx) for run_python.
 
@@ -262,4 +272,13 @@ def emit_post_tool_events(
             pass
 
     for art in _extract_artifact(name, result):
+        if art.get("kind") == "exports":
+            ctx = common_extra.get("sub_agent_ctx") or {}
+            provenance.record(
+                art.get("values") or {},
+                code_path=_code_path(result),
+                agent=ctx.get("role") or "lead",
+                task_id=ctx.get("task_id"),
+                turn=tool_result_extra.get("turn"),
+            )
         yield {"event": "artifact", "data": {**art, **common_extra}}

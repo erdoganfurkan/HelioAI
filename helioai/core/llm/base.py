@@ -23,14 +23,41 @@ def _error_status(exc: Exception) -> int | None:
     return None
 
 
+def _retry_after(exc: Exception) -> float | None:
+    """Seconds the server asked us to wait, from the standard Retry-After header.
+
+    A rate limiter that answers 429 states how long its window is; guessing instead
+    exhausts every attempt inside a few seconds and ends the session for nothing.
+    """
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if not headers:
+        return None
+    try:
+        value = headers.get("retry-after")
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 async def call_with_retry(
     fn,
     *,
-    attempts: int = 3,
+    attempts: int = 4,
     base_delay: float = 1.0,
-    max_delay: float = 20.0,
+    max_delay: float = 60.0,
 ):
-    """Call async fn with exponential backoff on retryable HTTP errors.
+    """Call async fn with backoff on retryable HTTP errors.
+
+    A server-supplied Retry-After wins over the exponential backoff: waiting the
+    window a rate limiter asks for costs less than losing a session that is already
+    several minutes and several downloads deep.
+
+    But only when the wait is one we would actually sit through. A per-minute limiter
+    asks for seconds; an exhausted daily quota answers `Retry-After: 35464` — nearly ten
+    hours. Capping that to `max_delay` and retrying anyway just buys four minutes of
+    silence before the same failure, so a window longer than `max_delay` fails at once
+    and says how long it really is.
 
     Non-retryable errors and exhausted attempts are re-raised immediately.
     """
@@ -41,12 +68,29 @@ async def call_with_retry(
             status = _error_status(exc)
             if status not in RETRYABLE_STATUS:
                 raise
+            hinted = _retry_after(exc)
+            if hinted is not None and hinted > max_delay:
+                log.warning(
+                    "llm_retry_window_too_long",
+                    extra={"status": status, "retry_after_s": hinted},
+                )
+                raise
             if attempt == attempts - 1:
                 raise
-            delay = min(base_delay * (2**attempt) + random.uniform(0, 0.5), max_delay)
+            delay = min(
+                hinted
+                if hinted is not None
+                else base_delay * (2**attempt) + random.uniform(0, 0.5),
+                max_delay,
+            )
             log.info(
                 "llm_retry",
-                extra={"attempt": attempt + 1, "status": status, "delay": round(delay, 2)},
+                extra={
+                    "attempt": attempt + 1,
+                    "status": status,
+                    "delay": round(delay, 2),
+                    "server_hinted": hinted is not None,
+                },
             )
             await asyncio.sleep(delay)
 

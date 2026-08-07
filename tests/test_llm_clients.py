@@ -490,3 +490,133 @@ async def test_aclose_is_a_noop_without_a_close_method():
     from helioai.core.llm.base import close_sdk_client
 
     await close_sdk_client(object())
+
+
+# ── retry / rate limits ────────────────────────────────────────────────────────
+
+
+def _http_error(status: int, retry_after: str | None = None):
+    """An SDK-shaped exception: status code plus the response headers."""
+    headers = {} if retry_after is None else {"retry-after": retry_after}
+    exc = RuntimeError(f"HTTP {status}")
+    exc.status_code = status
+    exc.response = SimpleNamespace(headers=headers)
+    return exc
+
+
+@pytest.fixture
+def slept(monkeypatch):
+    """Record backoff delays instead of waiting them out."""
+    import helioai.core.llm.base as base
+
+    delays: list[float] = []
+
+    async def _fake_sleep(d):
+        delays.append(d)
+
+    monkeypatch.setattr(base.asyncio, "sleep", _fake_sleep)
+    return delays
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_waits_the_delay_the_server_asked_for(slept):
+    """A 429 states its window; guessing a shorter one ends the session for nothing."""
+    from helioai.core.llm.base import call_with_retry
+
+    attempts = {"n": 0}
+
+    async def fn():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise _http_error(429, retry_after="14")
+        return "ok"
+
+    assert await call_with_retry(fn) == "ok"
+    assert slept == [14.0], "the 14s hint must win over the 1s exponential backoff"
+
+
+@pytest.mark.asyncio
+async def test_a_window_longer_than_max_delay_is_not_waited_out(slept):
+    """This test used to assert the opposite, and encoded the bug.
+
+    Capping a one-hour Retry-After to max_delay and retrying anyway does not make the
+    quota come back — it just delays the same failure by four minutes of silence.
+    """
+    from helioai.core.llm.base import call_with_retry
+
+    calls = {"n": 0}
+
+    async def fn():
+        calls["n"] += 1
+        raise _http_error(429, retry_after="3600")
+
+    with pytest.raises(RuntimeError):
+        await call_with_retry(fn, max_delay=60.0)
+    assert calls["n"] == 1
+    assert slept == []
+
+
+@pytest.mark.asyncio
+async def test_backoff_is_used_when_the_server_gives_no_hint(slept):
+    from helioai.core.llm.base import call_with_retry
+
+    calls = {"n": 0}
+
+    async def fn():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _http_error(503)
+        return "ok"
+
+    await call_with_retry(fn)
+    assert len(slept) == 1 and 1.0 <= slept[0] <= 1.5
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_status_raises_at_once(slept):
+    from helioai.core.llm.base import call_with_retry
+
+    async def fn():
+        raise _http_error(400)
+
+    with pytest.raises(RuntimeError):
+        await call_with_retry(fn)
+    assert slept == [], "a 400 is not going to fix itself"
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_daily_quota_fails_at_once(slept):
+    """Azure answers an exhausted daily quota with Retry-After: 35464 (~10 h).
+
+    Capping that to max_delay and retrying anyway bought four minutes of silence and
+    then failed regardless — which is what "the agent just spins" looked like.
+    """
+    from helioai.core.llm.base import call_with_retry
+
+    calls = {"n": 0}
+
+    async def fn():
+        calls["n"] += 1
+        raise _http_error(429, retry_after="35464")
+
+    with pytest.raises(RuntimeError):
+        await call_with_retry(fn, max_delay=60.0)
+    assert calls["n"] == 1, "no point retrying a window we will never wait out"
+    assert slept == []
+
+
+@pytest.mark.asyncio
+async def test_a_short_window_is_still_waited_out(slept):
+    """The per-minute limiter case must keep working."""
+    from helioai.core.llm.base import call_with_retry
+
+    calls = {"n": 0}
+
+    async def fn():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _http_error(429, retry_after="14")
+        return "ok"
+
+    assert await call_with_retry(fn, max_delay=60.0) == "ok"
+    assert slept == [14.0]

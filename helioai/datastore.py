@@ -21,7 +21,7 @@ _MAX_BYTES = 100 * 1024 * 1024  # 100 MB cap per dataset
 DATA_SUBDIR = "data"
 
 
-def fill_mask(values, fillval=None):
+def fill_mask(values, fillval: float | list | None = None):
     """Boolean mask of samples that carry no measurement.
 
     Three conventions have to be caught at once, which is why every caller shares
@@ -34,9 +34,11 @@ def fill_mask(values, fillval=None):
       carries a real proton temperature of 99093 K in the 2003 Halloween window.
 
     Args:
-        fillval: the declared FILLVAL, when the provider exposes it. Compared with
-            rtol=1e-6 to survive a float32 round-trip (Wind stores 99999.8984375)
-            while staying far tighter than the ~1% gap to real nearby values.
+        fillval: the declared FILLVAL, when the provider exposes it. A list as often
+            as a scalar — Wind/SWE declares `[99999.8984375]`, and a bare
+            `float(fillval)` on it raises. Compared with rtol=1e-6 to survive a
+            float32 round-trip while staying far tighter than the ~1% gap to real
+            nearby values.
     """
     import numpy as np
 

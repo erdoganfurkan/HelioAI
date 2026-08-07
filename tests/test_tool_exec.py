@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from helioai.core.llm.base import Message
 from helioai.core.tool_exec import (
+    _extract_artifact,
+    _summarize_tool_result,
     compact_history,
     emit_post_tool_events,
     inject_run_python_args,
@@ -17,12 +20,15 @@ from helioai.core.tool_exec import (
 def test_inject_only_for_run_python(monkeypatch) -> None:
     import helioai.workspace as ws
 
-    monkeypatch.setattr(ws, "get_session_dir", lambda: __import__("pathlib").Path("/tmp/ws"))
+    # str(Path(...)) is separator-dependent, so the expected value has to be built the
+    # same way — spelling it "/tmp/ws" failed on Windows against "\tmp\ws".
+    ws_dir = Path("/tmp/ws")
+    monkeypatch.setattr(ws, "get_session_dir", lambda: ws_dir)
     monkeypatch.setattr(ws, "get_next_run_idx", lambda d: 3)
 
     # Returns only the trusted args, passed to call_tool(..., trusted=...).
     out = inject_run_python_args("run_python")
-    assert out == {"_plot_dir": "/tmp/ws", "_run_idx": 3}
+    assert out == {"_plot_dir": str(ws_dir), "_run_idx": 3}
 
 
 def test_inject_noop_for_other_tools() -> None:
@@ -53,6 +59,17 @@ def test_emit_run_python_image_artifact() -> None:
     assert len(artifacts) == 1
     assert artifacts[0]["data"]["kind"] == "image"
     assert artifacts[0]["data"]["figure_paths"] == ["/tmp/ws/fig_0_0.png"]
+
+
+def test_emit_run_python_exports_artifact() -> None:
+    # The sandbox can compute everything and print nothing; without this artifact the
+    # values never leave run_python's own result and the lead has no numbers to quote.
+    exports = {"compression_ratio_density": {"shape": [], "mean": 2.37, "sample": [2.37]}}
+    result = json.dumps({"stdout": "", "figure_paths": [], "exports": exports})
+    events = list(emit_post_tool_events("run_python", result, tool_result_extra={"turn": 1}))
+    artifacts = [e["data"] for e in events if e["event"] == "artifact"]
+    assert [a["kind"] for a in artifacts] == ["exports"]
+    assert artifacts[0]["values"] == exports
 
 
 def test_emit_common_extra_on_artifact() -> None:
@@ -156,3 +173,34 @@ def test_compact_history_keeps_recent_summarizes_old() -> None:
 def test_compact_history_noop_when_few_tools() -> None:
     history = [Message(role="tool", tool_call_id="1", content="a" * 500)]
     assert compact_history(history, keep_full=2) is history
+
+
+def test_compaction_keeps_the_traceback_of_a_failed_run():
+    """Losing stderr two turns later is why one typo was retried three times."""
+    payload = json.dumps(
+        {
+            "error": "NameError: name 'nai' is not defined",
+            "stdout": "",
+            "stderr": "Traceback:\n  File \"your code\", line 25\nNameError: name 'nai' is not defined",
+            "code_path": "/w/code_3.py",
+            "n_lines": 40,
+        }
+    )
+    summary = _summarize_tool_result(payload, max_chars=300)
+    assert "NameError" in summary
+    assert "line 25" in summary, summary
+
+
+def test_failed_run_python_still_yields_the_code_artifact():
+    payload = json.dumps(
+        {"error": "ZeroDivisionError: division by zero", "code_path": "/w/code_1.py", "n_lines": 12}
+    )
+    arts = _extract_artifact("run_python", payload)
+    assert [a["kind"] for a in arts] == ["code"]
+    assert arts[0]["failed"] is True
+    assert arts[0]["name"] == "code_1.py"
+
+
+def test_other_tools_emit_nothing_on_error():
+    arts = _extract_artifact("get_timeseries", json.dumps({"error": "no data"}))
+    assert arts == []

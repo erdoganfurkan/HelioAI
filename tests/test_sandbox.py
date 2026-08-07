@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -492,3 +493,64 @@ async def test_sandbox_runs_inside_the_session_workspace(tmp_path, monkeypatch):
     session_dir = ws.get_session_dir()
     assert (session_dir / "artifact.txt").read_text() == "written by agent code"
     assert str(session_dir) in (result.get("stdout") or "")
+
+
+@pytest.mark.asyncio
+async def test_traceback_line_points_at_the_agents_own_code():
+    """A traceback numbered from the assembled script is unusable to the agent.
+
+    The preamble sits ~212 lines above the snippet, so an undefined name on user line 3
+    was reported as line 215 — and code_N.py on disk holds only the user's lines.
+    """
+    result = await run_python("x = 1\ny = 2\nprint(x[nope])")
+    assert "error" in result
+    assert "NameError" in result["error"], result["error"]
+    assert 'File "your code", line 3' in result["stderr"], result["stderr"]
+    assert "line 21" not in result["stderr"]
+
+
+@pytest.mark.asyncio
+async def test_error_field_names_the_exception_not_the_exit_code():
+    result = await run_python("raise ValueError('bad input')")
+    assert result["error"] == "ValueError: bad input"
+
+
+@pytest.mark.asyncio
+async def test_preamble_offset_is_derived_not_hard_coded():
+    """If the preamble grows and the offset does not, tracebacks silently drift again."""
+    from helioai.tools.sandbox import _PREAMBLE_LINES, _SANDBOX_PREAMBLE
+
+    assert _PREAMBLE_LINES == 2 + len(_SANDBOX_PREAMBLE.splitlines())
+
+
+@pytest.mark.asyncio
+async def test_failed_run_still_reports_the_script_path():
+    result = await run_python("raise RuntimeError('boom')")
+    assert result["code_path"].endswith(".py")
+    assert Path(result["code_path"]).read_text().strip() == "raise RuntimeError('boom')"
+
+
+@pytest.mark.asyncio
+async def test_interp_to_handles_the_two_ways_hand_rolling_it_fails():
+    """Both failures came from one Act II run, on consecutive turns.
+
+    `np.timedelta64` has no `.total_seconds()`, and `np.interp` on a 3-component field
+    raises "object too deep for desired array".
+    """
+    code = """
+import numpy as np
+t1 = np.array(['2015-03-17T00:00:00','2015-03-17T00:01:00','2015-03-17T00:02:00'], dtype='datetime64[s]')
+t2 = np.array(['2015-03-17T00:00:30','2015-03-17T00:01:30'], dtype='datetime64[s]')
+export('scalar', interp_to(t2, t1, np.array([10., 20., 30.])))
+export('vector', interp_to(t2, t1, np.array([[1.,2.,3.],[2.,4.,6.],[3.,6.,9.]])))
+export('gap', interp_to(t2, t1, np.array([1.0, np.nan, 3.0])))
+export('outside', interp_to(np.array(['2015-03-17T09:00:00'], dtype='datetime64[s]'), t1,
+                            np.array([10., 20., 30.])))
+"""
+    result = await run_python(code)
+    assert result.get("error") is None, result.get("stderr", "")
+    ex = result["exports"]
+    assert ex["scalar"]["mean"] == pytest.approx(20.0)
+    assert ex["vector"]["shape"] == [2, 3]
+    assert ex["gap"]["n_finite"] == 0, "a gap must not be bridged — that invents data"
+    assert ex["outside"]["n_finite"] == 0, "outside the source range is NaN, not clamped"

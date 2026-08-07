@@ -43,7 +43,14 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
     if not isinstance(data, dict):
         return str(data)[:max_chars] if not isinstance(data, list) else f"[list, {len(data)} items]"
     if data.get("error"):
-        return f"error: {str(data['error'])[:max_chars]}"
+        # The traceback has to survive compaction. Collapsing a failed run_python to its
+        # `error` line alone meant the agent lost the diagnosis two tool calls later and
+        # reproduced the same one-character typo three times in a single session.
+        summary = f"error: {str(data['error'])[:max_chars]}"
+        stderr = str(data.get("stderr") or "").strip()
+        if stderr:
+            summary += f"\n{stderr[-max_chars:]}"
+        return summary
     keep = {}
     for k, v in data.items():
         if k in {"figure_paths"}:
@@ -84,7 +91,23 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
         data = json.loads(result_text)
     except (ValueError, TypeError):
         return []
-    if not isinstance(data, dict) or "error" in data:
+    if not isinstance(data, dict):
+        return []
+    if "error" in data:
+        # A failed run leaves the offending script on disk. Surfacing it is the whole
+        # point when something broke — hiding it left the user watching a bare
+        # "exited with code 1" with no way to see what ran.
+        if tool_name == "run_python" and data.get("code_path"):
+            return [
+                {
+                    "tool": tool_name,
+                    "kind": "code",
+                    "code_path": data["code_path"],
+                    "name": Path(data["code_path"]).name,
+                    "n_lines": data.get("n_lines"),
+                    "failed": True,
+                }
+            ]
         return []
 
     artifacts: list[dict] = []
@@ -100,6 +123,8 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
                     "stdout": data.get("stdout", ""),
                 }
             )
+        if data.get("exports"):
+            artifacts.append({"tool": tool_name, "kind": "exports", "values": data["exports"]})
         for card in data.get("cards", []):
             if not isinstance(card, dict):
                 continue

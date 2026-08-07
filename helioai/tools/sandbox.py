@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -344,6 +345,38 @@ def clean(values):
     return arr
 
 
+def interp_to(t_target, t_source, values):
+    \"\"\"Resample `values` (sampled at `t_source`) onto the `t_target` time base.
+
+    Putting two instruments on a common clock is the most frequent operation here, and
+    hand-rolling it fails the same two ways every run: `np.timedelta64` has no
+    `.total_seconds()` (that is stdlib's timedelta), and `np.interp` is 1-D only, so a
+    3-component field raises \"object too deep for desired array\".
+
+    Handles datetime64 axes and 2-D values. A target point whose linear estimate would
+    depend on a missing sample comes back NaN rather than bridged: interpolating across
+    a gap invents measurements, and that is how a data hole becomes a plotted feature.
+    \"\"\"
+    tt = np.asarray(t_target)
+    ts = np.asarray(t_source)
+    if np.issubdtype(tt.dtype, np.datetime64):
+        tt = tt.astype('datetime64[ns]').astype('float64')
+    if np.issubdtype(ts.dtype, np.datetime64):
+        ts = ts.astype('datetime64[ns]').astype('float64')
+    v = np.asarray(values, dtype=float)
+    if v.ndim == 1:
+        good = np.isfinite(v)
+        if not good.any():
+            return np.full(tt.shape, np.nan)
+        out = np.interp(tt, ts[good], v[good], left=np.nan, right=np.nan)
+        # Any weight on a missing sample disqualifies the point — not a majority of it.
+        touched = np.interp(tt, ts, (~good).astype(float), left=1.0, right=1.0)
+        out[touched > 0.0] = np.nan
+        return out
+    cols = [interp_to(t_target, t_source, v[:, i]) for i in range(v.shape[1])]
+    return np.column_stack(cols)
+
+
 def load_data(name):
     \"\"\"Load a dataset saved by get_timeseries or get_events_timeseries.
 
@@ -461,6 +494,44 @@ _out = {"figure_paths": __sandbox_figure_paths, "exports": __sandbox_exports, "c
 print("__HELIOAI_RESULT__" + json.dumps(_out))
 """
 
+# Lines injected ahead of the agent's code: the two __sandbox_* assignments plus the
+# preamble. Derived, never hard-coded — the preamble grows, and a stale constant would
+# silently start pointing tracebacks at the wrong line again.
+_PREAMBLE_LINES = 2 + len(_SANDBOX_PREAMBLE.splitlines())
+
+_TRACEBACK_FRAME = re.compile(r'File "<string>", line (\d+)')
+
+
+def _rewrite_traceback(stderr: str) -> str:
+    """Renumber `File "<string>", line N` frames onto the agent's own code.
+
+    The traceback counts from the top of the assembled script, so a one-line typo was
+    reported ~212 lines below where the agent could see it — and the `code_N.py` written
+    to the workspace holds the agent's lines alone, so its numbering did not match either.
+    Frames inside the preamble keep their raw number, tagged, since they are ours.
+    """
+
+    def fix(m: re.Match) -> str:
+        line = int(m.group(1))
+        if line <= _PREAMBLE_LINES:
+            return f'File "<sandbox preamble>", line {line}'
+        return f'File "your code", line {line - _PREAMBLE_LINES}'
+
+    return _TRACEBACK_FRAME.sub(fix, stderr)
+
+
+def _error_summary(stderr: str, returncode: int) -> str:
+    """The exception line itself, which is what the agent needs to fix its code.
+
+    `Code exited with code 1` said nothing and was the only field kept once the result
+    aged out of context, so the same typo came back three times in one session.
+    """
+    lines = [ln.strip() for ln in stderr.strip().splitlines() if ln.strip()]
+    for ln in reversed(lines):
+        if not ln.startswith(("File ", "Traceback", "^", "~")):
+            return ln
+    return f"Code exited with code {returncode}"
+
 
 async def run_python(
     code: str, timeout: float = 60.0, _plot_dir: str | None = None, _run_idx: int | None = None
@@ -565,10 +636,11 @@ async def run_python(
             )
 
         if proc.returncode != 0:
+            agent_stderr = _rewrite_traceback(stderr.strip())
             return {
-                "error": f"Code exited with code {proc.returncode}",
+                "error": _error_summary(agent_stderr, proc.returncode),
                 "stdout": clean_stdout,
-                "stderr": stderr.strip(),
+                "stderr": agent_stderr,
                 "figure_paths": figure_paths,
                 "exports": exports,
                 "cards": cards,

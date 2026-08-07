@@ -105,3 +105,30 @@ def test_role_cannot_call_forbidden_tools(role_name: str, forbidden: list[str]) 
     allowed = set(AGENT_ROLES[role_name].allowed_tools)
     for tool in forbidden:
         assert tool not in allowed, f"{role_name} should NOT have {tool}"
+
+
+def test_task_tooldef_states_no_routing_rule() -> None:
+    """Routing lives in the lead prompt alone.
+
+    Stating it in both places let the two drift apart: the ToolDef called
+    `parameter_hunter` "required" for unknown ids while the lead prompt said never to run
+    it first. The model resolved that conflict differently run to run — three delegations,
+    three, then zero on the same notebook.
+    """
+    from helioai.core.agent_loop import SYSTEM_PROMPT
+    from helioai.core.sub_agents import task_tool_def
+
+    desc = task_tool_def().description
+    assert "Required when" not in desc
+    assert "parameter_hunter" in SYSTEM_PROMPT
+    # The role names still have to reach the model, just as an inventory, not as routing.
+    for role in AGENT_ROLES:
+        assert role in desc
+
+
+def test_lead_prompt_gives_a_countable_delegation_test() -> None:
+    """A fuzzy "skip delegation for something simple" left the choice to sampling."""
+    from helioai.core.agent_loop import SYSTEM_PROMPT
+
+    assert "count the stages" in SYSTEM_PROMPT.lower()
+    assert "Skip delegation entirely" not in SYSTEM_PROMPT

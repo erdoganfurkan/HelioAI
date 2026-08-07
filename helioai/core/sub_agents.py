@@ -47,12 +47,13 @@ class SubAgentRole:
 SUB_SYSTEM_PROMPT_BASE = """You are a focused sub-agent inside HelioAI. The lead agent delegated a narrow task to you.
 
 - Do exactly what the description asks, nothing more.
-- You have NO access to the lead agent's conversation. Everything you need is in the description.
+- You have NO access to the lead agent's conversation. Everything you need is in the description — including, when the session already holds downloaded data, the list of dataset names you can read with `load_data("name")`. Never re-download something that list already covers.
 - Reply with a short final summary of what you did and the facts the lead needs (parameter ids, key values, findings).
 - Make a reasonable assumption when something is unclear, then proceed.
 - Always cite the speasy parameter ids you used.
 - For any derived quantity (theta_Bn, beta, V_A, MVAB normal, compression ratio…), state in your reply the method/recipe/library you used and its scientific reference (e.g. "theta_Bn by coplanarity, recipe theta_bn, Schwartz 1998"). Never report a result without naming how it was computed.
 - Use your tools to complete the task. If a tool call fails, retry with a corrected argument before concluding.
+- `load_data()` returns arrays with NaN wherever the mission declared a fill value. Use `np.nanargmax`/`nanargmin`/`nanmean`/`nanstd`: plain `np.argmax` returns the index of the first NaN, because no comparison ever displaces it — that points a shock detector at a data gap.
 """
 
 
@@ -105,7 +106,11 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "load_recipe",
             "run_python",
         ),
-        max_turns=8,
+        # 8 was not enough for a multi-spacecraft job: discovering that a CDA
+        # ephemeris does not cover the requested year costs a turn per candidate,
+        # and the notebook's Act IV spent four of them before doing any analysis.
+        # ponytail: raising the cap, not indexing time coverage — see tasks/todo.md.
+        max_turns=12,
         auto_load_skills=("data_analyst",),
     ),
     "librarian": SubAgentRole(
@@ -175,11 +180,13 @@ def task_tool_def() -> ToolDef:
     role_lines = "\n".join(f"  - `{r.name}`: {r.description}" for r in AGENT_ROLES.values())
     return ToolDef(
         name=TASK_TOOL_NAME,
+        # Routing rules live in the lead's system prompt, not here. Stating them in both
+        # places let them drift into contradiction — this text used to call
+        # `parameter_hunter` "required" for unknown ids while the prompt said never to run
+        # it first, and the model resolved the conflict differently from one run to the
+        # next: three delegations, three, then none, on the same notebook.
         description=(
             "Spawn a specialist sub-agent for ONE focused subtask. "
-            "Required when: (1) param ids are unknown → spawn ONE `parameter_hunter` for ALL the parameters at once (list them in the description); "
-            "(2) user wants analysis, plots, spectra, multi-mission comparison, or event detection → spawn `data_analyst`; "
-            "(3) user wants plasma physics calculations (β, gyrofrequency, Debye length…) → spawn `plasma_physicist`. "
             "The sub runs in isolation (empty context) — pre-resolve every fact "
             "(param ids, ISO times, missions) inside `description`.\n\nRoles:\n" + role_lines
         ),
@@ -198,6 +205,40 @@ def task_tool_def() -> ToolDef:
             },
             "required": ["description", "agent_role"],
         },
+    )
+
+
+def _with_inventory(description: str) -> str:
+    """Prepend the session's already-downloaded datasets to a sub-agent's task.
+
+    The files are reachable — a sub-agent shares the lead's session directory, so
+    `load_data(name)` works — but nothing told it which names exist, so it re-downloaded
+    parameters the lead had just fetched (the same Wind field four times across one
+    notebook). It also made the `plasma_physicist` skill's "the lead fetches the data,
+    reach it with load_data(name)" impossible to follow.
+
+    Silent on failure: a missing or unreadable manifest must not stop the task.
+    """
+    try:
+        import helioai.workspace as _ws
+        from helioai.datastore import read_manifest
+
+        datasets = read_manifest(_ws.get_session_dir()).get("datasets", {})
+    except Exception as e:  # noqa: BLE001 — an inventory is a convenience, never a gate
+        log.debug("subagent_inventory_failed", error=str(e))
+        return description
+    if not datasets:
+        return description
+
+    lines = [
+        f"- `{name}` — {e.get('param_id', '?')} [{e.get('start', '?')} → {e.get('stop', '?')}]"
+        for name, e in datasets.items()
+    ]
+    return (
+        'Already downloaded in this session — read these with `load_data("name")` inside '
+        "`run_python` instead of downloading them again:\n"
+        + "\n".join(lines)
+        + f"\n\nYour task:\n{description}"
     )
 
 
@@ -269,6 +310,12 @@ async def stream_subagent(
     Yields the same event types as stream_chat (tool_call, tool_result,
     skill_loaded, artifact) enriched with sub_agent_ctx={role, task_id},
     then a final sub_agent_end event carrying summary/artifacts/n_iterations/error.
+
+    `summary` is the sub-agent's whole deliverable and is emitted in full: it becomes
+    the lead's tool result, so anything cut here is a measurement the lead can no
+    longer report and will be tempted to invent. Callers that display it truncate on
+    their own side. Reaching the turn cap is reported as an `error`, not as a result,
+    for the same reason — a lead handed a capped run has nothing to summarise.
     """
     import helioai.workspace as _ws
 
@@ -276,7 +323,11 @@ async def stream_subagent(
         task_id = uuid.uuid4().hex[:8]
     ctx = {"role": role, "task_id": task_id}
 
+    # The user has to be bound too, not just the session: `_root()` resolves the workspace
+    # under `current_user()`, which defaults to "web". It works today only because the lead
+    # already bound it, so a sub-agent started out of band wrote to the wrong user's files.
     _ws_token = _ws.set_session(parent_session_id)
+    _user_token = _ws.set_user(user_id) if user_id else None
 
     if role not in AGENT_ROLES:
         known = ", ".join(sorted(AGENT_ROLES))
@@ -317,7 +368,7 @@ async def stream_subagent(
             max_turns=role_cfg.max_turns,
         )
 
-        history: list[Message] = [Message(role="user", content=description)]
+        history: list[Message] = [Message(role="user", content=_with_inventory(description))]
         artifacts: list[dict] = []
         final_text = ""
         n_iters = 0
@@ -406,9 +457,9 @@ async def stream_subagent(
             "data": {
                 "task_id": task_id,
                 "role": role,
-                "summary": final_text[:200],
+                "summary": final_text,
                 "n_iterations": n_iters,
-                "error": None,
+                "error": final_text if capped else None,
                 "artifacts": artifacts,
             },
         }
@@ -429,6 +480,8 @@ async def stream_subagent(
 
     finally:
         _ws.reset_session(_ws_token)
+        if _user_token is not None:
+            _ws.reset_user(_user_token)
         structlog.contextvars.unbind_contextvars("parent_session_id", "sub_role", "sub_task_id")
 
 

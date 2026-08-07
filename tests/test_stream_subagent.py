@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
 import pytest
 
 import helioai.tools.setup  # noqa: F401  — populates the registry; without it it is empty
@@ -109,9 +110,11 @@ async def test_text_only_response_ends_the_sub_agent(stub_registry, monkeypatch)
     assert data["n_iterations"] == 1
 
 
-async def test_summary_is_truncated_to_200_chars(stub_registry):
+async def test_summary_reaches_the_lead_in_full(stub_registry):
+    # A truncated summary is how measured values got dropped between the sub-agent
+    # and the lead, which then reported numbers it had never been given.
     events = await drain(**base(ScriptedLLM([text("x" * 500)])))
-    assert len(final(events)["summary"]) == 200
+    assert final(events)["summary"] == "x" * 500
 
 
 async def test_tool_call_emits_call_then_result(stub_registry):
@@ -189,7 +192,7 @@ async def test_only_whitelisted_tools_are_offered(stub_registry):
 # ── turn cap ───────────────────────────────────────────────────────────────────
 
 
-async def test_reaching_the_turn_cap_ends_cleanly(stub_registry):
+async def test_reaching_the_turn_cap_is_reported_as_an_error(stub_registry):
     role = sub_agents.AGENT_ROLES["parameter_hunter"]
     llm = ScriptedLLM([calls("search_parameters") for _ in range(role.max_turns)])
 
@@ -197,7 +200,9 @@ async def test_reaching_the_turn_cap_ends_cleanly(stub_registry):
     data = final(events)
     assert data["n_iterations"] == role.max_turns
     assert "cap" in data["summary"]
-    assert data["error"] is None, "hitting the cap is not an error"
+    assert data["error"] and "cap" in data["error"], (
+        "a capped run produced no conclusion; if the lead sees error=None it writes one anyway"
+    )
 
 
 # ── artifacts ──────────────────────────────────────────────────────────────────
@@ -345,3 +350,45 @@ def test_verification_outage_raises_no_false_alarm(monkeypatch):
 
     monkeypatch.setattr(rag, "_collection_only", boom)
     assert rag.unknown_ids(["cda/whatever/X"]) == []
+
+
+@pytest.mark.asyncio
+async def test_subagent_task_lists_the_sessions_existing_datasets(tmp_path, monkeypatch):
+    """A sub-agent that cannot name the lead's datasets re-downloads them."""
+    import helioai.workspace as ws
+    from helioai.core.sub_agents import _with_inventory
+    from helioai.datastore import save_timeseries
+
+    monkeypatch.setattr(ws, "_root", lambda: tmp_path)
+    tok = ws.set_label("sess")
+    try:
+        save_timeseries(
+            "bgsm",
+            time=np.array(["2015-03-17T00:00:00"], dtype="datetime64[s]"),
+            values=np.array([[1.0, 2.0, 3.0]]),
+            param_id="cda/AC_H0_MFI/BGSM",
+            units="nT",
+            start="2015-03-17T00:00:00",
+            stop="2015-03-17T01:00:00",
+            columns=["Bx", "By", "Bz"],
+            source="get_timeseries",
+        )
+        out = _with_inventory("Plot the field.")
+        assert "bgsm" in out
+        assert "cda/AC_H0_MFI/BGSM" in out
+        assert "load_data" in out
+        assert out.endswith("Plot the field.")
+    finally:
+        ws.reset_label(tok)
+
+
+def test_inventory_is_a_noop_without_a_manifest(tmp_path, monkeypatch):
+    import helioai.workspace as ws
+    from helioai.core.sub_agents import _with_inventory
+
+    monkeypatch.setattr(ws, "_root", lambda: tmp_path)
+    tok = ws.set_label("empty")
+    try:
+        assert _with_inventory("Do the thing.") == "Do the thing."
+    finally:
+        ws.reset_label(tok)

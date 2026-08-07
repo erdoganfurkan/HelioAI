@@ -184,3 +184,121 @@ def test_a_capped_run_keeps_its_findings_through_compaction():
     compacted = _summarize_tool_result(result, max_chars=300)
     assert "14.5 nT" in compacted
     assert "cap" in compacted
+
+
+def _reply_e14084cf():
+    return """Key upstream/downstream values
+
+- Upstream |B|:
+  - 9.17 nT
+
+- Downstream |B|:
+  - 13.02 nT
+
+Compression ratios
+
+- Density compression:
+  - r_n = n2/n1 = 2.06
+
+Recorded on 2015-03-17T04:30:59 UT, over 2 spacecraft, Act III of 3.
+Alfven speed: VA ~ 48.9 km/s, Mach number MA ~ 4.0.
+"""
+
+
+def test_extract_claims_keeps_measurements_and_drops_dates_and_counts():
+    from helioai.core.provenance_check import extract_claims
+
+    texts = [c.text for c in extract_claims(_reply_e14084cf())]
+
+    assert "13.02 nT" in texts
+    assert "48.9 km/s" in texts
+    assert "2.06" in texts
+    assert "4.0" in texts  # written with a decimal: a claim, not a count
+
+    assert not any("2015" in t for t in texts)
+    assert not any(t.startswith("03") or t.startswith("17") for t in texts)
+    assert "2" not in texts  # "2 spacecraft"
+    assert "3" not in texts  # "Act III of 3"
+
+
+def test_verify_contradicts_a_number_the_session_computed_differently():
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [
+            {
+                "name": "B_downstream",
+                "units": "nT",
+                "mean": 14.5,
+                "min": 12.0,
+                "max": 21.7,
+                "code_path": "/w/code_2.py",
+            },
+            {"name": "alfven_speed", "units": "km/s", "mean": 48.9, "code_path": "/w/code_3.py"},
+        ]
+    }
+    report = verify(extract_claims(_reply_e14084cf()), ledger)
+
+    flagged = {d["text"]: d for d in report.details}
+    assert flagged["13.02 nT"]["status"] == "contradicted"
+    assert flagged["13.02 nT"]["name"] == "B_downstream"
+    assert flagged["13.02 nT"]["code_path"] == "/w/code_2.py"
+    assert report.matched >= 1  # 48.9 km/s is in the ledger
+    assert "48.9 km/s" not in flagged
+
+
+def test_a_unit_mismatch_is_not_a_contradiction():
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {"values": [{"name": "downstream density", "units": "cm-3", "mean": 34.5}]}
+    (claim,) = [c for c in extract_claims("Downstream density peak: 41.0 nT") if c.units == "nT"]
+    report = verify([claim], ledger)
+
+    assert report.contradicted == 0
+    assert report.unsourced == 1
+
+
+def test_ratios_and_percentages_are_derived_not_unsourced():
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {"values": [{"name": "n_up", "units": "cm-3", "mean": 16.7}]}
+    report = verify(extract_claims("The ratio is 2.06 and that is 29.4 % of the total."), ledger)
+
+    assert report.derived == 2
+    assert report.unsourced == 0
+    assert report.details == []
+
+
+def test_check_reply_stays_silent_when_the_session_computed_nothing(tmp_path):
+    from helioai.core.provenance_check import check_reply
+
+    assert check_reply("The field reached 13.02 nT.", tmp_path) is None
+
+    provenance.record({"Bd": _stats(14.5, "nT")}, code_path=str(tmp_path / "code_0.py"))
+    payload = check_reply("The field reached 13.02 nT.", tmp_path)
+    assert payload["unsourced"] + payload["contradicted"] == 1
+
+
+def test_the_provenance_event_is_emitted_next_to_the_reply(tmp_path, monkeypatch):
+    import helioai.workspace as ws
+    from helioai.core.agent_loop import _provenance_events
+
+    provenance.record({"Bd": _stats(14.5, "nT")}, code_path=str(tmp_path / "code_0.py"))
+    monkeypatch.setattr(ws, "get_session_dir", lambda: tmp_path)
+
+    (event,) = list(_provenance_events("Downstream |B| reached 13.02 nT."))
+    assert event["event"] == "provenance"
+    assert event["data"]["unsourced"] + event["data"]["contradicted"] == 1
+
+    assert list(_provenance_events("")) == []
+
+
+def test_a_broken_check_never_costs_the_user_the_reply(monkeypatch):
+    import helioai.core.provenance_check as pc
+    from helioai.core.agent_loop import _provenance_events
+
+    def boom(*a, **k):
+        raise RuntimeError("ledger on fire")
+
+    monkeypatch.setattr(pc, "check_reply", boom)
+    assert list(_provenance_events("13.02 nT")) == []

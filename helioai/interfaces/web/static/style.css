@@ -321,6 +321,12 @@ select:focus { border-color: var(--accent); }
 .invalid-ids ul { padding-left: 20px; margin: 0; }
 .invalid-ids li { font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; }
 
+/* Provenance of the numbers in a reply — folded away until someone asks */
+.provenance-details { margin: 4px 0 2px 22px; font-size: 12px; color: var(--text-muted); }
+.provenance-details summary { cursor: pointer; }
+.provenance-details ul { padding-left: 18px; margin: 4px 0 0; line-height: 1.6; }
+.provenance-status { font-weight: 700; color: var(--orange); }
+
 /* Figure fallback */
 .figure-fallback { align-self: flex-start; background: #1a1209; border: 1px solid var(--orange); border-radius: 8px; padding: 10px 14px; font-size: 13px; color: var(--orange); line-height: 1.6; }
 .figure-fallback a { color: var(--accent); }

@@ -200,6 +200,9 @@ function renderEvent(ev) {
   } else if (event === 'figure_review') {
     renderFigureReview(data.text);
 
+  } else if (event === 'provenance') {
+    renderProvenance(data);
+
   } else if (event === 'invalid_ids') {
     // A sub-agent quoting parameter ids that exist in no catalogue is the most
     // damaging thing it can produce, so this one is a banner, not a timeline line.
@@ -237,6 +240,30 @@ function renderFigureReview(text) {
   const ok = (text || '').startsWith('OK');
   const row = appendTlEvent(ok ? '✓' : '⚠', text || '', ok ? 'tl-ok' : 'tl-issue');
   row.title = text || '';
+  return row;
+}
+
+function renderProvenance(data) {
+  // A timeline row, not a banner: it annotates the answer, it does not overrule it.
+  // Collapsed by default — the counts are the signal, the list is for whoever doubts it.
+  const flagged = (data.contradicted || 0) + (data.unsourced || 0);
+  const summary = `📐 provenance — ${data.matched || 0} traced, ${data.contradicted || 0} contradicted, ` +
+                  `${data.unsourced || 0} unsourced, ${data.derived || 0} derived`;
+  const row = appendTlEvent(flagged ? '⚠' : '✓', summary, flagged ? 'tl-issue' : 'tl-ok');
+  const details = data.details || [];
+  if (!details.length) return row;
+
+  const box = el('details', 'provenance-details');
+  box.append(el('summary', null, `${details.length} number${details.length > 1 ? 's' : ''} to check`));
+  const ul = el('ul');
+  for (const d of details) {
+    const li = el('li');
+    li.append(el('span', 'provenance-status', d.status));
+    li.append(document.createTextNode(' ' + d.text + (d.name ? ` — the session computed ${d.name}` : '')));
+    ul.append(li);
+  }
+  box.append(ul);
+  row.append(box);
   return row;
 }
 

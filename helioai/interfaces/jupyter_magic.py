@@ -167,6 +167,17 @@ def _render_jupyter_event(ev: dict) -> None:
     elif name == "figure_review":
         display(Markdown(f"**🔍 figure review** — {data.get('text', '')}"))
 
+    elif name == "provenance":
+        lines = [
+            f"**📐 provenance** — {data.get('matched', 0)} traced, "
+            f"{data.get('contradicted', 0)} contradicted, {data.get('unsourced', 0)} unsourced, "
+            f"{data.get('derived', 0)} derived"
+        ]
+        for d in data.get("details") or []:
+            origin = f" — the session computed `{d['name']}`" if d.get("name") else ""
+            lines.append(f"- {d['status']}: `{d['text']}`{origin}")
+        display(Markdown("\n".join(lines)))
+
     elif name == "invalid_ids":
         ids = "\n".join(f"- `{i}`" for i in data.get("ids") or [])
         display(

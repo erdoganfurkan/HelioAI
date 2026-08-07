@@ -69,6 +69,30 @@ The point is that *every* derived quantity can be traced, not only the pre-packa
 The double signal is deliberate: the artifact chip is precise, and the prose line is what a
 reader actually notices.
 
+## Where each number came from
+
+Every `export()` call is recorded in `<session>/data/provenance.json`: the value, its unit,
+the script that produced it, and which agent ran it. When the agent finishes an answer, the
+numbers it states are checked against that ledger and a `📐 provenance` line reports how many
+were traced, contradicted, derived or unsourced — with the flagged ones listed underneath.
+
+Pass the unit when you export, or a compression ratio of 2.53 and a field of 2.53 nT are the
+same number to the checker:
+
+```python
+export("B_downstream", Bd, units="nT")
+```
+
+Three things it deliberately does not do:
+
+- **It annotates, it never blocks.** A number that is absent from the ledger is flagged, not
+  removed, and the answer is delivered either way. An approximate numeric match is not a
+  good enough judge to overrule a scientist.
+- **It certifies provenance, not correctness.** A compression ratio computed over the wrong
+  averaging window is recorded, traceable, and wrong. Nothing here will say so.
+- **It only sees numbers.** "ACE is sunward of Wind" was published four times against the
+  positions that had just been downloaded; a claim with no number in it is out of reach.
+
 ## Adding your own
 
 Drop a `.py` file in `helioai/data/recipes/` with the header above. The `# reference:` line

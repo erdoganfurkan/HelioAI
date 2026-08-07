@@ -172,6 +172,17 @@ def _render_event(ev: dict) -> None:
     elif name == "figure_review":
         print(f"{pad}\033[95m🔍 figure review: {data.get('text', '')}\033[0m")
 
+    elif name == "provenance":
+        counts = (
+            f"{data.get('matched', 0)} traced, {data.get('contradicted', 0)} contradicted, "
+            f"{data.get('unsourced', 0)} unsourced, {data.get('derived', 0)} derived"
+        )
+        colour = "91" if data.get("contradicted") or data.get("unsourced") else "90"
+        print(f"{pad}\033[{colour}m📐 provenance — {counts}\033[0m")
+        for d in data.get("details") or []:
+            origin = f" (session computed {d['name']})" if d.get("name") else ""
+            print(f"{pad}  \033[{colour}m{d['status']}: {d['text']}{origin}\033[0m")
+
     elif name == "invalid_ids":
         print(f"\n{pad}\033[91m⚠ ids not in the catalogue — do not use:\033[0m")
         for pid in data.get("ids") or []:

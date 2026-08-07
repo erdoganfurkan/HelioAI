@@ -17,6 +17,7 @@ Event shapes:
   plan            {title, steps}
   skill_loaded    {name}
   reply           {text}
+  provenance      {matched, contradicted, derived, unsourced, details}
   done            {n_iterations}
   error           {message}
 """
@@ -156,6 +157,23 @@ def _read_profile(path_str: str, mtime: float) -> str:
         return Path(path_str).read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+
+
+def _provenance_events(text: str):
+    """Yield the `provenance` event for a reply, or nothing at all.
+
+    Annotation, never a gate: the reply is already out before this runs, and a failure
+    here must cost the user nothing.
+    """
+    try:
+        import helioai.workspace as _ws
+        from helioai.core.provenance_check import check_reply
+
+        payload = check_reply(text or "", _ws.get_session_dir())
+        if payload:
+            yield {"event": "provenance", "data": payload}
+    except Exception:
+        log.debug("provenance_check_failed", exc_info=True)
 
 
 def _active_output_budget() -> tuple[str, int]:
@@ -352,11 +370,15 @@ async def stream_chat(
                     yield {"event": "done", "data": {"n_iterations": turn}}
                     return
                 yield {"event": "reply", "data": {"text": response.content}}
+                for ev in _provenance_events(response.content):
+                    yield ev
                 yield {"event": "done", "data": {"n_iterations": turn}}
                 return
 
             if response.content and response.content.strip():
                 yield {"event": "reply", "data": {"text": response.content}}
+                for ev in _provenance_events(response.content):
+                    yield ev
 
             for tc in response.tool_calls:
                 log.info("tool_call_issued", turn=turn, tool=tc.name)

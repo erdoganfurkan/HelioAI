@@ -23,7 +23,16 @@ registry.register(
         "When a `provider` filter is set, a few strong matches from OTHER providers are "
         "appended and marked `outside_filter: true` — the filter still worked, these are "
         "there so a wrong provider guess cannot hide the parameter you need. If they look "
-        "like a better match than the filtered hits, use them."
+        "like a better match than the filtered hits, use them. "
+        "Every result carries the product's `coverage`. Pass `start`/`stop` when you know "
+        "the interval you will download: products that cannot cover it are marked "
+        "`covers_window: false` and sorted last, which saves discovering it one failed "
+        "download at a time. "
+        "`quality: browse` marks key-parameter products — fine for a quick look, not for "
+        "analysis. **Cadence is stated in `description`**, not in a field of its own: "
+        "'(3 sec)', '(1 min)', 'High-resolution', 'hourly'. Read it there and choose; "
+        "re-running the search with different wording will not reveal it, and downloading "
+        "to find out costs far more."
     ),
     parameters={
         "type": "object",
@@ -52,6 +61,14 @@ registry.register(
                     "the 83k, so amda/csa products rank low in generic queries; that is what "
                     "the filter is for."
                 ),
+            },
+            "start": {
+                "type": "string",
+                "description": "Optional ISO start of the interval you intend to download.",
+            },
+            "stop": {
+                "type": "string",
+                "description": "Optional ISO stop. Both start and stop are needed to filter.",
             },
         },
         "required": [],

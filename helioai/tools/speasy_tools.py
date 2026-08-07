@@ -38,6 +38,21 @@ async def get_timeseries(
     except ImportError:
         return {"error": "speasy is not installed. Run: pip install speasy"}
 
+    from helioai.datastore import find_existing
+
+    cached = find_existing(param_id, start, stop)
+    if cached is not None:
+        return {
+            "dataset": cached,
+            "dataset_note": f"use load_data({cached!r}) in run_python — never spz.get_data",
+            "param_id": param_id,
+            "start": start,
+            "stop": stop,
+            "already_downloaded": True,
+            "note": "This session already holds this parameter for this exact interval. "
+            "Nothing was re-fetched; read it with load_data().",
+        }
+
     blocking, coverage_note = _coverage_check(spz, np, param_id, start, stop)
     if blocking is not None:
         return blocking
@@ -46,7 +61,18 @@ async def get_timeseries(
         var = spz.get_data(param_id, start, stop)
     except Exception as e:
         log.warning("speasy.get_data failed: %s", e)
-        return {"error": f"Failed to retrieve {param_id!r}: {e}"}
+        # `str(e)` alone can be a bare "tuple index out of range", which tells the agent
+        # nothing about what to do next. Name the exception, and recognise the shape a
+        # non-data variable (a CDF time axis) produces so the agent looks for a real
+        # product instead of retrying the same id.
+        detail = f"{type(e).__name__}: {e}"
+        if isinstance(e, IndexError | TypeError):
+            detail += (
+                " — this often means the id is not a plottable data variable "
+                "(a CDF time axis or support variable). Search for the measured "
+                "quantity itself and use that id."
+            )
+        return {"error": f"Failed to retrieve {param_id!r}: {detail}"}
 
     if var is None:
         return {"error": f"No data returned for {param_id!r} between {start} and {stop}"}
@@ -111,16 +137,20 @@ async def get_timeseries(
         values = values[::step]
         n_points = len(times)
 
-    # Build a brief preview (first 10 rows as CSV text)
+    # Build a brief preview (first 10 rows as CSV text). Nothing here may raise: a
+    # non-numeric variable (datetime64 values, string labels) used to kill the whole
+    # call from inside this loop, with no try/except above it.
     preview_lines: list[str] = []
     for i in range(min(10, n_points)):
-        t_str = str(times[i])
         v = values[i]
-        if hasattr(v, "__len__"):
-            v_str = ", ".join(f"{x:.4g}" for x in v)
-        else:
-            v_str = f"{float(v):.6g}"
-        preview_lines.append(f"{t_str}  {v_str}")
+        try:
+            if hasattr(v, "__len__"):
+                v_str = ", ".join(f"{x:.4g}" for x in v)
+            else:
+                v_str = f"{float(v):.6g}"
+        except (TypeError, ValueError):
+            v_str = str(v)[:60]
+        preview_lines.append(f"{times[i]}  {v_str}")
     preview = "\n".join(preview_lines)
 
     shape = list(values.shape)
@@ -161,7 +191,16 @@ async def get_timeseries(
     except Exception:
         pass
 
-    result: dict = {
+    # `dataset` leads the payload on purpose. Stale tool results are summarised by
+    # serialising this dict and cutting it to a fixed length, so trailing keys are the
+    # ones that vanish — and losing the handle is what makes the agent re-download a
+    # parameter it already has instead of calling load_data().
+    result: dict = {}
+    if saved:
+        ds_name = saved["dataset"]
+        result["dataset"] = ds_name
+        result["dataset_note"] = f"use load_data({ds_name!r}) in run_python — never spz.get_data"
+    result |= {
         "param_id": param_id,
         "name": name,
         "start": start,
@@ -179,10 +218,6 @@ async def get_timeseries(
         result["quality"] = quality
     if coverage_note:
         result["coverage_note"] = coverage_note
-    if saved:
-        ds_name = saved["dataset"]
-        result["dataset"] = ds_name
-        result["dataset_note"] = f"use load_data({ds_name!r}) in run_python — never spz.get_data"
     return result
 
 
@@ -340,16 +375,39 @@ async def list_missions() -> dict:
     }
 
 
+def _apply_window(results: list[dict], window: tuple[str, str] | None) -> list[dict]:
+    """Flag and demote products whose published coverage misses the requested window.
+
+    Demoted rather than dropped: the index can lag the archive, and `get_timeseries`
+    keeps its own coverage guard for exactly that case.
+    """
+    if not window or not results:
+        return results
+    from helioai.tools.rag import _covers
+
+    for r in results:
+        if not _covers(r.get("coverage", ""), window):
+            r["covers_window"] = False
+    return sorted(results, key=lambda r: r.get("covers_window", True) is False)
+
+
 async def search_parameters(
     query: str | None = None,
     top_k: int = 5,
     provider: str | None = None,
     queries: list[str] | None = None,
+    start: str | None = None,
+    stop: str | None = None,
 ) -> dict:
-    """Semantic search over the speasy catalog (65k+ products).
+    """Semantic search over the speasy catalog (83k+ products).
 
     Requires the index to be built first (run: helioai index).
     Falls back to a direct speasy text match if no index is found.
+
+    Every result carries the product's published `coverage`. Passing the window you
+    intend to download sorts products that cannot cover it to the bottom and flags them,
+    which is cheaper than discovering it one failed download at a time — resolving a
+    2015 ephemeris used to cost four turns against products that stop in 1997.
 
     Args:
         query: free-text English query for a SINGLE parameter.
@@ -357,10 +415,13 @@ async def search_parameters(
                  (preferred when 2+ parameters are needed — much cheaper).
         top_k: number of results per query.
         provider: optional — restrict to one provider (amda/cda/csa/ssc).
+        start: optional ISO start of the interval you intend to download.
+        stop: optional ISO stop. Both are needed for the filter to apply.
 
     Returns either {query, provider, results} (single) or
     {provider, groups: [{query, results}]} (batch).
     """
+    window = (start, stop) if start and stop else None
     if queries:
         try:
             from helioai.tools.rag import search_batch as rag_search_batch
@@ -369,7 +430,8 @@ async def search_parameters(
             return {
                 "provider": provider,
                 "groups": [
-                    {"query": q, "results": r} for q, r in zip(queries, batch, strict=False)
+                    {"query": q, "results": _apply_window(r, window)}
+                    for q, r in zip(queries, batch, strict=False)
                 ],
             }
         except Exception as e:
@@ -393,7 +455,7 @@ async def search_parameters(
         from helioai.tools.rag import search as rag_search
 
         results = rag_search(query, top_k=top_k, provider=provider)
-        return {"query": query, "provider": provider, "results": results}
+        return {"query": query, "provider": provider, "results": _apply_window(results, window)}
     except Exception as e:
         log.warning("RAG search failed (%s), falling back to speasy inventory scan", e)
 

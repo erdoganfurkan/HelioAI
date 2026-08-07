@@ -124,6 +124,33 @@ def read_manifest(session_dir: Path) -> dict:
     return _read_manifest_file(session_dir / DATA_SUBDIR)
 
 
+def find_existing(param_id: str, start: str, stop: str) -> str | None:
+    """Name of an already-persisted dataset for this exact param and window, or None.
+
+    The same matching `_unique_name` uses to reuse a slot — but consulted *before* the
+    download rather than after, so a repeat request costs a dict lookup instead of a
+    network round-trip. The prompt has always said "download each parameter ONCE"; a
+    real run still re-fetched the same Wind field three times across three turns, with
+    the dataset name sitting in plain sight in its own history. Discipline the model
+    does not reliably apply belongs in the tool.
+    """
+    try:
+        data_dir = _session_data_dir()
+        if data_dir is None:
+            return None
+        for name, entry in _read_manifest_file(data_dir).get("datasets", {}).items():
+            if (
+                entry.get("param_id") == param_id
+                and entry.get("start") == start
+                and entry.get("stop") == stop
+                and entry.get("kind") == "timeseries"
+            ):
+                return name
+    except Exception as e:  # noqa: BLE001 — a cache miss must never block a download
+        log.debug("find_existing failed: %s", e)
+    return None
+
+
 def _unique_name(manifest: dict, base: str, param_id: str, start: str, stop: str) -> str:
     datasets = manifest.get("datasets", {})
     existing = datasets.get(base)

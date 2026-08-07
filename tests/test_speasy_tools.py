@@ -378,3 +378,72 @@ async def test_get_timeseries_persists_nan_not_the_sentinel(monkeypatch, tmp_pat
     assert np.isnan(stored).sum() == 2
     assert not (stored > 99000).any()
     assert np.nanmax(stored) == 440.0
+
+
+@pytest.mark.asyncio
+async def test_retrieval_failure_names_the_exception_type(monkeypatch):
+    """A bare "tuple index out of range" gave the agent nothing to act on."""
+    import speasy
+
+    def boom(*a, **k):
+        raise IndexError("tuple index out of range")
+
+    monkeypatch.setattr(speasy, "get_data", boom)
+    result = await get_timeseries("cda/AC_OR_SSC/Epoch", "2015-03-17", "2015-03-18")
+    assert "IndexError" in result["error"]
+    assert "not a plottable data variable" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_preview_survives_non_numeric_values(monkeypatch):
+    """datetime64 values used to raise inside the preview loop, killing the call."""
+    from types import SimpleNamespace
+
+    import speasy
+
+    times = np.array(["2015-03-17T00:00:00", "2015-03-17T00:01:00"], dtype="datetime64[s]")
+    var = SimpleNamespace(
+        time=times, values=times.copy(), unit="", name="Epoch", columns=[], meta={}
+    )
+    monkeypatch.setattr(speasy, "get_data", lambda *a, **k: var)
+    result = await get_timeseries("cda/AC_OR_SSC/Epoch", "2015-03-17", "2015-03-18")
+    assert "error" not in result or "preview" in result
+
+
+@pytest.mark.asyncio
+async def test_repeat_download_short_circuits_before_the_network(tmp_path, monkeypatch):
+    """A second request for the same param+window must not hit speasy at all."""
+    import speasy
+
+    import helioai.workspace as ws
+    from helioai.datastore import save_timeseries
+
+    monkeypatch.setattr(ws, "_root", lambda: tmp_path)
+    tok = ws.set_label("sess")
+    calls = {"n": 0}
+
+    def counting_get_data(*a, **k):
+        calls["n"] += 1
+        raise AssertionError("speasy must not be reached for an already-held dataset")
+
+    try:
+        save_timeseries(
+            "b3gsm",
+            time=np.array(["2015-03-16T18:00:00"], dtype="datetime64[s]"),
+            values=np.array([[1.0, 2.0, 3.0]]),
+            param_id="cda/WI_H0_MFI/B3GSM",
+            units="nT",
+            start="2015-03-16T18:00:00",
+            stop="2015-03-18T12:00:00",
+            columns=["Bx", "By", "Bz"],
+            source="get_timeseries",
+        )
+        monkeypatch.setattr(speasy, "get_data", counting_get_data)
+        result = await get_timeseries(
+            "cda/WI_H0_MFI/B3GSM", "2015-03-16T18:00:00", "2015-03-18T12:00:00"
+        )
+        assert result["dataset"] == "b3gsm"
+        assert result["already_downloaded"] is True
+        assert calls["n"] == 0
+    finally:
+        ws.reset_label(tok)

@@ -439,3 +439,50 @@ def test_saved_timeseries_records_missing_pct(tmp_path, monkeypatch):
 
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     assert manifest["datasets"][saved["dataset"]]["missing_pct"] == 50.0
+
+
+def test_find_existing_matches_param_and_window(tmp_path, monkeypatch):
+    """The lead re-fetched the same Wind field three times with the name in its history.
+
+    The prompt rule was there and ignored, so the tool answers from the manifest instead
+    of asking the model to remember.
+    """
+    import helioai.workspace as ws
+    from helioai.datastore import find_existing, save_timeseries
+
+    monkeypatch.setattr(ws, "_root", lambda: tmp_path)
+    tok = ws.set_label("sess")
+    try:
+        save_timeseries(
+            "b3gsm",
+            time=np.array(["2015-03-16T18:00:00"], dtype="datetime64[s]"),
+            values=np.array([[1.0, 2.0, 3.0]]),
+            param_id="cda/WI_H0_MFI/B3GSM",
+            units="nT",
+            start="2015-03-16T18:00:00",
+            stop="2015-03-18T12:00:00",
+            columns=["Bx", "By", "Bz"],
+            source="get_timeseries",
+        )
+        same = find_existing("cda/WI_H0_MFI/B3GSM", "2015-03-16T18:00:00", "2015-03-18T12:00:00")
+        assert same == "b3gsm"
+
+        # A different window is a different dataset — the shock-zoom download must proceed.
+        assert (
+            find_existing("cda/WI_H0_MFI/B3GSM", "2015-03-17T03:30:00", "2015-03-17T05:00:00")
+            is None
+        )
+        assert (
+            find_existing("cda/AC_H0_MFI/BGSM", "2015-03-16T18:00:00", "2015-03-18T12:00:00")
+            is None
+        )
+    finally:
+        ws.reset_label(tok)
+
+
+def test_find_existing_is_silent_without_a_session(monkeypatch):
+    import helioai.workspace as ws
+    from helioai.datastore import find_existing
+
+    monkeypatch.setattr(ws, "get_session_dir", lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    assert find_existing("cda/X/Y", "a", "b") is None

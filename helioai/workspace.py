@@ -13,6 +13,7 @@ import re
 import shutil
 import time
 from contextvars import ContextVar
+from functools import lru_cache
 from pathlib import Path
 
 _current_session: ContextVar[str | None] = ContextVar("helioai_current_session", default=None)
@@ -100,6 +101,20 @@ def get_session_dir() -> Path:
         d = _root() / session_id
         d.mkdir(parents=True, exist_ok=True)
         return d
+    return _no_session_dir()
+
+
+@lru_cache(maxsize=1)
+def _no_session_dir() -> Path:
+    """One scratch dir per process for calls made outside any session.
+
+    Minting a fresh mkdtemp per call left ~200 orphaned directories per notebook
+    run — nothing ever deleted them — and it also meant two calls in the same
+    no-session context wrote to two different places.
+
+    ponytail: leaked once per process instead of never; a session always has its
+    own directory, so this only catches the fallback path.
+    """
     import tempfile
 
     return Path(tempfile.mkdtemp(prefix="helioai_"))
@@ -127,11 +142,16 @@ def get_run_dir_for_sandbox() -> str:
 
 
 def is_under_workspace(path: str | Path) -> bool:
-    """True if path is safely under the per-user storage root (no traversal)."""
+    """True if path is safely under the per-user storage root (no traversal).
+
+    `is_relative_to` rather than a string prefix: comparing against `str(root) + "/"`
+    hard-coded the POSIX separator, so on Windows the check never matched and `/figure`
+    and `/code` returned 404 for every legitimate path. Fail-closed, so it was a dead
+    web UI rather than a hole — but dead all the same.
+    """
     try:
         p = Path(path).resolve()
-        root = _users_root().resolve()
-        return str(p).startswith(str(root) + "/") or p == root
+        return p.is_relative_to(_users_root().resolve())
     except (ValueError, OSError):
         return False
 

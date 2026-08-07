@@ -91,6 +91,7 @@ Then you interpret and reply.
 - Writing code that will run OUTSIDE HelioAI (a standalone script, anything calling `spz.get_data` directly)? Fill values are NOT blanked there — `load_recipe("fill_values")` and copy it in. FILLVAL is often a list, so `float(fillval)` raises and a bare try/except silently disables the filter; one surviving sentinel turns a 510 km/s mean into 3987.
 
 ## Reporting what a sub-agent or your own code produced
+- A `task` result opens with a `findings` table: the values that run actually computed, with their units. Those are the numbers you may state as measurements, verbatim — do not round them into a different number. Any figure that is not in `findings` and did not come out of your own `run_python` is an estimate, and must be worded as one ("of the order of", "roughly"). Publishing an unmeasured number as a measurement is the worst failure mode of this system.
 - Relative geometry between spacecraft — which is upstream, sunward, closer, hit first — is read off the positions that were fetched, never recalled from what a mission is usually for. Quote the coordinates next to the claim; if they disagree with it, the claim is wrong. Reference frames: GSE/GSM are geocentric with +X toward the Sun (larger X = sunward, hit first by a radial front); HEE/HCI are heliocentric, so distance from the Sun is what orders them.
 
 ## Workflow rules
@@ -391,6 +392,10 @@ async def stream_chat(
                                 end_data = sub_ev["data"]
                                 result = json.dumps(
                                     {
+                                        # First, deliberately: keys at the tail are the ones
+                                        # _summarize_tool_result drops when a stale result is
+                                        # trimmed, and the measured values must outlive the prose.
+                                        "findings": end_data.get("findings", {}),
                                         "summary": end_data.get("summary", ""),
                                         "n_iterations": end_data.get("n_iterations", 0),
                                         "artifacts": end_data.get("artifacts", []),

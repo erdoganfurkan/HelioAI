@@ -37,6 +37,15 @@ def _history_tool_result(tool_name: str, result_text: str) -> str:
     return result_text
 
 
+def _finding_str(entry) -> str:
+    if not isinstance(entry, dict):
+        return str(entry)[:60]
+    out = f"{entry.get('value')} {entry.get('units') or ''}".strip()
+    if entry.get("min") is not None:
+        out += f" [{entry['min']}, {entry['max']}]"
+    return out
+
+
 def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
     try:
         data = json.loads(result_text)
@@ -52,10 +61,19 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
         stderr = str(data.get("stderr") or "").strip()
         if stderr:
             summary += f"\n{stderr[-max_chars:]}"
+        if isinstance(data.get("findings"), dict) and data["findings"]:
+            # A run that hit its turn cap still measured things on the way there, and
+            # dropping them here is how a lead ends up with nothing to report but prose.
+            measured = ", ".join(f"{n}={_finding_str(d)}" for n, d in data["findings"].items())
+            summary += f"\nmeasured before failing: {measured}"
         return summary
     keep = {}
     for k, v in data.items():
-        if k in {"figure_paths"}:
+        if k == "findings" and isinstance(v, dict):
+            # The one table that must not degrade into "{3 keys}": it holds the only
+            # numbers the lead is allowed to publish as measurements.
+            keep[k] = {n: _finding_str(d) for n, d in v.items()}
+        elif k in {"figure_paths"}:
             keep[k] = [Path(p).name for p in v] if v else []
         elif isinstance(v, (str, int, float, bool, type(None))):
             keep[k] = v if not isinstance(v, str) or len(v) <= 120 else v[:117] + "..."
@@ -126,7 +144,14 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
                 }
             )
         if data.get("exports"):
-            artifacts.append({"tool": tool_name, "kind": "exports", "values": data["exports"]})
+            artifacts.append(
+                {
+                    "tool": tool_name,
+                    "kind": "exports",
+                    "values": data["exports"],
+                    "code_path": data.get("code_path"),
+                }
+            )
         for card in data.get("cards", []):
             if not isinstance(card, dict):
                 continue

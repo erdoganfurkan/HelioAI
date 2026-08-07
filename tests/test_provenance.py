@@ -126,3 +126,61 @@ def test_export_flattens_a_summary_dict_instead_of_failing_on_it():
     assert exports["shock.B_up"]["mean"] == pytest.approx(21.24)
     assert exports["shock.downstream.B"]["units"] == "nT"
     assert not any("error" in e for e in exports.values())
+
+
+def test_findings_are_built_from_the_exports_of_the_run(tmp_path):
+    from helioai.core.sub_agents import _findings
+
+    artifacts = [
+        {"kind": "code", "code_path": str(tmp_path / "code_0.py")},
+        {
+            "kind": "exports",
+            "code_path": str(tmp_path / "code_0.py"),
+            "values": {
+                "r_B": {"mean": 2.53, "min": 2.53, "max": 2.53, "units": ""},
+                "Bd": {"mean": 14.5, "min": 9.1, "max": 21.7, "units": "nT"},
+                "oops": {"error": "boom"},
+            },
+        },
+    ]
+    findings = _findings(artifacts)
+
+    assert set(findings) == {"r_B", "Bd"}
+    assert findings["r_B"] == {"value": 2.53, "units": "", "code_path": str(tmp_path / "code_0.py")}
+    assert "min" not in findings["r_B"]
+    assert findings["Bd"]["min"] == 9.1
+    assert findings["Bd"]["units"] == "nT"
+
+
+def test_findings_survive_the_compaction_that_trims_a_stale_result():
+    from helioai.core.tool_exec import _summarize_tool_result
+
+    result = json.dumps(
+        {
+            "findings": {"Bd": {"value": 14.5, "units": "nT", "min": 9.1, "max": 21.7}},
+            "summary": "the shock " * 200,
+            "n_iterations": 4,
+            "error": None,
+            "artifacts": [],
+        }
+    )
+    compacted = _summarize_tool_result(result, max_chars=300)
+    assert "14.5 nT" in compacted
+    assert "21.7" in compacted
+
+
+def test_a_capped_run_keeps_its_findings_through_compaction():
+    from helioai.core.tool_exec import _summarize_tool_result
+
+    result = json.dumps(
+        {
+            "findings": {"Bd": {"value": 14.5, "units": "nT"}},
+            "summary": "",
+            "n_iterations": 8,
+            "error": "(sub-agent 'data_analyst' reached its 8-turn cap)",
+            "artifacts": [],
+        }
+    )
+    compacted = _summarize_tool_result(result, max_chars=300)
+    assert "14.5 nT" in compacted
+    assert "cap" in compacted

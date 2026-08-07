@@ -296,6 +296,35 @@ def _flag_unknown_ids(text: str) -> tuple[str, list[str]]:
     )
 
 
+def _findings(artifacts: list[dict]) -> dict:
+    """Table of the values this sub-agent actually computed, keyed by export name.
+
+    The summary is prose the lead re-reads and paraphrases; this is the part that has
+    an origin. A number absent from here was never measured by this run, whatever the
+    summary says about it — which is exactly the distinction that was missing when a
+    sub-agent computed 14.5 nT and the lead published 13.02 nT.
+
+    min/max are carried only when they differ from the mean, so a scalar export stays
+    a single number and a time series keeps the range a reply is likely to quote.
+    """
+    out: dict = {}
+    for art in artifacts:
+        if art.get("kind") != "exports":
+            continue
+        for name, stats in (art.get("values") or {}).items():
+            if not isinstance(stats, dict) or stats.get("error"):
+                continue
+            entry = {
+                "value": stats.get("mean"),
+                "units": stats.get("units", ""),
+                "code_path": art.get("code_path"),
+            }
+            if stats.get("min") != stats.get("max"):
+                entry["min"], entry["max"] = stats.get("min"), stats.get("max")
+            out[name] = entry
+    return out
+
+
 async def stream_subagent(
     role: str,
     description: str,
@@ -457,6 +486,7 @@ async def stream_subagent(
             "data": {
                 "task_id": task_id,
                 "role": role,
+                "findings": _findings(artifacts),
                 "summary": final_text,
                 "n_iterations": n_iters,
                 "error": final_text if capped else None,
@@ -471,6 +501,7 @@ async def stream_subagent(
             "data": {
                 "task_id": task_id,
                 "role": role,
+                "findings": _findings(artifacts) if "artifacts" in dir() else {},
                 "summary": "",
                 "n_iterations": n_iters if "n_iters" in dir() else 0,
                 "error": str(e),

@@ -298,6 +298,12 @@ def _walk(
             )
             continue
 
+        if _is_time_axis(child_vars):
+            _walk(
+                child, provider_prefix, out, skip_ids, SpeasyIndex, depth + 1, max_docs, parent_meta
+            )
+            continue
+
         xmlid = child_vars.get("xmlid") or ""
         description = child_vars.get("description") or ""
         is_amda = bool(xmlid)
@@ -349,9 +355,44 @@ def _walk(
                         meta_entry["measurement_type"] = mtype
                     if region:
                         meta_entry["region"] = region
+                    cov_start, cov_stop = _coverage(child_vars)
+                    if cov_start:
+                        meta_entry["start_time"] = cov_start
+                    if cov_stop:
+                        meta_entry["stop_time"] = cov_stop
                     out.append({"id": uid, "text": text, "meta": meta_entry})
 
         _walk(child, provider_prefix, out, skip_ids, SpeasyIndex, depth + 1, max_docs, parent_meta)
+
+
+_TIME_CDF_TYPES = ("CDF_EPOCH", "CDF_EPOCH16", "CDF_TIME_TT2000")
+
+
+def _is_time_axis(child_vars: dict) -> bool:
+    """True for a CDF time axis, which is never a plottable product.
+
+    `cda/AC_OR_SSC/Epoch` was indexed as if it were the ACE position: its CDF metadata
+    carries `FIELDNAM = XYZ_GSE` and `CATDESC = "ACE X/Y/Z GSE coordinates"`, so the
+    search returned it for a position query and the download died inside speasy with
+    `tuple index out of range`. `cdf_type` is the one attribute that says what it is.
+    """
+    cdf_type = str(child_vars.get("cdf_type") or "").upper()
+    if cdf_type in _TIME_CDF_TYPES:
+        return True
+    return str(child_vars.get("__spz_name__") or "").lower() in {"epoch", "time", "time_tags"}
+
+
+def _coverage(child_vars: dict) -> tuple[str, str]:
+    """Published (start, stop) for a product, as plain ISO dates, or ("", "").
+
+    speasy already carries these in the inventory, so indexing them costs nothing extra
+    and lets a search drop products that cannot cover the window being asked about.
+    """
+    out = []
+    for key in ("start_date", "stop_date"):
+        v = child_vars.get(key)
+        out.append(str(v)[:19] if v else "")
+    return out[0], out[1]
 
 
 def _build_text(

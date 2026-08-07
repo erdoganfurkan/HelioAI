@@ -147,3 +147,33 @@ def test_walk_meta_in_output() -> None:
     meta = docs[0]["meta"]
     assert meta["provider"] == "amda"
     assert meta["xmlid"] == "ace_np"
+
+
+def test_time_axes_are_not_indexed_as_products():
+    """cda/AC_OR_SSC/Epoch was indexed as the ACE position and broke the download.
+
+    Its CDF metadata really does say FIELDNAM=XYZ_GSE and CATDESC="ACE X/Y/Z GSE
+    coordinates", so only cdf_type distinguishes it from the real product.
+    """
+    from helioai.indexer import _is_time_axis
+
+    epoch = {
+        "FIELDNAM": "XYZ_GSE",
+        "CATDESC": "ACE X/Y/Z GSE coordinates (time-series)",
+        "cdf_type": "CDF_EPOCH",
+        "__spz_name__": "Epoch",
+    }
+    assert _is_time_axis(epoch)
+    assert _is_time_axis({"cdf_type": "CDF_TIME_TT2000"})
+    assert not _is_time_axis({"cdf_type": "CDF_FLOAT", "__spz_name__": "GSE_POS"})
+    assert not _is_time_axis({})
+
+
+def test_coverage_is_read_from_the_inventory():
+    from helioai.indexer import _coverage
+
+    assert _coverage({"start_date": "1997-08-25 17:48:00", "stop_date": "2026-10-05 23:49:00"}) == (
+        "1997-08-25 17:48:00",
+        "2026-10-05 23:49:00",
+    )
+    assert _coverage({}) == ("", "")

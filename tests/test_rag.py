@@ -424,3 +424,161 @@ def test_unfiltered_search_flags_nothing(isolated_rag):
 
     assert results
     assert not any("outside_filter" in r for r in results)
+
+
+def test_coverage_string_from_index_metadata():
+    from helioai.tools.rag import _coverage_of
+
+    assert _coverage_of({"start_time": "1997-08-25 17:48:00", "stop_time": "2026-10-05"}) == (
+        "1997-08-25 → 2026-10-05"
+    )
+    assert _coverage_of({}) == ""
+    assert _coverage_of(None) == ""
+
+
+def test_covers_window():
+    from helioai.tools.rag import _covers
+
+    wi_or_def = "1994-12-29 → 2001-05-31"
+    assert not _covers(wi_or_def, ("2015-03-17", "2015-03-18"))
+    assert _covers(wi_or_def, ("1996-01-01", "1996-01-02"))
+    assert _covers(wi_or_def, ("2001-05-01", "2002-01-01")), "partial overlap still counts"
+    # A stale index must never hide a good product; get_timeseries still guards.
+    assert _covers("", ("2015-03-17", "2015-03-18"))
+    assert _covers(wi_or_def, None)
+
+
+def test_window_demotes_but_never_drops():
+    from helioai.tools.speasy_tools import _apply_window
+
+    results = [
+        {"id": "cda/WI_OR_DEF/GSE_POS", "coverage": "1994-12-29 → 2001-05-31"},
+        {"id": "cda/WI_H0_MFI/PGSE", "coverage": "1994-11-01 → 2026-01-01"},
+    ]
+    out = _apply_window(results, ("2015-03-17", "2015-03-18"))
+    assert len(out) == 2, "demoted, not dropped"
+    assert out[0]["id"] == "cda/WI_H0_MFI/PGSE"
+    assert out[1]["covers_window"] is False
+
+
+def test_browse_products_are_flagged():
+    """Ranking puts three WI_K0_SWE hits first for "science quality" density.
+
+    K0 is the trap the notebook is built around, so the result says so rather than
+    relying on the model to notice "[PRELIM]" in the prose.
+    """
+    from helioai.tools.rag import _quality_of
+
+    assert _quality_of("cda/WI_K0_SWE/Np", "Proton density. Wind SWE Key Parameters") == "browse"
+    assert _quality_of("cda/AC_K1_SWE/Tpr", "... Key Parameters [PRELIM] ...") == "browse"
+    assert _quality_of("cda/WI_H0_MFI/B3GSM", "... (3 sec). Definitive Data ...") == ""
+    assert _quality_of("cda/WI_H1_SWE/Proton_Np_nonlin", "... moments ...") == ""
+
+
+def test_cadence_is_discoverable_from_the_description():
+    """The agent was asked to pick a cadence with no cadence field anywhere.
+
+    speasy's inventory carries none, so the only source is the description text —
+    and looping the search does not make one appear.
+    """
+    from helioai.tools.setup import registry
+
+    schema = next(t for t in registry.list_tool_defs() if t.name == "search_parameters")
+    assert "Cadence is stated in `description`" in schema.description
+
+
+# ── domain reranking ──────────────────────────────────────────────────────────
+# Measured on the notebook's own Act I queries against the real index: the correct
+# product sat at rank 4, 24, 2, 3 and 7, and rank 1 went to a browse product, another
+# mission, or spacecraft housekeeping. After reranking all five are in the top 5.
+# These tests pin the logic, not the index, so they stay fast and deterministic.
+
+
+def test_solar_wind_is_not_the_Wind_spacecraft():
+    """Nearly every query here says "solar wind"; matching "wind" naively tags them all."""
+    from helioai.tools.rag import _query_mission
+
+    assert _query_mission("ACE proton density in the solar wind") == "ace"
+    assert _query_mission("solar wind speed") is None
+    assert _query_mission("Wind MFI magnetic field") == "wind"
+    assert _query_mission("Wind spacecraft solar wind density") == "wind"
+    assert _query_mission("interface region imaging") is None, "'ace' inside a word"
+
+
+def test_candidate_mission_from_the_dataset_prefix():
+    from helioai.tools.rag import _candidate_mission
+
+    assert _candidate_mission("cda/WI_H0_MFI/B3GSM") == "wind"
+    assert _candidate_mission("cda/AC_H0_MFI/BGSM") == "ace"
+    assert _candidate_mission("cda/MMS1_FGM_SRVY_L2/mms1_fgm_b_gsm") == "mms"
+    assert _candidate_mission("amda/imf_gsm") is None, "unknown is not a mismatch"
+
+
+def test_wrong_mission_and_housekeeping_are_pushed_down():
+    from helioai.tools.rag import _apply_domain_rerank
+
+    candidates = [
+        {"id": "cda/HK_H0_MAG/B_gsm", "quality": ""},
+        {"id": "cda/AC_H0_SWE/Vp", "quality": ""},
+        {"id": "cda/WI_K0_SWE/Np", "quality": "browse"},
+        {"id": "amda/sw_n", "quality": ""},
+        {"id": "cda/WI_H1_SWE/Proton_Np_nonlin", "quality": ""},
+    ]
+    out = [c["id"] for c in _apply_domain_rerank("Wind proton density solar wind", candidates)]
+    assert out[0] == "cda/WI_H1_SWE/Proton_Np_nonlin"
+    assert out.index("amda/sw_n") < out.index("cda/AC_H0_SWE/Vp"), "unknown beats wrong mission"
+    assert out[-1] == "cda/HK_H0_MAG/B_gsm", "housekeeping is never a science answer"
+
+
+def test_browse_is_kept_when_it_is_what_was_asked_for():
+    from helioai.tools.rag import _rerank_penalty
+
+    k0 = {"id": "cda/WI_K0_SWE/Np", "quality": "browse"}
+    assert _rerank_penalty("Wind key parameter density", k0) == 0
+    assert _rerank_penalty("Wind proton density", k0) == 1
+
+
+def test_rerank_never_drops_a_candidate():
+    from helioai.tools.rag import _apply_domain_rerank
+
+    candidates = [{"id": f"cda/X{i}_A/B", "quality": ""} for i in range(7)]
+    assert len(_apply_domain_rerank("Wind density", candidates)) == 7
+
+
+def test_derived_companions_are_demoted():
+    """`Proton_Np_nonlin_log` is log10(n): 1.24 where the density is 17.4.
+
+    Two Act I runs out of four picked it over the real density, which would have put a
+    compression ratio near 1 into an otherwise correct analysis. The archive labels them
+    itself — "(linear scale)" against "(log scale)".
+    """
+    from helioai.tools.rag import _is_auxiliary
+
+    assert _is_auxiliary("cda/WI_H1_SWE/Proton_Np_nonlin_log", "Proton density (log scale).")
+    assert _is_auxiliary("cda/WI_H1_SWE/Proton_sigmaNp_nonlin", "1-sigma uncertainty in ...")
+    assert _is_auxiliary("cda/WI_H1_SWE/Proton_W_nonlin_errorbars", "... with uncertainties")
+    assert _is_auxiliary("cda/WI_K0_SWE/QF_Np", "Quality Flag: proton dens...")
+    assert not _is_auxiliary(
+        "cda/WI_H1_SWE/Proton_Np_nonlin",
+        "Proton number density Np from non-linear analysis (linear scale).",
+    ), "'non-linear' and 'linear scale' must not read as a log variant"
+    assert not _is_auxiliary("cda/WI_H0_MFI/B3GSM", "Magnetic field vector in GSM (3 sec).")
+
+
+def test_a_companion_is_kept_when_explicitly_asked_for():
+    from helioai.tools.rag import _rerank_penalty
+
+    log_np = {
+        "id": "cda/WI_H1_SWE/Proton_Np_nonlin_log",
+        "quality": "",
+        "description": "Proton number density Np (log scale).",
+    }
+    assert _rerank_penalty("Wind proton density", log_np) == 2
+    assert _rerank_penalty("Wind proton density log scale", log_np) == 0
+
+    sigma = {
+        "id": "cda/WI_H1_SWE/Proton_sigmaNp_nonlin",
+        "quality": "",
+        "description": "1-sigma uncertainty in the proton density.",
+    }
+    assert _rerank_penalty("Wind density uncertainty", sigma) == 0

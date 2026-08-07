@@ -215,6 +215,165 @@ def _truncate(text: str, max_chars: int = 280) -> str:
     return text[: max_chars - 1].rstrip() + "…"
 
 
+def _quality_of(param_id: str, text: str) -> str:
+    """ "browse" for key-parameter products, "" when nothing marks it.
+
+    Derived at query time from what the archive already says — no reindex needed.
+    Ranking does not separate these: asking for "science quality" Wind density returns
+    three `WI_K0_SWE/*` hits first, which is exactly the product the notebook teaches
+    not to use (single-point spikes to 166 cm⁻³, no fill values, a false shock four
+    hours early). Flagging beats hoping the model reads "[PRELIM]" in the prose.
+    """
+    dataset = param_id.split("/")[1] if param_id.count("/") >= 1 else ""
+    if "_K0_" in f"_{dataset}_" or "K0" in dataset.split("_")[:2]:
+        return "browse"
+    lowered = text.lower()
+    if "key parameters" in lowered or "prelim" in lowered:
+        return "browse"
+    return ""
+
+
+# Query word → the dataset-id prefixes that mission uses at CDAWeb.
+_MISSION_PATTERNS: dict[str, tuple[str, ...]] = {
+    "wind": ("wi_",),
+    "ace": ("ac_",),
+    "dscovr": ("dscovr",),
+    "mms": ("mms1", "mms2", "mms3", "mms4"),
+    "cluster": ("c1_", "c2_", "c3_", "c4_"),
+    "themis": ("tha_", "thb_", "thc_", "thd_", "the_"),
+    "stereo": ("sta_", "stb_"),
+    "geotail": ("ge_",),
+    "omni": ("omni",),
+    "ulysses": ("uy_",),
+    "voyager": ("vg1_", "vg2_"),
+    "solar orbiter": ("solo_",),
+    "parker": ("psp_",),
+    "maven": ("mvn_",),
+}
+
+
+def _query_mission(query: str) -> str | None:
+    """The mission a query names, or None.
+
+    "solar wind" is stripped first, and that is not a detail: nearly every query in this
+    domain contains it, so a naive search for "wind" tags an ACE question as a Wind
+    question and buries the answer.
+    """
+    q = re.sub(r"\bsolar\s+wind\b", " ", f" {query.lower()} ")
+    for mission, _ in _MISSION_PATTERNS.items():
+        if re.search(rf"\b{re.escape(mission)}\b", q):
+            return mission
+    return None
+
+
+def _candidate_mission(param_id: str) -> str | None:
+    """The mission a product belongs to, from its id, or None when unidentifiable.
+
+    Unknown is never treated as a mismatch: AMDA and CSA ids carry no CDAWeb prefix and
+    must not be demoted for it.
+    """
+    dataset = param_id.split("/")[1].lower() if param_id.count("/") >= 1 else ""
+    for mission, prefixes in _MISSION_PATTERNS.items():
+        if any(dataset.startswith(p) for p in prefixes):
+            return mission
+    return None
+
+
+_BROWSE_WANTED = re.compile(r"\b(browse|key[- ]?parameter|quicklook|k0)\b", re.I)
+
+# Derived companions of a real measurement: the log-scaled copy, the 1-sigma
+# uncertainty, the error bars, the quality flag. They sit next to the product they
+# describe, share its wording, and rank alongside it.
+#
+# `Proton_Np_nonlin_log` is log10 of the density — 1.24 where the density is 17.4. Two
+# runs out of four picked it over `Proton_Np_nonlin`, which would have put a compression
+# ratio of 1.0-something into an otherwise correct analysis. The archive says which is
+# which: the real one reads "(linear scale)", the copy "(log scale)".
+_AUXILIARY_TEXT = re.compile(
+    r"\(log scale\)|log scale|1-sigma|uncertaint|error ?bars|quality flag", re.I
+)
+_AUXILIARY_WANTED = re.compile(
+    r"\b(log|uncertaint\w*|sigma|error ?bars?|quality flag|flag)\b", re.I
+)
+
+
+def _is_auxiliary(param_id: str, text: str) -> bool:
+    """True for a derived companion (log copy, uncertainty, error bars, quality flag)."""
+    name = param_id.rsplit("/", 1)[-1].lower()
+    if name.endswith(("_log", "_errorbars")) or name.startswith("qf_") or "sigma" in name:
+        return True
+    return bool(_AUXILIARY_TEXT.search(text or ""))
+
+
+# Dataset prefixes that are never the answer to a science question. `HK_` is spacecraft
+# housekeeping — it ranked FIRST for "ACE magnetic field vector GSM", above every real
+# magnetometer product, because its text says "magnetic field" too.
+_NON_SCIENCE_PREFIXES = ("hk_",)
+
+
+def _rerank_penalty(query: str, candidate: dict) -> int:
+    """0 = keep, higher = push down. Never drops, only reorders.
+
+    Measured on the notebook's own Act I queries, where the correct product sat at rank
+    4, 24, 2, 3 and 7 while rank 1 went to a browse-quality product, a different
+    mission, or spacecraft housekeeping. Both signals are already in the index; nothing
+    here needs a reindex.
+    """
+    penalty = 0
+    dataset = candidate["id"].split("/")[1].lower() if candidate["id"].count("/") >= 1 else ""
+    if dataset.startswith(_NON_SCIENCE_PREFIXES):
+        penalty += 4
+    wanted = _query_mission(query)
+    if wanted:
+        got = _candidate_mission(candidate["id"])
+        if got is not None and got != wanted:
+            penalty += 2
+        elif got is None:
+            # Unattributable (AMDA/CSA ids carry no CDAWeb prefix). Only a nudge, not
+            # the mismatch penalty: those products are legitimate and often the right
+            # answer, they just lose a tie against a product that provably belongs to
+            # the mission the user named. `amda/sw_n` outranking Wind's own density is
+            # what this costs one point.
+            penalty += 1
+    if candidate.get("quality") == "browse" and not _BROWSE_WANTED.search(query):
+        penalty += 1
+    if not _AUXILIARY_WANTED.search(query) and _is_auxiliary(
+        candidate["id"], candidate.get("description", "")
+    ):
+        penalty += 2
+    return penalty
+
+
+def _apply_domain_rerank(query: str, candidates: list[dict]) -> list[dict]:
+    """Stable reorder by penalty — relevance order is preserved inside each tier."""
+    return sorted(candidates, key=lambda c: _rerank_penalty(query, c))
+
+
+def _coverage_of(meta: dict | None) -> str:
+    """ "YYYY-MM-DD → YYYY-MM-DD" for a product, or "" when the index predates coverage.
+
+    Shown on every result so the choice of product stops being blind: an agent asked for
+    a 2015 event used to try three ephemeris ids in turn, one tool call and one network
+    round-trip each, to discover that two of them stop in 1997.
+    """
+    m = meta or {}
+    start, stop = str(m.get("start_time") or "")[:10], str(m.get("stop_time") or "")[:10]
+    return f"{start} → {stop}" if start and stop else ""
+
+
+def _covers(coverage: str, window: tuple[str, str] | None) -> bool:
+    """Whether a "start → stop" string overlaps the requested window.
+
+    Absent coverage counts as covering: a stale index must never hide a good product,
+    and `get_timeseries` still has its own guard for that case.
+    """
+    if not window or not coverage or "→" not in coverage:
+        return True
+    cov_start, cov_stop = (p.strip() for p in coverage.split("→", 1))
+    req_start, req_stop = window[0][:10], window[1][:10]
+    return not (req_stop < cov_start or req_start > cov_stop)
+
+
 def _build_where(
     provider: str | None, region: str | None, measurement_type: str | None
 ) -> dict | None:
@@ -252,6 +411,7 @@ def _fuse_query(
             "name": (meta or {}).get("name", "") or pid,
             "full_text": doc_text or "",
             "cosine": max(0.0, min(1.0, (similarity + 1.0) / 2.0)),
+            "coverage": _coverage_of(meta),
         }
 
     # Sparse (BM25) channel — exact token / id matching
@@ -273,6 +433,7 @@ def _fuse_query(
                     "name": (meta or {}).get("name", "") or pid,
                     "full_text": _bm25_docs[idx] if idx < len(_bm25_docs) else "",
                     "cosine": 0.0,
+                    "coverage": _coverage_of(meta),
                 }
             if len(sparse_ranking) >= settings.rag.hybrid_fetch_k:
                 break
@@ -295,6 +456,8 @@ def _fuse_query(
             "id": pid,
             "name": info[pid]["name"],
             "description": _truncate(info[pid]["full_text"]),
+            "coverage": info[pid].get("coverage", ""),
+            "quality": _quality_of(pid, info[pid]["full_text"]),
             "_full_text": info[pid]["full_text"],
             "_raw": raw.get(pid, 0.0),
         }
@@ -323,7 +486,10 @@ def _fuse_query(
         c.pop("_full_text", None)
         c.pop("_raw", None)
 
-    return candidates[:top_k]
+    # Applied before the cut, deliberately: the correct product for "Wind proton
+    # density" ranked 24th, so demoting inside an already-truncated top-5 would change
+    # nothing.
+    return _apply_domain_rerank(query, candidates)[:top_k]
 
 
 def search_batch(

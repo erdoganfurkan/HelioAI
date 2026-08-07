@@ -554,3 +554,31 @@ export('outside', interp_to(np.array(['2015-03-17T09:00:00'], dtype='datetime64[
     assert ex["vector"]["shape"] == [2, 3]
     assert ex["gap"]["n_finite"] == 0, "a gap must not be bridged — that invents data"
     assert ex["outside"]["n_finite"] == 0, "outside the source range is NaN, not clamped"
+
+
+@pytest.mark.asyncio
+async def test_magnitude_leaves_a_data_gap_as_a_gap():
+    """The hand-written idiom turned a 90 s hole in Wind/MFI into |B| = 0 nT.
+
+    `np.diff` then read the recovery out of that hole as the largest jump of the
+    interval, and the shock detector of Act IV locked onto it — publishing a shock
+    time 3.5 minutes early and a spacecraft lag of -464.5 s instead of -260.5 s.
+    """
+    code = """
+import numpy as np
+b = np.array([[3., 4., 0.], [np.nan, np.nan, np.nan], [6., 8., 0.]])
+export('good', magnitude(b))
+export('n_finite', np.array([np.sum(np.isfinite(magnitude(b)))]))
+export('gap_is_nan', np.array([1.0 if np.isnan(magnitude(b)[1]) else 0.0]))
+export('nansum_idiom_gives_zero', np.array([np.sqrt(np.nansum(b[1]**2))]))
+export('fill_blanked', magnitude(np.array([[1e31, 1e31, 1e31]])))
+"""
+    result = await run_python(code)
+    assert result.get("error") is None, result.get("stderr", "")
+    ex = result["exports"]
+    assert ex["good"]["min"] == pytest.approx(5.0)
+    assert ex["good"]["max"] == pytest.approx(10.0)
+    assert ex["n_finite"]["mean"] == 2
+    assert ex["gap_is_nan"]["mean"] == 1.0
+    assert ex["nansum_idiom_gives_zero"]["mean"] == 0.0, "this is the trap being replaced"
+    assert ex["fill_blanked"]["n_finite"] == 0, "1e31 fill must not become a magnitude"

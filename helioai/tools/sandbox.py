@@ -359,6 +359,20 @@ def clean(values):
     return arr
 
 
+def magnitude(vectors):
+    \"\"\"|V| of an N×3 array, where a data gap stays a gap.
+
+    `np.sqrt(np.nansum(v**2, axis=1))` is the idiom that gets hand-written here run after
+    run, and it is wrong in the one way that matters: `nansum` reads a missing sample as
+    zero, so a three-component gap becomes a magnitude of exactly 0 nT. That value plots,
+    it survives every finite check, and `np.diff` sees the recovery out of the gap as the
+    largest jump in the interval — which is how a shock detector came to fire on a 90-second
+    hole in Wind/MFI and report a shock 3.5 minutes early.
+    \"\"\"
+    arr = clean(vectors)
+    return np.sqrt(np.sum(arr**2, axis=-1))
+
+
 def interp_to(t_target, t_source, values):
     \"\"\"Resample `values` (sampled at `t_source`) onto the `t_target` time base.
 

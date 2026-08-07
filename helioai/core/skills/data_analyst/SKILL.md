@@ -39,6 +39,10 @@ method is recorded with its source.
 - `load_data("name")` → `ns(time, values, unit)` for a dataset from get_timeseries.
 - `param_card(var, param_id)` → metadata card in the UI. Call once per downloaded parameter.
 - `clean(var.values)` → masks CDF fill values (`-1e31`, `9.96e36`) to NaN. Always wrap `.values`.
+- `magnitude(vectors)` → |B| or |V| of an N×3 array. Use it. `np.sqrt(np.nansum(v**2, axis=1))`
+  turns a data gap into a magnitude of exactly 0, and `np.diff` then reads the recovery out of
+  that hole as the biggest jump in the interval — that is a shock detector locking onto a data
+  gap, and it has already published a shock time 3.5 minutes early.
 - `export(name, value, units="nT")` → surfaces a key number in the reply and records it in the
   session provenance ledger. Call for every result that matters, with its unit when it has one:
   a number that is never exported has no traceable origin.

@@ -95,7 +95,7 @@ def _session_data_dir() -> Path | None:
 # "SimpleNamespace has no attribute 'load'". One plasma variable poisons the rest.
 _SANDBOX_NAMES = frozenset(
     "np plt spz pf u os json sys re math scipy matplotlib plasmapy "
-    "load_data clean export time".split()
+    "load_data clean export time magnitude interp_to param_card".split()
 )
 
 

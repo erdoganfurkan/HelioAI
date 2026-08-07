@@ -30,6 +30,7 @@ def test_recipes_live_inside_the_package():
 def test_every_shipped_recipe_is_present():
     shipped = sorted(p.stem for p in _PKG_RECIPES.glob("*.py"))
     assert shipped == [
+        "fill_values",
         "mvab",
         "pitch_angle_dist",
         "pressure_balance",

@@ -25,7 +25,7 @@ reference, so this also gives you provenance.
 |---|---|
 | Shock normal angle θ_Bn | `theta_bn` |
 | Discontinuity / current-sheet normal (minimum variance) | `mvab` |
-| Shock jump conditions, compression ratio, shock speed | `rankine_hugoniot` |
+| Shock jump conditions, compression ratio, shock speed | `rankine_hugoniot` — **also picks the upstream/downstream averaging windows**; call `upstream_downstream(t, values, shock_time)` per quantity and never pass averages you computed yourself. Choosing those windows by hand is where this analysis goes wrong: a generous guard band with a long window sounds careful, lands in the decaying sheath, and returns a compression of 1.89 instead of 2.59 with every downstream number wrong. |
 | Rotational vs tangential discontinuity | `walen_test` |
 | Magnetopause standoff distance (pressure balance) | `pressure_balance` |
 | Particle pitch-angle distribution | `pitch_angle_dist` |
@@ -85,6 +85,13 @@ If `get_timeseries` returns a `quality` block with `notable: true`, report it (m
 - State the id used per mission. If a mission has no data, report it — never silently drop it.
 - L1 propagation delay: `delay_s = 1.5e6 / V_sw_km_s`; shift on the resampled grid.
 - 4 MMS spacecraft = one tetrahedron (curlometer), not independent missions.
+- Relative geometry between spacecraft — which is upstream, sunward, closer, hit first — is
+  a FACT YOU FETCHED, never one you recall from what a mission is usually for. State the
+  coordinates next to the claim; if they disagree with it, the claim is wrong. Two probes
+  sharing an orbit region swap their ordering over a mission, so no pair has a fixed answer.
+- Frames: GSE/GSM are geocentric, +X toward the Sun — larger X is sunward, hit first by a
+  radial front. HEE/HCI are heliocentric — distance from the Sun orders them. RTN is
+  observer-centred, so R is radial from the Sun through that spacecraft, not a common axis.
 
 ## Superposed epoch (catalog → SEA)
 1. `get_events_timeseries(catalog_id, param_id, start, stop)` — persists all events, returns a `dataset` key.

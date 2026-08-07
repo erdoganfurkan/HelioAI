@@ -246,3 +246,83 @@ def test_recipe_usage_examples_match_their_signatures():
                 checked += 1
 
     assert checked, "no usage example was actually compared — the test would be vacuous"
+
+
+def test_rankine_hugoniot_windows_are_derived_from_the_shock_time():
+    """The recipe owns the averaging windows, because hand-picking them is the failure.
+
+    A real run chose shock+30 min to shock+120 min, averaged the decaying sheath, and
+    reported r = 1.89 against a published 2.59 — with the shock time itself correct.
+    """
+    from pathlib import Path
+
+    import numpy as np
+
+    from helioai.config import settings
+
+    ns: dict = {}
+    exec((Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(), ns)
+
+    u0, u1, d0, d1 = ns["shock_windows"](np.datetime64("2015-03-17T04:00:59"))
+    assert (str(u0), str(u1)) == ("2015-03-17T03:35:59", "2015-03-17T03:55:59")
+    assert (str(d0), str(d1)) == ("2015-03-17T04:05:59", "2015-03-17T04:25:59")
+    assert u1 < d0, "the guard band must leave the ramp out of both windows"
+
+    # The published event reproduces, and the run that got it wrong is caught.
+    ref = ns["_rh_core"](
+        n_u=17.43, n_d=45.12, V_u=411.3, V_d=514.1, B_u=10.00, B_d=25.27, T_u=8.34, T_d=45.0
+    )
+    assert ref["r"] == pytest.approx(2.59, abs=0.02)
+    assert ref["V_shock"] == pytest.approx(579, abs=5)
+    assert ref["M_A"] == pytest.approx(3.20, abs=0.15)
+    assert ref["r_mismatch"] < 0.25
+
+    bad = ns["_rh_core"](
+        n_u=16.99, n_d=32.11, V_u=410.3, V_d=511.9, B_u=8.86, B_d=20.81, T_u=3.42, T_d=15.6
+    )
+    assert bad["r_mismatch"] > 0.25, "a 1.89 compression must not pass the check"
+
+
+def test_window_mean_refuses_a_nearly_empty_window():
+    """A mean of one or two samples looks like a measurement and is not one."""
+    from pathlib import Path
+
+    import numpy as np
+
+    from helioai.config import settings
+
+    ns: dict = {}
+    exec((Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(), ns)
+
+    t = np.array(["2015-03-17T04:00:00", "2015-03-17T04:10:00"], dtype="datetime64[s]")
+    v = np.array([10.0, 20.0])
+    assert np.isnan(ns["window_mean"](t, v, t[0], t[1]))
+
+
+def test_window_mean_rejects_the_1e31_fill_convention():
+    """`isfinite` passes a 1e31 fill: one in a window returns a compression of 1e30.
+
+    Found on a second event whose raw plasma moments still carried the sentinel — the
+    recipe is meant to be copied into standalone scripts, where nothing blanks it.
+    """
+    from pathlib import Path
+
+    import numpy as np
+
+    from helioai.config import settings
+
+    ns: dict = {}
+    exec((Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(), ns)
+
+    t = np.array(
+        [
+            "2015-03-17T04:00:00",
+            "2015-03-17T04:01:00",
+            "2015-03-17T04:02:00",
+            "2015-03-17T04:03:00",
+        ],
+        dtype="datetime64[s]",
+    )
+    v = np.array([10.0, 12.0, 1e31, 11.0])
+    got = ns["window_mean"](t, v, t[0], t[-1])
+    assert got == pytest.approx(11.0), got

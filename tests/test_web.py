@@ -622,10 +622,14 @@ def test_every_streamed_event_has_a_web_handler():
     import helioai.core.agent_loop as loop
     import helioai.core.sub_agents as subs
 
-    src = Path(loop.__file__).read_text() + Path(subs.__file__).read_text()
+    src = Path(loop.__file__).read_text(encoding="utf-8") + Path(subs.__file__).read_text(
+        encoding="utf-8"
+    )
     emitted = set(re.findall(r'"event":\s*"(\w+)"', src))
 
-    js = (Path(loop.__file__).parents[1] / "interfaces/web/static/app.js").read_text()
+    js = (Path(loop.__file__).parents[1] / "interfaces/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
     handled = set(re.findall(r"event === '(\w+)'", js))
 
     missing = emitted - handled

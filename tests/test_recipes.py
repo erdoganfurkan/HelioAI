@@ -261,7 +261,9 @@ def test_rankine_hugoniot_windows_are_derived_from_the_shock_time():
     from helioai.config import settings
 
     ns: dict = {}
-    exec((Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(), ns)
+    exec(
+        (Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(encoding="utf-8"), ns
+    )
 
     u0, u1, d0, d1 = ns["shock_windows"](np.datetime64("2015-03-17T04:00:59"))
     assert (str(u0), str(u1)) == ("2015-03-17T03:35:59", "2015-03-17T03:55:59")
@@ -292,7 +294,9 @@ def test_window_mean_refuses_a_nearly_empty_window():
     from helioai.config import settings
 
     ns: dict = {}
-    exec((Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(), ns)
+    exec(
+        (Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(encoding="utf-8"), ns
+    )
 
     t = np.array(["2015-03-17T04:00:00", "2015-03-17T04:10:00"], dtype="datetime64[s]")
     v = np.array([10.0, 20.0])
@@ -312,7 +316,9 @@ def test_window_mean_rejects_the_1e31_fill_convention():
     from helioai.config import settings
 
     ns: dict = {}
-    exec((Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(), ns)
+    exec(
+        (Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(encoding="utf-8"), ns
+    )
 
     t = np.array(
         [

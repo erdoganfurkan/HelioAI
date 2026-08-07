@@ -81,7 +81,7 @@ def load_data(name):
         raise FileNotFoundError(
             f"manifest not found at {mfile} — copy the session data/ folder next to this notebook"
         )
-    manifest = json.loads(mfile.read_text())
+    manifest = json.loads(mfile.read_text(encoding="utf-8"))
     entry = manifest.get("datasets", {}).get(name)
     if entry is None:
         available = sorted(manifest.get("datasets", {}).keys())

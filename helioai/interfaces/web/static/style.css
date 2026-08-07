@@ -106,6 +106,10 @@ select:focus { border-color: var(--accent); }
 .tl-subagent .tl-text { color: var(--accent); }
 .tl-skill .tl-icon { color: var(--purple); }
 .tl-skill .tl-text { color: var(--purple); }
+.tl-ok .tl-icon { color: var(--green); }
+.tl-ok .tl-text { color: var(--green); }
+.tl-issue .tl-icon { color: var(--red); }
+.tl-issue .tl-text { color: var(--red); }
 .tl-nested { margin-left: 1.25rem; opacity: 0.85; border-left: 2px solid var(--accent-dim); padding-left: 0.5rem; }
 
 /* Artifacts */
@@ -274,6 +278,48 @@ select:focus { border-color: var(--accent); }
 .msg-ai a:hover { text-decoration: underline; }
 .msg-ai strong { font-weight: 700; }
 .msg-ai em { font-style: italic; }
+
+/* Plan card — copied verbatim from feat/web-auth so the branches do not diverge */
+.plan-card {
+  align-self: flex-start;
+  max-width: 90%;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.plan-card .plan-title {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.plan-card .plan-steps {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-muted);
+}
+.plan-card .plan-steps li { margin: 3px 0; }
+.plan-card .plan-tool {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  color: var(--accent);
+  background: #21262d;
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-left: 4px;
+}
+
+/* Invented parameter ids — the most damaging thing a sub-agent can report */
+.invalid-ids {
+  align-self: flex-start; max-width: 90%;
+  background: #2d2415; border: 1px solid var(--orange); border-radius: 8px;
+  padding: 10px 14px; font-size: 13px; color: var(--orange); line-height: 1.6;
+}
+.invalid-ids-title { font-weight: 700; margin-bottom: 4px; }
+.invalid-ids ul { padding-left: 20px; margin: 0; }
+.invalid-ids li { font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; }
 
 /* Figure fallback */
 .figure-fallback { align-self: flex-start; background: #1a1209; border: 1px solid var(--orange); border-radius: 8px; padding: 10px 14px; font-size: 13px; color: var(--orange); line-height: 1.6; }

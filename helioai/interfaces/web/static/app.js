@@ -190,6 +190,27 @@ function renderEvent(ev) {
   } else if (event === 'artifact') {
     renderArtifact(data);
 
+  } else if (event === 'plan') {
+    // The loop has always emitted this and the SSE has always forwarded it; only the
+    // web client dropped it, so a plan showed up in the CLI and the notebook but never
+    // in the browser. Rendered in the chat, not the timeline: it is addressed to the
+    // reader, not a trace of what the agent did.
+    renderPlan(data);
+
+  } else if (event === 'figure_review') {
+    renderFigureReview(data.text);
+
+  } else if (event === 'invalid_ids') {
+    // A sub-agent quoting parameter ids that exist in no catalogue is the most
+    // damaging thing it can produce, so this one is a banner, not a timeline line.
+    const box = el('div', 'invalid-ids');
+    box.append(el('div', 'invalid-ids-title', '⚠️ ids not found in the catalogue — do not use these:'));
+    const ul = el('ul');
+    for (const id of data.ids || []) ul.append(el('li', null, id));
+    box.append(ul);
+    chatArea.append(box);
+    scrollBottom();
+
   } else if (event === 'reply') {
     const bubble = el('div', 'msg-ai');
     bubble.innerHTML = DOMPurify.sanitize(marked.parse(data.text || ''));
@@ -208,6 +229,39 @@ function renderEvent(ev) {
     chatArea.append(banner);
     scrollBottom();
   }
+}
+
+function renderFigureReview(text) {
+  // From feat/web-auth, minus its `container` argument: that one exists only for that
+  // branch's history replay, and main's appendTlEvent takes no container.
+  const ok = (text || '').startsWith('OK');
+  const row = appendTlEvent(ok ? '✓' : '⚠', text || '', ok ? 'tl-ok' : 'tl-issue');
+  row.title = text || '';
+  return row;
+}
+
+function renderPlan(data) {
+  // Kept byte-identical to the feat/web-auth implementation: that branch already had
+  // this and main never did, so the two would otherwise collide on merge for no reason.
+  if (!data || !(data.steps || []).length) return;
+  const card = el('div', 'plan-card');
+  card.append(el('div', 'plan-title', `🗺 ${data.title || 'Plan'}`));
+  const ol = document.createElement('ol');
+  ol.className = 'plan-steps';
+  (data.steps || []).forEach(s => {
+    const li = document.createElement('li');
+    li.textContent = s.description || '';
+    if (s.tool) {
+      const sp = document.createElement('span');
+      sp.className = 'plan-tool';
+      sp.textContent = s.tool;
+      li.append(' ', sp);
+    }
+    ol.append(li);
+  });
+  card.append(ol);
+  chatArea.append(card);
+  scrollBottom();
 }
 
 function renderArtifact(data) {

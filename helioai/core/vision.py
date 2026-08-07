@@ -14,6 +14,7 @@ import io
 import json
 
 from helioai.config import settings
+from helioai.core.llm.base import close_sdk_client
 from helioai.logging_config import get_logger
 
 log = get_logger(__name__)
@@ -22,8 +23,11 @@ _PROMPT = (
     "You review matplotlib figures produced by a heliophysics data-analysis agent. "
     "Answer in at most 3 short lines, under 200 characters total, starting with "
     "OK or ISSUE. Flag only real rendering problems: empty axes / no visible data, "
-    "missing axis labels or units, broken scale, unreadable legend. "
-    "Do not describe or interpret the science."
+    "missing axis labels or units, unreadable legend, a marker or annotation that "
+    "sits away from the feature it names, an axis range set by one spike so the rest "
+    "is flat, and long straight segments joining points across a gap (a masked series "
+    "plotted without NaN, which draws a flat line asserting values that were never "
+    "measured). Do not describe or interpret the science."
 )
 _MAX_FIGS = 2
 _THUMB = 768
@@ -97,12 +101,15 @@ async def _call_azure(pngs_b64: list[str], prompt: str) -> str:
     content = [{"type": "text", "text": prompt}] + [
         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b}"}} for b in pngs_b64
     ]
-    r = await client.chat.completions.create(
-        model=settings.vision.model or az.deployment,
-        max_completion_tokens=2048,
-        messages=[{"role": "user", "content": content}],
-    )
-    return r.choices[0].message.content or ""
+    try:
+        r = await client.chat.completions.create(
+            model=settings.vision.model or az.deployment,
+            max_completion_tokens=2048,
+            messages=[{"role": "user", "content": content}],
+        )
+        return r.choices[0].message.content or ""
+    finally:
+        await close_sdk_client(client)
 
 
 async def _call_gemini(pngs_b64: list[str], prompt: str) -> str:
@@ -114,8 +121,11 @@ async def _call_gemini(pngs_b64: list[str], prompt: str) -> str:
         gt.Part(inline_data=gt.Blob(mime_type="image/png", data=base64.b64decode(b)))
         for b in pngs_b64
     ]
-    r = await client.aio.models.generate_content(
-        model=settings.vision.model or settings.llm.gemini.model,
-        contents=[gt.Content(role="user", parts=parts)],
-    )
-    return r.text or ""
+    try:
+        r = await client.aio.models.generate_content(
+            model=settings.vision.model or settings.llm.gemini.model,
+            contents=[gt.Content(role="user", parts=parts)],
+        )
+        return r.text or ""
+    finally:
+        await close_sdk_client(client)

@@ -608,3 +608,25 @@ def test_app_js_sanitizes_markdown_before_innerHTML():
     js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
     assert js.count("DOMPurify.sanitize(marked.parse(") >= 2  # live reply + history replay
     assert "= marked.parse(" not in js  # no unsanitized innerHTML assignment left
+
+
+def test_every_streamed_event_has_a_web_handler():
+    """`plan` was emitted, forwarded by SSE, and silently dropped by the browser.
+
+    The CLI and the notebook rendered it, so it looked implemented. This pins the two
+    sides together: any event the loop can emit must be handled in app.js.
+    """
+    import re
+    from pathlib import Path
+
+    import helioai.core.agent_loop as loop
+    import helioai.core.sub_agents as subs
+
+    src = Path(loop.__file__).read_text() + Path(subs.__file__).read_text()
+    emitted = set(re.findall(r'"event":\s*"(\w+)"', src))
+
+    js = (Path(loop.__file__).parents[1] / "interfaces/web/static/app.js").read_text()
+    handled = set(re.findall(r"event === '(\w+)'", js))
+
+    missing = emitted - handled
+    assert not missing, f"events emitted but not rendered in the web UI: {sorted(missing)}"

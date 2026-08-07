@@ -130,6 +130,29 @@ plt.show()
 | `tight_layout()` before `show()` | Prevent label clipping |
 | `sharex=True` on multi-panel | Linked zoom in interactive viewers |
 
+## 7. Never plot a subset of a series as its own line
+
+To colour a series by a condition — Bz by sign, speed above a threshold — mask with NaN and
+plot the **full-length** array. Never slice out the matching points:
+
+```python
+# WRONG: matplotlib joins points that are not neighbours, drawing long flat
+# segments at 0 across hours where Bz was nowhere near 0.
+ax.plot(t[Bz >= 0], Bz[Bz >= 0], color="cyan")
+ax.plot(t[Bz < 0], Bz[Bz < 0], color="red")
+
+# RIGHT: same length, gaps stay gaps.
+ax.plot(t, np.where(Bz >= 0, Bz, np.nan), color="cyan", label="Bz > 0")
+ax.plot(t, np.where(Bz < 0, Bz, np.nan), color="red", label="Bz < 0")
+```
+
+The same applies to real data gaps: keep the NaN, do not drop the rows. A line that spans a
+gap asserts measurements that were never made.
+
+Check the axis limits too. One spike leaves the rest of the panel unreadable — clip with
+`set_ylim` on a robust range (`np.nanpercentile(y, [0.5, 99.5])`) rather than letting a
+single sample set the scale, and say in your reply that you clipped it.
+
 ## Output format
 
 After running, the sandbox returns:

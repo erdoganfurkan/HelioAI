@@ -36,6 +36,11 @@ _YEARS = range(1994, 2031)
 
 _NAME_WINDOW = 40
 
+# An arithmetic expression written out next to the number: "U1 = Vs - Vu ~ 176.98 km/s",
+# "dX / Vs ~ 349 s". The operator must be spaced, which is what keeps ISO dates
+# (2015-03-17) and ranges (40-10 min) out.
+_SHOWN_WORK = re.compile(r"\s[−–—/×·*]\s")
+
 
 @dataclass
 class Claim:
@@ -93,27 +98,28 @@ def extract_claims(text: str) -> list[Claim]:
             written_as_int = "." not in raw
             if written_as_int and (abs(value) < _MIN_BARE_INT or int(value) in _YEARS):
                 continue
-        claims.append(
-            Claim(
-                value=value,
-                units=unit,
-                text=f"{raw} {unit}".strip(),
-                context=norm[max(0, m.start() - _NAME_WINDOW) : m.end() + 10].replace("\n", " "),
-            )
-        )
+        # Sliced from the original text, not from `norm`: both replacements are
+        # character-for-character, so the offsets hold, and the real minus sign is what
+        # tells a subtraction from a hyphen.
+        context = text[max(0, m.start() - _NAME_WINDOW) : m.end() + 10].replace("\n", " ")
+        claims.append(Claim(value=value, units=unit, text=f"{raw} {unit}".strip(), context=context))
     return claims
 
 
-def _compatible_units(a: str, b: str) -> bool:
-    """Whether two unit strings can describe the same quantity.
+_UNIT_ALIASES = {"cm⁻³": "cm-3", "cm^-3": "cm-3", "/cm3": "cm-3", "R_E": "RE", "Re": "RE"}
 
-    Unknown on either side means "cannot rule it out" — the ledger only carries a unit
-    when the code passed one, and a missing unit must not be read as a mismatch.
+
+def _same_unit(a: str, b: str) -> bool:
+    """Whether two unit strings denote the same quantity. Unitless matches only unitless.
+
+    Accusing a reply of contradicting the ledger is the strongest thing this module says,
+    so it demands agreement rather than absence of disagreement. Treating an unknown unit
+    as compatible made "upstream: 40 to 10 minutes before the shock" contradict a field in
+    nT four times over, because the bare window bounds sit next to the word "upstream" —
+    every contradiction of the first real run was that same false positive. Unitless still
+    matches unitless, which is what keeps a compression ratio checkable.
     """
-    if not a or not b:
-        return True
-    norm = {"cm⁻³": "cm-3", "cm^-3": "cm-3", "/cm3": "cm-3", "R_E": "RE", "Re": "RE"}
-    return norm.get(a, a).lower() == norm.get(b, b).lower()
+    return _UNIT_ALIASES.get(a, a).lower() == _UNIT_ALIASES.get(b, b).lower()
 
 
 def _named_entry(context: str, claim_units: str, entries: list[dict]) -> dict | None:
@@ -128,13 +134,29 @@ def _named_entry(context: str, claim_units: str, entries: list[dict]) -> dict | 
     best = None
     for entry in entries:
         name = entry.get("name") or ""
-        if not _compatible_units(claim_units, entry.get("units") or ""):
+        if not _same_unit(claim_units, entry.get("units") or ""):
             continue
         words = [w for w in re.split(r"[._\s]+", name.lower()) if len(w) > 2]
         if words and all(w in low for w in words):
             if best is None or len(name) > len(best.get("name") or ""):
                 best = entry
     return best
+
+
+def _states(entry: dict, value: float, rtol: float) -> bool:
+    """Whether a ledger entry holds this number, as one of its four statistics.
+
+    Magnitudes are compared: the ledger keeps the sign of what was computed, while a reply
+    quotes the size of it — "a 464.5 s lag" for a recorded -464.5. Reporting that as
+    unsourced was wrong, and this module answers where a number came from, not whether its
+    sign is right.
+    """
+    for key in ("mean", "min", "max", "std"):
+        v = entry.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if abs(abs(v) - abs(value)) <= rtol * max(abs(value), abs(v), 1e-12):
+                return True
+    return False
 
 
 def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
@@ -144,22 +166,17 @@ def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
     - `contradicted` — the wording names a recorded quantity but the number is not one of
       its statistics. The strongest signal available here: the value was computed, and
       what got published is something else.
-    - `derived` — no match, but a ratio or a percentage, which is normally *computed from*
-      recorded values rather than being one. Counted apart so the noise does not bury the
-      rest.
+    - `derived` — no match, but either a ratio or a percentage, or a number the reply
+      spells out the arithmetic for ("U1 = Vs - Vu ~ 176.98 km/s"). Both are computed
+      *from* recorded values rather than being one, and a reader can follow them. Counted
+      apart so the noise does not bury the rest.
     - `unsourced` — a physical quantity with a unit that nothing in the session produced.
     """
     entries = ledger.get("values") or []
     report = Report()
 
     for claim in claims:
-        hits = [
-            e
-            for e in entries
-            for key in ("mean", "min", "max", "std")
-            if isinstance(e.get(key), (int, float))
-            and abs(e[key] - claim.value) <= rtol * max(abs(claim.value), abs(e[key]), 1e-12)
-        ]
+        hits = [e for e in entries if _states(e, claim.value, rtol)]
         named = _named_entry(claim.context, claim.units, entries)
         if hits:
             claim.status = "matched"
@@ -171,7 +188,7 @@ def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
             claim.name = named.get("name")
             claim.code_path = named.get("code_path")
             report.contradicted += 1
-        elif claim.units in ("", "%"):
+        elif claim.units in ("", "%") or _SHOWN_WORK.search(claim.context):
             claim.status = "derived"
             report.derived += 1
         else:

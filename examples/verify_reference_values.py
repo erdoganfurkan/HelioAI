@@ -27,6 +27,7 @@ EV_PER_K = 8.617333e-5
 R_E_KM = 6371.0
 
 B_WIND = "cda/WI_H0_MFI/BGSM"
+B_WIND_3S = "cda/WI_H0_MFI/B3GSM"
 B_ACE = "cda/AC_H0_MFI/BGSM"
 N_WIND = "cda/WI_H1_SWE/Proton_Np_moment"
 V_WIND = "cda/WI_H1_SWE/Proton_V_moment"
@@ -96,13 +97,23 @@ def find_fast_forward_shock(times, n, b_on_n, v, half_width: int = 6):
     return times[best_index], best_score
 
 
-def arrival_from_field(param_id: str) -> np.datetime64:
-    """Shock arrival at one spacecraft, from the steepest smoothed |B| rise."""
+def arrival_from_field(param_id: str, smooth_s: float = 30.0) -> np.datetime64:
+    """Shock arrival at one spacecraft, from the steepest smoothed |B| rise.
+
+    The boxcar is a fixed number of SECONDS, not of samples. A fixed sample count
+    smooths each product by its own cadence — 80 s for ACE at 16 s, but 5 minutes for
+    Wind at 60 s — and the arrival then drifts by a couple of samples on the coarse
+    product only. That asymmetry alone moved the Wind crossing from 04:00 to 04:01:30
+    and turned a 260 s lag into 175 s, a 33% error in a number this notebook then
+    reasons about.
+    """
     times, vectors = fetch(param_id, *SHOCK_SEARCH)
     mag = magnitude(vectors)
     ok = ~np.isnan(mag)
     times, mag = times[ok], mag[ok]
-    smoothed = np.convolve(mag, np.ones(5) / 5, mode="same")
+    cadence_s = float(np.median(np.diff(times) / np.timedelta64(1, "s")))
+    width = max(1, int(round(smooth_s / cadence_s)))
+    smoothed = np.convolve(mag, np.ones(width) / width, mode="same")
     return times[int(np.nanargmax(np.diff(smoothed))) + 1]
 
 
@@ -185,7 +196,9 @@ def main() -> None:
     print(f"        Bz min  = {np.nanmin(bvec[day][:, 2]):.2f} nT at {str(tb[day][j])[:19]}")
     print(f"        V max = {np.nanmax(v):.1f} km/s    n max = {np.nanmax(n):.1f} cm-3")
 
-    wind_arrival, ace_arrival = arrival_from_field(B_WIND), arrival_from_field(B_ACE)
+    # Timed on the 3 s Wind product, not the 1-minute one: a 60 s cadence quantises the
+    # crossing to the minute, which is the same size as the quantity being measured.
+    wind_arrival, ace_arrival = arrival_from_field(B_WIND_3S), arrival_from_field(B_ACE)
     lag = (ace_arrival - wind_arrival) / np.timedelta64(1, "s")
     print("\ntwo-spacecraft timing")
     print(f"  Wind sees the shock at {str(wind_arrival)[:19]}")
@@ -203,7 +216,34 @@ def main() -> None:
         apparent = abs(dr[0]) / lag
         print(f"  apparent speed along X = {apparent:.0f} km/s")
         print(f"  vs V_shock from jump conditions = {v_shock:.0f} km/s")
-        print("  the excess is the front's tilt, not an error")
+        print("  dividing a separation by a delay is not a speed unless the separation")
+        print("  lies along the normal — see the projection below")
+
+        # The normal has to come from the field, never from the timing. Two spacecraft
+        # give one delay and an orientation has two angles, so n = dR/(V_shock*dt) is
+        # the separation vector rescaled: it makes the transverse separation come out
+        # as exactly 0 km whatever the data, and that zero has been published as a
+        # result. Coplanarity uses the field's own rotation across the ramp instead.
+        b_up = np.array([window_mean(tb, bvec[:, i], *up) for i in range(3)])
+        b_dn = np.array([window_mean(tb, bvec[:, i], *down) for i in range(3)])
+        n_hat = np.cross(np.cross(b_dn, b_up), b_dn - b_up)
+        n_hat = n_hat / np.linalg.norm(n_hat)
+        if n_hat[0] < 0:
+            n_hat = -n_hat  # point it upstream, the usual convention at L1
+        theta_bn = np.degrees(np.arccos(abs(np.dot(n_hat, b_up / np.linalg.norm(b_up)))))
+        along = float(np.dot(dr, n_hat))
+        transverse = float(np.linalg.norm(dr - along * n_hat))
+        v_n = abs(along) / lag
+        print(f"\n  coplanarity normal = {np.round(n_hat, 3)}   theta_Bn = {theta_bn:.1f} deg")
+        print(f"  separation along n = {abs(along):.0f} km, across it = {transverse:.0f} km")
+        print(
+            f"  V along the normal = {v_n:.0f} km/s  vs {v_shock:.0f} km/s from the jumps"
+            f"  →  {abs(v_n - v_shock) / v_shock * 100:.0f}% apart"
+        )
+        print("  the two disagree, and the transverse separation is why: a flat front is")
+        print(f"  being assumed across {transverse:.0f} km, and shock fronts ripple well")
+        print("  below that. The exact figure moves with the averaging windows the normal")
+        print("  comes from, which is itself the answer: two spacecraft cannot pin this down")
 
 
 if __name__ == "__main__":

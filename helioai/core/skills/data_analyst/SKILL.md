@@ -27,6 +27,7 @@ reference, so this also gives you provenance.
 | Discontinuity / current-sheet normal (minimum variance) | `mvab` |
 | Shock jump conditions, compression ratio, shock speed | `rankine_hugoniot` — **also picks the upstream/downstream averaging windows**; call `upstream_downstream(t, values, shock_time)` per quantity and never pass averages you computed yourself. Choosing those windows by hand is where this analysis goes wrong: a generous guard band with a long window sounds careful, lands in the decaying sheath, and returns a compression of 1.89 instead of 2.59 with every downstream number wrong. |
 | Rotational vs tangential discontinuity | `walen_test` |
+| Shock timing between TWO spacecraft | `shock_timing_2sc` — two spacecraft do **not** determine a shock normal (that needs four). Pass the normal from `theta_bn` or `mvab`; deriving it from the separation and the lag makes the transverse separation come out as exactly 0 km for any input, and that tautology has already been published as a geometrical result. |
 | Magnetopause standoff distance (pressure balance) | `pressure_balance` |
 | Particle pitch-angle distribution | `pitch_angle_dist` |
 | Superposed epoch analysis over a catalog | `superposed_epoch` |

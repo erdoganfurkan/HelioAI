@@ -36,6 +36,7 @@ def test_every_shipped_recipe_is_present():
         "pressure_balance",
         "rankine_hugoniot",
         "sep_onset_poisson_cusum",
+        "shock_timing_2sc",
         "solar_mach",
         "superposed_epoch",
         "theta_bn",

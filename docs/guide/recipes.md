@@ -28,6 +28,7 @@ model cannot quietly reimplement the method its own way.
 | `mvab` | Minimum variance analysis of **B** |
 | `walen_test` | Walén test for rotational discontinuities |
 | `rankine_hugoniot` | MHD jump conditions across a shock |
+| `shock_timing_2sc` | Two-spacecraft shock timing against a normal from `theta_bn`/`mvab` |
 | `pressure_balance` | Magnetopause pressure balance |
 | `pitch_angle_dist` | Pitch angle distribution |
 | `superposed_epoch` | Superposed epoch (Chree) analysis |

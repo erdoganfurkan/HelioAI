@@ -332,3 +332,37 @@ def test_window_mean_rejects_the_1e31_fill_convention():
     v = np.array([10.0, 12.0, 1e31, 11.0])
     got = ns["window_mean"](t, v, t[0], t[-1])
     assert got == pytest.approx(11.0), got
+
+
+def test_shock_timing_refuses_to_invent_a_normal_from_the_timing():
+    """Two spacecraft cannot determine a shock normal, and the failure is silent.
+
+    A run wrote `n = dr / (V_shock * dt)` — the separation vector rescaled — so the
+    along-normal separation came back as |dr| and the transverse one as exactly 0 km for
+    any input. That zero was published as a geometrical result while the real transverse
+    separation was ~470 000 km.
+    """
+    import numpy as np
+
+    from helioai.config import settings
+
+    ns: dict = {}
+    exec(
+        (Path(settings.recipes.recipes_dir) / "shock_timing_2sc.py").read_text(encoding="utf-8"),
+        ns,
+    )
+    timing = ns["timing_2sc"]
+    t1, t2 = np.datetime64("2015-03-17T04:00:04"), np.datetime64("2015-03-17T04:04:25")
+    wind, ace = np.array([1610910.0, 346281.0, 80077.0]), np.array([1406537.0, -68250.0, -148602.0])
+
+    for bad in ([0.0, 0.0, 0.0], [1.0, 2.0], [np.nan, 0.0, 0.0], []):
+        assert "error" in timing(t1, t2, wind, ace, bad), bad
+
+    out = timing(t1, t2, wind, ace, [0.8974, 0.3153, -0.3087], V_shock_rh=585.4)
+    assert out["transverse_separation_km"] > 4e5, "the old code returned 0 here"
+    assert out["shock_speed_km_s"] > 0, "the comparable speed is a magnitude, never signed"
+    assert out["verdict"] == "INCONSISTENT"
+    assert any("transverse" in w for w in out["warnings"])
+
+    # The degenerate case must read as degenerate, not as a measurement.
+    assert timing(t1, t2, wind, ace, ace - wind)["transverse_separation_km"] < 1.0

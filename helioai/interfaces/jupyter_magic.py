@@ -187,6 +187,21 @@ def _render_jupyter_event(ev: dict) -> None:
             )
         )
 
+    elif name == "recipe_bypassed":
+        lines = []
+        for r in data.get("recipes") or []:
+            reason = (
+                "never loaded" if r.get("reason") == "not_loaded" else "loaded but outputs missing"
+            )
+            lines.append(f"- `{r.get('recipe')}` ({reason})")
+        display(
+            Markdown(
+                "**⚠️ recipe check** — these exports resemble a computation with a "
+                "calibrated recipe:\n" + "\n".join(lines) + "\n\n"
+                "Verify the exported numbers against `load_recipe(name)` before trusting them."
+            )
+        )
+
     elif name == "reply":
         display(Markdown(data.get("text", "")))
 

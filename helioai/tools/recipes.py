@@ -17,6 +17,38 @@ from helioai.config import settings
 
 log = logging.getLogger(__name__)
 
+# Curated, not parsed from headers: a hand-written computation names its export()
+# keys freely (a Rankine-Hugoniot run on the St Patrick 2015 shock exported
+# "density_compression_ratio" / "predicted_RH_compression", not the recipe's own
+# "r" / "r_predicted") — matching the recipe's literal export names would miss the
+# exact case this table exists to catch. Substrings instead, chosen from what a
+# calculation in this domain is actually called, whoever writes it. False positives
+# cost nothing here (see sub_agents._flag_recipe_bypass — it annotates, never blocks);
+# false negatives just mean one more recipe worth adding a substring for.
+RECIPE_SIGNATURES: dict[str, tuple[str, ...]] = {
+    "theta_bn": ("theta_bn",),
+    "mvab": ("mvab", "minimum_variance", "lambda_min", "ratio_int_min"),
+    "rankine_hugoniot": (
+        "compression_ratio",
+        "alfven_mach",
+        "predicted_rh",
+        "predicted_compression",
+        "rh_compression",
+        "spacecraft_frame",
+    ),
+    "shock_timing_2sc": (
+        "shock_speed_timing",
+        "along_normal",
+        "transverse_separation",
+        "lag_s",
+    ),
+    "walen_test": ("walen",),
+    "pressure_balance": ("standoff", "p_dyn", "magnetopause", "r_mp"),
+    "pitch_angle_dist": ("pitch_angle",),
+    "superposed_epoch": ("epoch_median", "epoch_q25", "epoch_q75", "superposed_epoch"),
+    "sep_onset_poisson_cusum": ("sep_onset", "cusum", "poisson_cusum"),
+}
+
 
 def _parse_header(text: str) -> dict[str, str]:
     """Extract key: value pairs from leading `# key: value` comment lines."""

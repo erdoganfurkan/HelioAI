@@ -200,6 +200,14 @@ function renderEvent(ev) {
   } else if (event === 'figure_review') {
     renderFigureReview(data.text);
 
+  } else if (event === 'recipe_bypassed') {
+    // Advisory, not a banner: exports resemble a computation with a calibrated recipe,
+    // either never loaded or loaded and not actually called — worth a glance, not an alarm.
+    const names = (data.recipes || [])
+      .map(r => `${r.recipe || r}${r.reason === 'shallow_use' ? ' (outputs missing)' : ''}`)
+      .join(', ');
+    appendTlEvent('⚠', `recipe check — ${names}, verify the exported numbers`, 'tl-issue');
+
   } else if (event === 'provenance') {
     renderProvenance(data);
 

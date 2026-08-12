@@ -352,6 +352,139 @@ def test_verification_outage_raises_no_false_alarm(monkeypatch):
     assert rag.unknown_ids(["cda/whatever/X"]) == []
 
 
+# ── recipe bypass check ─────────────────────────────────────────────────────
+
+
+def _run_python_exports(**exports: float) -> str:
+    return json.dumps(
+        {
+            "exports": {k: {"mean": v} for k, v in exports.items()},
+            "figure_paths": [],
+            "cards": [],
+            "code_path": "/tmp/code_0.py",
+        }
+    )
+
+
+def _load_recipe_result(name: str, outputs: str = "") -> str:
+    return json.dumps({"name": name, "code": "...", "metadata": {"outputs": outputs}})
+
+
+async def test_hand_written_recipe_lookalike_is_flagged(stub_registry):
+    """The real regression: a hand-written Rankine-Hugoniot on the St Patrick 2015
+    shock exported density_compression_ratio / shock_speed_spacecraft_frame without
+    ever calling load_recipe('rankine_hugoniot')."""
+    invoked, results = stub_registry
+    results["run_python"] = _run_python_exports(
+        density_compression_ratio=2.33, shock_speed_spacecraft_frame=583.0
+    )
+    llm = ScriptedLLM([calls("run_python"), text("done")])
+
+    events = await drain(**base(llm, role="data_analyst"))
+
+    flagged = [e for e in events if e["event"] == "recipe_bypassed"]
+    assert flagged, "exports matching rankine_hugoniot's signature must be flagged"
+    assert flagged[0]["data"]["recipes"] == [{"recipe": "rankine_hugoniot", "reason": "not_loaded"}]
+    assert "rankine_hugoniot" in final(events)["summary"]
+
+
+async def test_recipe_actually_loaded_passes_silently(stub_registry):
+    """Loaded, and its declared outputs (from the header) DO show up among the exports."""
+    invoked, results = stub_registry
+    results["load_recipe"] = _load_recipe_result(
+        "rankine_hugoniot",
+        outputs="V_shock (km/s, spacecraft frame), r (density compression ratio)",
+    )
+    results["run_python"] = _run_python_exports(
+        density_compression_ratio=2.59, shock_speed_spacecraft_frame=579.0
+    )
+    llm = ScriptedLLM(
+        [
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(id="c0", name="load_recipe", arguments={"name": "rankine_hugoniot"})
+                ],
+            ),
+            calls("run_python"),
+            text("done"),
+        ]
+    )
+
+    events = await drain(**base(llm, role="data_analyst"))
+
+    assert not [e for e in events if e["event"] == "recipe_bypassed"]
+
+
+async def test_recipe_loaded_but_read_only_is_flagged_as_shallow(stub_registry):
+    """The second run's real regression: shock_timing_2sc was loaded, as instructed —
+    then read for its constants and reimplemented by hand. None of its declared
+    outputs (along_normal_separation_km, transverse_separation_km, verdict...) ever
+    got exported; wind_shock_time / ace_shock_time / timing_delay_s / shock_speed_timing
+    did, all invented names that share nothing with the header but the generic word
+    "shock", which must not be enough on its own to pass this check.
+    """
+    invoked, results = stub_registry
+    results["load_recipe"] = _load_recipe_result(
+        "shock_timing_2sc",
+        outputs=(
+            "shock_speed_km_s (along the normal, spacecraft frame), lag_s, "
+            "along_normal_separation_km, transverse_separation_km, warnings, "
+            "and a consistency verdict against V_shock_rh"
+        ),
+    )
+    results["run_python"] = _run_python_exports(timing_delay_s=247.5, shock_speed_timing=-826.89)
+    llm = ScriptedLLM(
+        [
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(id="c0", name="load_recipe", arguments={"name": "shock_timing_2sc"})
+                ],
+            ),
+            calls("run_python"),
+            text("done"),
+        ]
+    )
+
+    events = await drain(**base(llm, role="data_analyst"))
+
+    flagged = [e for e in events if e["event"] == "recipe_bypassed"]
+    assert flagged, "a loaded recipe whose declared outputs never appear must still be flagged"
+    assert flagged[0]["data"]["recipes"] == [
+        {"recipe": "shock_timing_2sc", "reason": "shallow_use"}
+    ]
+
+
+async def test_unrelated_exports_are_not_flagged(stub_registry):
+    """Values with no recipe signature must not trigger a false positive."""
+    invoked, results = stub_registry
+    results["run_python"] = _run_python_exports(n_points=1361, missing_pct=0.0)
+    llm = ScriptedLLM([calls("run_python"), text("done")])
+
+    events = await drain(**base(llm, role="data_analyst"))
+
+    assert not [e for e in events if e["event"] == "recipe_bypassed"]
+
+
+def test_flag_recipe_bypass_keeps_the_original_text():
+    from helioai.core.sub_agents import _flag_recipe_bypass
+
+    artifacts = [
+        {
+            "kind": "exports",
+            "values": {"shock_speed_timing": {"mean": -1114.3}},
+        }
+    ]
+    out, flagged = _flag_recipe_bypass("Shock speed: -1114.3 km/s.", [], artifacts)
+
+    assert flagged == [{"recipe": "shock_timing_2sc", "reason": "not_loaded"}]
+    assert "Shock speed: -1114.3 km/s." in out, "the original answer must remain visible"
+    assert "shock_timing_2sc" in out
+
+
 @pytest.mark.asyncio
 async def test_subagent_task_lists_the_sessions_existing_datasets(tmp_path, monkeypatch):
     """A sub-agent that cannot name the lead's datasets re-downloads them."""

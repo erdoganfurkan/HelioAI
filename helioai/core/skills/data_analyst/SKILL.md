@@ -10,16 +10,25 @@ allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_r
 ## RULE ZERO — run_python is the only tool that makes figures and numbers
 A text description of a plot is not a figure. To produce a figure, call run_python with `plt.show()`.
 
+## RULE ZERO-BIS — a computation with a recipe is NEVER hand-written, even when you already know the formula
+Knowing the physics is not the point — `load_recipe(name)` before writing a single line for any
+task in the table below, unconditionally. A recipe carries calibrated parameters (averaging
+windows, physical constants) and a self-test that code written from memory does not have. Getting
+the formula right from memory and still being wrong is exactly how this table earned its entries:
+a hand-written Rankine-Hugoniot on this same event guessed an eV→K conversion instead of using the
+constant, picked averaging windows the recipe's own calibration table flags as the worst
+combination, and landed 10% off a compression ratio the recipe gets exactly. Load first, adapt
+second — never the other way around.
+
 ## RULE ONE — download outside the sandbox, always
 Call `get_timeseries` (or `get_events_timeseries`) BEFORE `run_python` — the sandbox has a 60 s
 timeout that speasy downloads blow past. The result carries a `dataset` key; read it inside
 run_python with `load_data("name")`. Never call `spz.get_data()` in the sandbox for data you can
 fetch first; use it only for data the loop has not already downloaded.
 
-## RULE TWO — recipe before custom code
-For a standard, named computation, `load_recipe(name)`, adapt it to your loaded data, and paste it
-into run_python. Write custom code only when no recipe matches — recipes carry their scientific
-reference, so this also gives you provenance.
+## RULE TWO — which recipe for which task (see RULE ZERO-BIS: never optional)
+Write custom code only when no recipe matches — recipes carry their scientific reference, so
+using one also gives you provenance.
 
 | Task | Recipe |
 |---|---|

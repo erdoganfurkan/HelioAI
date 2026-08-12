@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -19,6 +20,23 @@ from openai import AsyncOpenAI
 from .base import LLMClient, Message, ToolCall, ToolDef, call_with_retry, close_sdk_client
 
 log = logging.getLogger(__name__)
+
+# Some OpenAI-compatible reasoning models (MiniMax, DeepSeek-R1-style serving...) have
+# no separate "reasoning" field on this wire format — they inline their chain of thought
+# into `content` itself, wrapped in <think>. Left in place, that is what the agent loop
+# treats as the reply: printed to the user, and re-sent as conversation history on every
+# following turn. `\Z` also matches an unclosed tag — a reasoning-heavy generation that
+# exhausted `max_output_tokens` before ever closing it, which must still strip to nothing
+# rather than leak raw reasoning, and an empty reply is already the case the loop's
+# "output token budget" error message exists for.
+_THINK_BLOCK = re.compile(r"<think>.*?(?:</think>|\Z)", re.DOTALL)
+
+
+def _strip_reasoning(content: str) -> str:
+    """Remove inline <think>...</think> reasoning from a reply's content."""
+    if "<think>" not in content:
+        return content
+    return _THINK_BLOCK.sub("", content).strip()
 
 
 def to_openai_messages(messages: list[Message]) -> list[dict]:
@@ -98,7 +116,9 @@ def from_openai_response(response: Any, provider: str = "openai") -> Message:
 
     Text content is preserved even when tool calls are present, and a tool call
     whose arguments are not valid JSON degrades to `{}` with a warning rather
-    than raising — a malformed model output must not kill the agent loop.
+    than raising — a malformed model output must not kill the agent loop. An
+    inline `<think>...</think>` reasoning block, when a provider emits one, is
+    stripped from the content before it reaches the agent loop or the user.
 
     Args:
         response: The SDK response object.
@@ -108,9 +128,10 @@ def from_openai_response(response: Any, provider: str = "openai") -> Message:
         The assistant's reply, with `tool_calls` set when the model requested any.
     """
     msg = response.choices[0].message
+    content = _strip_reasoning(msg.content or "")
     tool_calls_raw = getattr(msg, "tool_calls", None) or []
     if not tool_calls_raw:
-        return Message(role="assistant", content=msg.content or "")
+        return Message(role="assistant", content=content)
 
     tool_calls: list[ToolCall] = []
     for tc in tool_calls_raw:
@@ -125,7 +146,7 @@ def from_openai_response(response: Any, provider: str = "openai") -> Message:
             )
             args = {}
         tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
-    return Message(role="assistant", content=msg.content or "", tool_calls=tool_calls)
+    return Message(role="assistant", content=content, tool_calls=tool_calls)
 
 
 class OpenAICompatClient(LLMClient):

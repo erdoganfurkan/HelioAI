@@ -300,6 +300,41 @@ async def test_plain_text_response(build):
 
 @pytest.mark.parametrize("build", OPENAI_CLIENTS)
 @pytest.mark.asyncio
+async def test_inline_reasoning_block_is_stripped(build):
+    """MiniMax (via OpenCode Go) inlines its chain of thought into `content` itself,
+    wrapped in <think> — no separate reasoning field on this wire format. Left in,
+    it is what the user sees and what gets replayed as history every following turn."""
+    client, fake = build()
+    fake.completions.response = _openai_response(
+        content="<think>let me work this out</think>\n\nOK"
+    )
+    result = await client.chat([Message(role="user", content="hi")], tools=[])
+    assert result.content == "OK"
+
+
+@pytest.mark.parametrize("build", OPENAI_CLIENTS)
+@pytest.mark.asyncio
+async def test_unterminated_reasoning_block_strips_to_empty(build):
+    """A reasoning-heavy generation that exhausted max_output_tokens before closing
+    </think> must not leak raw reasoning as if it were the answer — empty is the
+    correct result here, it is what triggers the loop's "output budget" error."""
+    client, fake = build()
+    fake.completions.response = _openai_response(content="<think>still thinking, ran out of")
+    result = await client.chat([Message(role="user", content="hi")], tools=[])
+    assert result.content == ""
+
+
+@pytest.mark.parametrize("build", OPENAI_CLIENTS)
+@pytest.mark.asyncio
+async def test_response_without_reasoning_is_untouched(build):
+    client, fake = build()
+    fake.completions.response = _openai_response(content="no reasoning tags here")
+    result = await client.chat([Message(role="user", content="hi")], tools=[])
+    assert result.content == "no reasoning tags here"
+
+
+@pytest.mark.parametrize("build", OPENAI_CLIENTS)
+@pytest.mark.asyncio
 async def test_null_content_becomes_empty_string(build):
     client, fake = build()
     fake.completions.response = _openai_response(content=None)

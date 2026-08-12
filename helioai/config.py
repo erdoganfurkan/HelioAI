@@ -11,12 +11,18 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 _PKG = Path(__file__).resolve().parent
 _ROOT = _PKG.parent
 
 load_dotenv(_ROOT / ".env")
+# Installed from PyPI, _ROOT is site-packages/ — no .env there ever exists, so the line
+# above is silently a no-op and every key comes from the shell. README says
+# `pip install helioai` then "copy .env.example to .env": search upward from the
+# working directory too, so that file is the one actually read. override=False (the
+# load_dotenv default) on both calls, so a repo-clone .env still wins when both exist.
+load_dotenv(find_dotenv(usecwd=True))
 
 # Recipes ship inside the wheel: they are read-only assets, not user data.
 # Override with HELIOAI_RECIPES_DIR to use your own set.

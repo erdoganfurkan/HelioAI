@@ -48,6 +48,37 @@ def test_recipes_dir_defaults_to_the_packaged_copy():
     assert settings.recipes.recipes_dir == _PKG_RECIPES
 
 
+def test_dot_env_in_the_working_directory_is_read_once_installed():
+    """`load_dotenv(_ROOT / ".env")` alone is a no-op once installed: _ROOT is
+    site-packages/, which never holds a user's .env. The README instructs
+    `pip install helioai` then "copy .env.example to .env" — that file has to be
+    read from the working directory the user actually runs `helioai` from, which
+    `_ROOT/.env` cannot see. A subprocess with a bare env and a cwd of its own is
+    the only way to prove this without polluting the importing process's os.environ.
+    """
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, ".env").write_text("HELIOAI_ENV_FILE_PROBE=found\n", encoding="utf-8")
+        env = {k: v for k, v in __import__("os").environ.items() if k != "HELIOAI_ENV_FILE_PROBE"}
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import os, helioai.config; print(os.environ.get('HELIOAI_ENV_FILE_PROBE'))",
+            ],
+            cwd=tmp,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.stdout.strip() == "found", result.stderr
+
+
 def test_user_data_is_never_written_inside_the_package():
     """User data must land in the repo (dev) or the XDG dir (installed), never site-packages."""
     for label, path in (

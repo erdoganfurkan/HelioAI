@@ -454,6 +454,19 @@ def load_data(name):
     raise ValueError(f"unknown dataset kind {_entry['kind']!r}")
 
 
+def save_path(name):
+    \"\"\"Absolute path to write `name` into this session's own workspace.
+
+    A bare relative path also lands here — the sandbox's cwd already is this directory —
+    but a script that changes directory, or a path you build once and hand to something
+    else, needs the absolute form. Never construct that path yourself: only this exact
+    directory is writable. Under bwrap, everything else under the data root is an empty
+    tmpfs overlay that looks writable and is not — a run that hardcoded one directory up
+    printed "Wrote <path>", the write itself did not raise, and the file was gone the
+    moment the sandbox process exited.\"\"\"
+    return os.path.join(__sandbox_plot_dir, str(name))
+
+
 def document_method(name, reference="", method=""):
     \"\"\"Record a scientific method/algorithm used (provenance). Call when you compute a derived
     quantity outside a recipe (e.g. MVAB inline). Shown in the UI and the exported Methods section.\"\"\"

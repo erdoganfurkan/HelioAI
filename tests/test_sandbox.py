@@ -557,6 +557,26 @@ export('outside', interp_to(np.array(['2015-03-17T09:00:00'], dtype='datetime64[
 
 
 @pytest.mark.asyncio
+async def test_save_path_writes_inside_the_session_directory(tmp_path):
+    """A hand-built path one level up from the session directory writes to a bwrap
+    tmpfs overlay: the write does not raise, stdout can claim success, and the file
+    is gone the moment the sandbox process exits. `save_path` must resolve inside
+    the directory this run actually has bound writable.
+    """
+    code = """
+p = save_path('standalone.py')
+open(p, 'w').write('# hello')
+print(p)
+"""
+    result = await run_python(code, _plot_dir=str(tmp_path), _run_idx=0)
+    assert result.get("error") is None, result.get("stderr", "")
+    written = tmp_path / "standalone.py"
+    assert written.is_file(), result["stdout"]
+    assert written.read_text() == "# hello"
+    assert result["stdout"].strip() == str(written)
+
+
+@pytest.mark.asyncio
 async def test_magnitude_leaves_a_data_gap_as_a_gap():
     """The hand-written idiom turned a 90 s hole in Wind/MFI into |B| = 0 nT.
 

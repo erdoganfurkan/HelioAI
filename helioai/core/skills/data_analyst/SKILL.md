@@ -56,6 +56,10 @@ method is recorded with its source.
 - `export(name, value, units="nT")` → surfaces a key number in the reply and records it in the
   session provenance ledger. Call for every result that matters, with its unit when it has one:
   a number that is never exported has no traceable origin.
+- `save_path("name.ext")` → the only correct way to build a path for a file you write yourself
+  (a standalone script, a CSV). NEVER hardcode a path or guess where "the workspace" is — only
+  this exact directory is writable; a path one level off can accept the write and still lose the
+  file, because everything else is a read-only overlay that looks writable and is not.
 - `plt.show()` → REQUIRED; it is what saves the figure to disk.
 
 ## Resolve the id first (if needed)

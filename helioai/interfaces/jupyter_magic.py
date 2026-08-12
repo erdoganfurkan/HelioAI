@@ -293,8 +293,8 @@ class HelioAIMagics(Magics):
     def helioai_provider(self, line: str) -> None:
         """`%helioai_provider [name]` — show or switch the LLM provider."""
         provider = line.strip().lower()
-        if provider not in ("groq", "gemini", "azure", "ollama"):
-            print(f"Unknown provider {provider!r}. Use: groq | gemini | azure | ollama")
+        if provider not in ("groq", "gemini", "azure", "opencode", "ollama"):
+            print(f"Unknown provider {provider!r}. Use: groq | gemini | azure | opencode | ollama")
             return
         import os
 

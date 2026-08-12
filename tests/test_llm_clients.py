@@ -398,13 +398,45 @@ def test_factory_missing_groq_key_raises(monkeypatch):
         build_llm_client("groq")
 
 
+def test_factory_builds_opencode_from_table(monkeypatch):
+    from helioai.config import settings
+    from helioai.core.llm.factory import build_llm_client
+
+    monkeypatch.setattr(settings.llm.opencode, "api_key", "oc_test")
+    monkeypatch.setattr(settings.llm.opencode, "model", "kimi-k3")
+    client = build_llm_client("opencode")
+    assert client._model == "kimi-k3"
+    assert str(client._client.base_url).startswith("https://opencode.ai/zen/go/v1")
+
+
+def test_factory_opencode_base_url_is_overridable(monkeypatch):
+    """A different OpenCode access path (BYOK proxy, self-hosted gateway...) must
+    not require a code change — same override mechanism as Ollama's."""
+    from helioai.config import settings
+    from helioai.core.llm.factory import build_llm_client
+
+    monkeypatch.setattr(settings.llm.opencode, "api_key", "oc_test")
+    monkeypatch.setattr(settings.llm.opencode, "base_url", "https://example.org/custom")
+    client = build_llm_client("opencode")
+    assert str(client._client.base_url).startswith("https://example.org/custom/v1")
+
+
+def test_factory_missing_opencode_key_raises(monkeypatch):
+    from helioai.config import settings
+    from helioai.core.llm.factory import build_llm_client
+
+    monkeypatch.setattr(settings.llm.opencode, "api_key", "")
+    with pytest.raises(RuntimeError, match="OPENCODE_API_KEY"):
+        build_llm_client("opencode")
+
+
 def test_factory_unknown_provider_lists_every_supported_name():
     from helioai.core.llm.factory import build_llm_client
 
     with pytest.raises(RuntimeError) as exc:
         build_llm_client("not-a-provider")
     message = str(exc.value)
-    for name in ("azure", "gemini", "groq", "ollama"):
+    for name in ("azure", "gemini", "groq", "opencode", "ollama"):
         assert name in message
 
 

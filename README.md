@@ -77,7 +77,7 @@ from PyPI — override either with `HELIOAI_DATA_DIR`.
 Copy `.env.example` to `.env` and set at least one LLM provider key:
 
 ```ini
-# LLM provider (groq | gemini | azure | ollama)
+# LLM provider (groq | gemini | azure | opencode | ollama)
 HELIOAI_LLM_PROVIDER=groq
 
 GROQ_API_KEY=your_key_here
@@ -87,6 +87,10 @@ GEMINI_API_KEY=your_key_here
 AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=...
 AZURE_OPENAI_DEPLOYMENT=gpt-4o
+
+# OpenCode Zen (if using opencode) — however you reach it (Go plan, BYOK), no default model
+OPENCODE_API_KEY=...
+HELIOAI_OPENCODE_MODEL=...
 
 # Ollama (if using ollama — no API key needed)
 HELIOAI_OLLAMA_URL=http://localhost:11434
@@ -98,6 +102,7 @@ HELIOAI_OLLAMA_MODEL=qwen2.5:14b-instruct
 | `groq` | `llama-3.3-70b-versatile` | Free tier, fast — **recommended to start** |
 | `gemini` | `gemini-2.5-flash` | Better reasoning, generous free quota |
 | `azure` | configurable | Enterprise deployments |
+| `opencode` | configurable | OpenCode's Zen gateway, OpenAI-compatible |
 | `ollama` | `qwen2.5:14b-instruct` | Fully local, no API key |
 
 Any other OpenAI-compatible endpoint works too — providers are a `base_url` entry in

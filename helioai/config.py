@@ -88,6 +88,32 @@ class GroqConfig:
 
 
 @dataclass
+class OpenCodeConfig:
+    """OpenCode's Zen gateway — OpenAI-compatible, whichever way you reach it: the
+    flat-rate Go subscription, a BYOK-routed key, or any other model Zen hosts.
+
+    `base_url` defaults to the Go-plan endpoint, since that flat-rate tier is what
+    most accounts actually have. It is a DIFFERENT catalogue from the general Zen
+    endpoint (`.../zen/v1`, no `/go/`) — that one serves premium/BYOK-only models
+    (Claude, ...) a Go subscription cannot reach, confirmed by querying both
+    `/models` endpoints directly. Override `HELIOAI_OPENCODE_URL` to the plain Zen
+    path if your access is not the Go plan.
+
+    No default model: what is reachable depends on your plan/BYOK setup and Zen's
+    rotating catalogue (GLM, Kimi, DeepSeek, Qwen, MiniMax...). Set
+    `HELIOAI_OPENCODE_MODEL` to the exact id from your dashboard — an empty string
+    fails at the API with a clear "unknown model" rather than silently routing to a
+    guessed default that may not exist on your plan.
+    """
+
+    base_url: str = "https://opencode.ai/zen/go"
+    model: str = ""
+    max_output_tokens: int = 4096
+    temperature: float = 0.2
+    api_key: str = ""
+
+
+@dataclass
 class OllamaConfig:
     """Local Ollama settings.
 
@@ -110,6 +136,7 @@ class LLMConfig:
     azure: AzureOpenAIConfig = field(default_factory=AzureOpenAIConfig)
     gemini: GeminiConfig = field(default_factory=GeminiConfig)
     groq: GroqConfig = field(default_factory=GroqConfig)
+    opencode: OpenCodeConfig = field(default_factory=OpenCodeConfig)
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
 
 
@@ -329,6 +356,11 @@ def _load() -> Settings:
             ),
             groq=GroqConfig(
                 api_key=os.environ.get("GROQ_API_KEY", ""),
+            ),
+            opencode=OpenCodeConfig(
+                base_url=os.environ.get("HELIOAI_OPENCODE_URL", "https://opencode.ai/zen/go"),
+                model=os.environ.get("HELIOAI_OPENCODE_MODEL", ""),
+                api_key=os.environ.get("OPENCODE_API_KEY", ""),
             ),
             ollama=OllamaConfig(
                 base_url=os.environ.get("HELIOAI_OLLAMA_URL", "http://localhost:11434"),

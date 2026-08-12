@@ -18,6 +18,11 @@ OPENAI_COMPAT: dict[str, dict] = {
         "base_url": "https://api.groq.com/openai/v1",
         "key_env": "GROQ_API_KEY",
     },
+    "opencode": {
+        "config": "opencode",
+        "base_url": None,  # taken from settings.llm.opencode.base_url (Zen gateway, generic)
+        "key_env": "OPENCODE_API_KEY",
+    },
     "ollama": {
         "config": "ollama",
         "base_url": None,  # taken from settings.llm.ollama.base_url

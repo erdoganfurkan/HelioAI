@@ -34,6 +34,38 @@ V_WIND = "cda/WI_H1_SWE/Proton_V_moment"
 W_WIND = "cda/WI_H1_SWE/Proton_W_moment"
 
 
+def coplanarity_timing(
+    tb: np.ndarray,
+    bvec: np.ndarray,
+    up: tuple,
+    down: tuple,
+    dr: np.ndarray,
+    lag: float,
+) -> tuple[np.ndarray, float, float, float, float]:
+    """Shock normal by coplanarity, and what the two-spacecraft timing then gives.
+
+    Split out from the narrative so the same code answers the question twice: once
+    for the reference window pair, and once per member of a sweep over that choice.
+
+    Returns:
+        (normal, theta_Bn in degrees, separation along the normal, separation across
+        it, shock speed along the normal) — the last three in km and km/s.
+    """
+    b_up = np.array([window_mean(tb, bvec[:, i], *up) for i in range(3)])
+    b_dn = np.array([window_mean(tb, bvec[:, i], *down) for i in range(3)])
+    n_hat = np.cross(np.cross(b_dn, b_up), b_dn - b_up)
+    norm = np.linalg.norm(n_hat)
+    if not np.isfinite(norm) or norm == 0:
+        raise ValueError("degenerate coplanarity normal")
+    n_hat = n_hat / norm
+    if n_hat[0] < 0:
+        n_hat = -n_hat  # point it upstream, the usual convention at L1
+    theta_bn = float(np.degrees(np.arccos(abs(np.dot(n_hat, b_up / np.linalg.norm(b_up))))))
+    along = float(np.dot(dr, n_hat))
+    transverse = float(np.linalg.norm(dr - along * n_hat))
+    return n_hat, theta_bn, along, transverse, abs(along) / lag
+
+
 def fetch(param_id: str, start: str, stop: str) -> tuple[np.ndarray, np.ndarray]:
     """Download a parameter and blank its fill values out to NaN.
 
@@ -224,16 +256,7 @@ def main() -> None:
         # the separation vector rescaled: it makes the transverse separation come out
         # as exactly 0 km whatever the data, and that zero has been published as a
         # result. Coplanarity uses the field's own rotation across the ramp instead.
-        b_up = np.array([window_mean(tb, bvec[:, i], *up) for i in range(3)])
-        b_dn = np.array([window_mean(tb, bvec[:, i], *down) for i in range(3)])
-        n_hat = np.cross(np.cross(b_dn, b_up), b_dn - b_up)
-        n_hat = n_hat / np.linalg.norm(n_hat)
-        if n_hat[0] < 0:
-            n_hat = -n_hat  # point it upstream, the usual convention at L1
-        theta_bn = np.degrees(np.arccos(abs(np.dot(n_hat, b_up / np.linalg.norm(b_up)))))
-        along = float(np.dot(dr, n_hat))
-        transverse = float(np.linalg.norm(dr - along * n_hat))
-        v_n = abs(along) / lag
+        n_hat, theta_bn, along, transverse, v_n = coplanarity_timing(tb, bvec, up, down, dr, lag)
         print(f"\n  coplanarity normal = {np.round(n_hat, 3)}   theta_Bn = {theta_bn:.1f} deg")
         print(f"  separation along n = {abs(along):.0f} km, across it = {transverse:.0f} km")
         print(
@@ -242,8 +265,44 @@ def main() -> None:
         )
         print("  the two disagree, and the transverse separation is why: a flat front is")
         print(f"  being assumed across {transverse:.0f} km, and shock fronts ripple well")
-        print("  below that. The exact figure moves with the averaging windows the normal")
-        print("  comes from, which is itself the answer: two spacecraft cannot pin this down")
+        print("  below that.")
+
+        # One window pair is one sample of a family, and quoting it alone invites the
+        # reader to think the number is firm. It is not: a run that picked a 90 s / 60 s
+        # pair straddling the ramp got 580 km/s, landed within 2% of the jump-condition
+        # speed, and reported "outstanding agreement, no discrepancy to resolve". Its
+        # arithmetic was right. Sweeping the choice is what shows that agreement to be a
+        # coincidence of framing rather than a confirmation — so the sweep is the
+        # measurement, and the single pair above is only its most legible member.
+        speeds, angles = [], []
+        for u0, u1 in [(-15, -1), (-10, -2), (-30, -2), (-3, -0.5), (-60, -5)]:
+            for d0, d1 in [(1, 3), (1, 5), (2, 6), (3, 10), (5, 15)]:
+                w_up = (
+                    shock + np.timedelta64(int(u0 * 60), "s"),
+                    shock + np.timedelta64(int(u1 * 60), "s"),
+                )
+                w_dn = (
+                    shock + np.timedelta64(int(d0 * 60), "s"),
+                    shock + np.timedelta64(int(d1 * 60), "s"),
+                )
+                try:
+                    _, th, _, _, v = coplanarity_timing(tb, bvec, w_up, w_dn, dr, lag)
+                except (ValueError, ZeroDivisionError):
+                    continue
+                if np.isfinite(v):
+                    speeds.append(v)
+                    angles.append(th)
+        if speeds:
+            near = sum(abs(s - v_shock) / v_shock < 0.15 for s in speeds)
+            print(f"\n  over {len(speeds)} choices of averaging window:")
+            print(f"    theta_Bn spans {min(angles):.0f}-{max(angles):.0f} deg")
+            print(
+                f"    V along the normal spans {min(speeds):.0f}-{max(speeds):.0f} km/s "
+                f"(factor {max(speeds) / min(speeds):.1f})"
+            )
+            print(f"    {near}/{len(speeds)} of them land within 15% of the jump-condition speed")
+        print("  the spread IS the answer: two spacecraft cannot pin this down, and any")
+        print("  single window pair that happens to agree is agreeing by accident")
 
 
 if __name__ == "__main__":

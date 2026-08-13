@@ -106,3 +106,42 @@ def test_arg_helper_default():
 
 def test_arg_helper_flag_at_end():
     assert ms._arg(["--host"], "--host", "127.0.0.1") == "127.0.0.1"
+
+
+class _RecordingLogger:
+    def __init__(self):
+        self.events = []
+
+    def warning(self, event, **kw):
+        self.events.append(event)
+
+
+def test_http_on_a_public_interface_warns(monkeypatch):
+    """--http exposes all 17 tools, run_python included, with no authentication.
+
+    Over stdio that is the MCP contract — the client owns the process. Over HTTP on
+    a public interface it is remote code execution, and unlike `serve --web` nothing
+    said so. Asserting on the logger rather than on captured output: this logger
+    writes to stderr on purpose (stdout carries the MCP protocol), and which stream
+    a test sees depends on who configured logging first.
+    """
+    rec = _RecordingLogger()
+    monkeypatch.setattr(ms, "get_logger", lambda _name: rec)
+    monkeypatch.setattr(ms, "serve_http", lambda host, port: None)
+    monkeypatch.setattr(ms.sys, "argv", ["helioai-mcp", "--http", "--host", "0.0.0.0"])
+
+    ms.main()
+
+    assert "mcp_http_exposed_without_auth" in rec.events
+
+
+def test_http_on_loopback_stays_quiet(monkeypatch):
+    """The default bind is the supported one — warning on it trains people to ignore it."""
+    rec = _RecordingLogger()
+    monkeypatch.setattr(ms, "get_logger", lambda _name: rec)
+    monkeypatch.setattr(ms, "serve_http", lambda host, port: None)
+    monkeypatch.setattr(ms.sys, "argv", ["helioai-mcp", "--http"])
+
+    ms.main()
+
+    assert rec.events == []

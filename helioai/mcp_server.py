@@ -20,7 +20,7 @@ from mcp.server.lowlevel import NotificationOptions
 from mcp.server.models import InitializationOptions
 
 import helioai.tools.setup  # noqa: F401 — registers all tools at import time
-from helioai.logging_config import setup_logging
+from helioai.logging_config import get_logger, setup_logging
 from helioai.tools.registry import registry
 
 server = Server("helioai")
@@ -89,6 +89,16 @@ def main() -> None:
     if "--http" in args:
         host = _arg(args, "--host", "127.0.0.1")
         port = int(_arg(args, "--port", "8765"))
+        if host not in {"127.0.0.1", "localhost", "::1"}:
+            # Over stdio the client owns the process, so exposing run_python is the
+            # normal contract. Over HTTP there is no authentication and no scope
+            # guardrail: anything that reaches this port runs Python on this host.
+            get_logger(__name__).warning(
+                "mcp_http_exposed_without_auth",
+                host=host,
+                port=port,
+                detail="every registered tool, run_python included, is reachable unauthenticated",
+            )
         serve_http(host, port)
     else:
         asyncio.run(serve_stdio())

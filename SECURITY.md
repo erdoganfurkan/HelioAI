@@ -48,6 +48,21 @@ it to a network without putting authentication in front of it**, and do not run
 it on a host where the fallback sandbox path is in use. A reachable
 `run_python` endpoint without isolation is remote code execution.
 
+A loopback bind is not a security boundary on its own: any web page can point a
+hostname at `127.0.0.1` and reach a local server (DNS rebinding). `serve --web`
+therefore pins the `Host` header when it binds to loopback.
+
+### The MCP server over HTTP
+
+`helioai-mcp` exposes **every registered tool, `run_python` included, with no
+authentication**. Over stdio that is the normal MCP contract — the client owns the
+process. Over `--http` it is not: anything that can reach the port executes Python
+on that host, outside the web UI's scope guardrail.
+
+Keep it on loopback (the default). `helioai-mcp --http --host 0.0.0.0` logs a
+warning for this reason; treat that warning as a deployment error unless you have
+put authentication in front of the port yourself.
+
 ## Supported versions
 
 HelioAI is pre-1.0. Security fixes land on `main` and in the next release; older

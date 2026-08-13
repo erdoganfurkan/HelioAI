@@ -259,9 +259,12 @@ def _run_profile() -> None:
     import os
     import subprocess
 
-    from helioai.config import settings
+    from helioai.workspace import user_home
 
-    p = settings.profile.profile_path
+    # Where the agent actually reads it (agent_loop._load_user_profile). Editing
+    # settings.profile.profile_path wrote a file nothing has injected since storage
+    # was namespaced per user — the command looked like it worked, every time.
+    p = user_home(_USER_ID) / "profile.md"
     p.parent.mkdir(parents=True, exist_ok=True)
     if not p.exists():
         p.touch()

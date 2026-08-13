@@ -330,12 +330,12 @@ class HelioAIMagics(Magics):
     @line_magic
     def helioai_profile(self, line: str) -> None:
         """`%helioai_profile` — show or edit the user profile."""
-        from helioai.config import settings
+        from helioai.workspace import user_home
 
         parts = line.strip().split(maxsplit=1)
         cmd = parts[0] if parts else ""
         arg = parts[1].strip().strip("\"'") if len(parts) > 1 else ""
-        p = settings.profile.profile_path
+        p = user_home(_USER_ID) / "profile.md"
 
         if cmd == "show":
             content = p.read_text(encoding="utf-8").strip() if p.exists() else ""

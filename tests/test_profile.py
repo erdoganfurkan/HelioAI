@@ -112,3 +112,41 @@ def test_put_profile_overwrites(web_client):
     web_client.put("/api/profile", json={"content": "second"})
     r = web_client.get("/api/profile")
     assert r.json()["content"] == "second"
+
+
+def test_cli_profile_edits_the_file_the_agent_reads(tmp_path, monkeypatch):
+    """`helioai profile` edited data/profile.md; the agent reads users/cli/profile.md.
+
+    Since storage was namespaced per user, the two paths stopped being the same file
+    and nothing ever injected what the command wrote. The command still succeeded, so
+    it looked implemented — only the web UI actually worked.
+    """
+    from helioai.config import settings
+    from helioai.core.agent_loop import _load_user_profile
+    from helioai.interfaces.cli import _run_profile
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setenv("EDITOR", "true")
+
+    _run_profile()
+
+    from helioai.workspace import user_home
+
+    edited = user_home("cli") / "profile.md"
+    assert edited.exists(), "the command did not create the file it claims to edit"
+    edited.write_text("I work on Cluster data.", encoding="utf-8")
+    assert "Cluster" in _load_user_profile("cli")
+
+
+def test_jupyter_profile_set_reaches_the_agent(tmp_path, monkeypatch):
+    """Same defect as the CLI, same fix — `%helioai_profile set` wrote a dead file."""
+    from helioai.config import settings
+    from helioai.core.agent_loop import _load_user_profile
+    from helioai.interfaces.jupyter_magic import HelioAIMagics
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+
+    magics = HelioAIMagics.__new__(HelioAIMagics)
+    HelioAIMagics.helioai_profile(magics, 'set "I prefer GSM coordinates"')
+
+    assert "GSM" in _load_user_profile("jupyter")

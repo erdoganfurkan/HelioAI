@@ -447,3 +447,55 @@ async def test_repeat_download_short_circuits_before_the_network(tmp_path, monke
         assert calls["n"] == 0
     finally:
         ws.reset_label(tok)
+
+
+def test_cadence_measures_samples_not_the_file_grid():
+    """Regression: `WI_PM_3DP` reported "8 ms" for protons sampled every 3 s.
+
+    The ISTP file carries an 8 ms epoch grid and pads it with fill rows, so a median
+    taken over the whole grid describes the file, not the instrument — off by 385x.
+    Cadence is what the agent picks a product on, and a run briefed "a few seconds,
+    not the sub-second product" rejects the right product on that label alone.
+    """
+    import numpy as np
+
+    from helioai.tools.speasy_tools import _sample_cadence
+
+    # 8 ms grid, one real sample every 3 s (every 375th row), the rest fill-blanked.
+    times = np.datetime64("2015-03-17T00:00:00") + np.arange(
+        0, 375 * 20, dtype="int64"
+    ) * np.timedelta64(8, "ms")
+    values = np.full(len(times), np.nan)
+    values[::375] = 42.0
+
+    cadence, n_valid = _sample_cadence(times, values)
+    assert cadence == "3 s", cadence
+    assert n_valid == 20
+
+
+def test_cadence_of_a_gapless_product_is_unchanged():
+    """The fix must not move a product whose grid already is its sampling."""
+    import numpy as np
+
+    from helioai.tools.speasy_tools import _sample_cadence
+
+    times = np.datetime64("2015-03-17T00:00:00") + np.arange(100, dtype="int64") * np.timedelta64(
+        16, "s"
+    )
+    cadence, n_valid = _sample_cadence(times, np.arange(100.0))
+    assert cadence == "16 s"
+    assert n_valid == 100
+
+
+def test_cadence_survives_a_non_numeric_variable():
+    """A label/time variable has nothing to test for finiteness; the grid is all there is."""
+    import numpy as np
+
+    from helioai.tools.speasy_tools import _sample_cadence
+
+    times = np.datetime64("2015-03-17T00:00:00") + np.arange(5, dtype="int64") * np.timedelta64(
+        1, "m"
+    )
+    cadence, n_valid = _sample_cadence(times, np.array(["a", "b", "c", "d", "e"]))
+    assert cadence == "1 min"
+    assert n_valid == 5

@@ -12,6 +12,58 @@ import logging
 log = logging.getLogger(__name__)
 
 
+def _sample_cadence(times, values) -> tuple[str, int]:
+    """Median gap between samples that actually carry a measurement, and how many.
+
+    Measured over the whole time grid instead, this reports the file's epoch spacing,
+    which on an ISTP file padded with fill rows is not the rate anything was sampled
+    at: `WI_PM_3DP` reported "8 ms" for protons measured every 3.08 s, a factor of 385.
+
+    Wrong is bad; wrong in this direction is worse, because cadence is exactly what the
+    agent is asked to choose on. A run briefed "give me a few seconds, not the
+    sub-second product" reads "8 ms" and rejects the very product it wanted — talked
+    out of the right answer by our own metadata rather than by the data.
+
+    `n_valid` ships alongside because the two numbers only make sense together: 61 %
+    missing next to a 3 s cadence reads as a broken product until you can see that
+    46 157 of the 119 168 rows are real and evenly spaced.
+
+    Args:
+        times: Sample times, full resolution (never the thinned preview copy).
+        values: Matching values, already fill-blanked to NaN.
+
+    Returns:
+        (human-readable cadence, number of samples carrying a measurement).
+    """
+    import numpy as np
+
+    n_valid = len(times)
+    sample_times = times
+    try:
+        finite = np.isfinite(np.asarray(values, dtype="float64"))
+        if finite.ndim > 1:
+            finite = finite.any(axis=tuple(range(1, finite.ndim)))
+        n_valid = int(finite.sum())
+        if n_valid > 1:
+            sample_times = times[finite]
+    except (TypeError, ValueError):
+        pass  # non-numeric variable: the grid is all there is to measure
+
+    if len(sample_times) < 2:
+        return "", n_valid
+    try:
+        med_ms = float(np.median(np.diff(sample_times.astype("datetime64[ms]").astype(float))))
+    except Exception:
+        return "", n_valid
+    if med_ms >= 3_600_000:
+        return f"{med_ms / 3_600_000:.4g} h", n_valid
+    if med_ms >= 60_000:
+        return f"{med_ms / 60_000:.4g} min", n_valid
+    if med_ms >= 1_000:
+        return f"{med_ms / 1_000:.4g} s", n_valid
+    return f"{med_ms:.4g} ms", n_valid
+
+
 async def get_timeseries(
     param_id: str,
     start: str,
@@ -130,6 +182,12 @@ async def get_timeseries(
         source="get_timeseries",
     )
 
+    # Cadence and valid-sample count describe the PERSISTED series, so they are taken
+    # before the preview is thinned: `load_data()` hands back the full resolution, and
+    # a cadence measured on the thinned copy would describe something the agent never
+    # works with.
+    cadence, n_valid = _sample_cadence(times, values)
+
     # Downsample if needed
     if n_points > max_points:
         step = n_points // max_points
@@ -157,23 +215,6 @@ async def get_timeseries(
     units = getattr(var, "unit", "") or ""
     name = getattr(var, "name", "") or ""
     components = list(getattr(var, "columns", None) or [])
-
-    # Cadence: median of time deltas (provider-agnostic)
-    cadence = ""
-    try:
-        if n_points > 1:
-            deltas = np.diff(times.astype("datetime64[ms]").astype(float))
-            med_ms = float(np.median(deltas))
-            if med_ms >= 3_600_000:
-                cadence = f"{med_ms / 3_600_000:.4g} h"
-            elif med_ms >= 60_000:
-                cadence = f"{med_ms / 60_000:.4g} min"
-            elif med_ms >= 1_000:
-                cadence = f"{med_ms / 1_000:.4g} s"
-            else:
-                cadence = f"{med_ms:.4g} ms"
-    except Exception:
-        pass
 
     # Mission / instrument: best-effort from param_id prefix + var.meta
     mission = ""
@@ -212,6 +253,7 @@ async def get_timeseries(
         "instrument": instrument,
         "shape": shape,
         "n_points": n_points,
+        "n_valid": n_valid,
         "preview": preview,
     }
     if quality:

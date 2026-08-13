@@ -302,3 +302,36 @@ def test_a_broken_check_never_costs_the_user_the_reply(monkeypatch):
 
     monkeypatch.setattr(pc, "check_reply", boom)
     assert list(_provenance_events("13.02 nT")) == []
+
+
+def test_a_generic_name_does_not_accuse_the_words_around_any_number():
+    """Regression: fifteen contradictions in one notebook run, all false.
+
+    `min_Bz_nT` splits to min/bz/nt and the length filter keeps only "min", which was
+    then matched as a substring — so "Minimum-variance", "30-min medians" and the year
+    in "Sonnerup & Cahill 1967" each got reported as contradicting the minimum Bz. And
+    `wind_Np_upstream_window_n` found its own word "wind" inside "window". A detector
+    that cries wolf teaches the reader to skip the line.
+    """
+    from helioai.core.provenance_check import _named_entry
+
+    entries = [
+        {"name": "min_Bz_nT", "units": ""},
+        {"name": "wind_Np_upstream_window_n", "units": ""},
+    ]
+    for context in (
+        "Minimum-variance (Sonnerup & Cahill 1967)",
+        "30-min medians from the [-60, -30] min windows",
+        "the upstream-side window alone gives n = (+0.04",
+        "MVA eigenvalue ratio (intermediate / minimum) is 1.32",
+    ):
+        assert _named_entry(context, "", entries) is None, context
+
+
+def test_a_name_written_out_in_prose_is_still_matched():
+    """The precision fix must not silence the case the check exists for."""
+    from helioai.core.provenance_check import _named_entry
+
+    entries = [{"name": "compression_ratio_density", "units": ""}]
+    named = _named_entry("the density compression ratio is 2.46", "", entries)
+    assert named is not None and named["name"] == "compression_ratio_density"

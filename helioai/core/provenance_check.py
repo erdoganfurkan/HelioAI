@@ -129,15 +129,33 @@ def _named_entry(context: str, claim_units: str, entries: list[dict]) -> dict | 
     words are matched rather than the identifier: the underscores become a word set and
     every word has to be there. Units have to agree as well — the word "downstream" sits
     near both a field and a density, and on its own it accused the wrong one.
+
+    Two rules keep the accusation honest, both written after a run where every one of
+    fifteen contradictions was false:
+
+    - **Whole words, not substrings.** `wind_Np_upstream_window_n` matched its own word
+      "wind" inside "window", so the entry vouched for itself in any sentence mentioning
+      an upstream window.
+    - **A unitless entry needs two words.** Agreement on a real unit is the second signal
+      that lets one word suffice: "downstream" plus nT does single out `B_downstream`.
+      When the export carried no unit — which is most of them, because the model writes
+      the unit into the name and leaves the argument empty — unitless matches unitless
+      for free and the wording is all that is left. `min_Bz_nT` then reduces to "min"
+      alone (the length filter drops `bz` and `nt`, the two parts that identify it), and
+      "min" occurs in "minimum-variance", "30-min medians" and "Sonnerup & Cahill 1967":
+      a citation year was reported as contradicting the minimum Bz.
     """
     low = context.lower()
     best = None
     for entry in entries:
         name = entry.get("name") or ""
-        if not _same_unit(claim_units, entry.get("units") or ""):
+        entry_units = entry.get("units") or ""
+        if not _same_unit(claim_units, entry_units):
             continue
         words = [w for w in re.split(r"[._\s]+", name.lower()) if len(w) > 2]
-        if words and all(w in low for w in words):
+        if not words or (not entry_units and len(words) < 2):
+            continue
+        if all(re.search(rf"\b{re.escape(w)}\b", low) for w in words):
             if best is None or len(name) > len(best.get("name") or ""):
                 best = entry
     return best

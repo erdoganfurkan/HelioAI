@@ -655,3 +655,23 @@ def test_seeding_is_silent_when_the_host_has_no_inventory(tmp_path, monkeypatch)
     home.mkdir()
     _seed_speasy_inventory(str(home))  # must not raise
     assert not (home / ".local" / "share" / "speasy").exists()
+
+
+async def test_speasy_is_not_imported_until_it_is_used() -> None:
+    """The preamble imported speasy at every spawn, so `print("hello")` needed CDAWeb.
+
+    That is the structural reason 23 sandbox tests cascaded into timeouts on one slow
+    CI runner (2026-08-13) and the same shape as the 2026-07-17 incident. Asserting on
+    sys.modules rather than on elapsed time keeps this deterministic on a loaded runner
+    — the exact condition that made the old failure look like a code regression.
+    """
+    result = await run_python("import sys; print('speasy' in sys.modules)")
+    assert result.get("error") is None
+    assert result["stdout"] == "False"
+
+
+async def test_spz_still_resolves_when_actually_touched() -> None:
+    """Laziness must not break the escape hatch: spz.<attr> still reaches speasy."""
+    result = await run_python("print(type(spz.get_data).__name__)")
+    assert result.get("error") is None
+    assert result["stdout"] in {"function", "method"}

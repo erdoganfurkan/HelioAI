@@ -308,10 +308,25 @@ try:
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 
-    try:
-        import speasy as spz
-    except ImportError:
-        spz = None
+    # speasy on first attribute access only. Importing it refreshes an inventory
+    # over the network, so a print("hello") used to depend on CDAWeb being
+    # reachable — that is what cascaded into 23 CI timeouts. The prompts tell the
+    # model to use load_data() rather than spz.get_data, so almost no run pays it.
+    class _LazySpeasy:
+        _mod = None
+
+        def __getattr__(self, name):
+            if _LazySpeasy._mod is None:
+                _out = _sys.stdout
+                _sys.stdout = _io.StringIO()
+                try:
+                    import speasy
+                    _LazySpeasy._mod = speasy
+                finally:
+                    _sys.stdout = _out
+            return getattr(_LazySpeasy._mod, name)
+
+    spz = _LazySpeasy()
 
     try:
         import plasmapy

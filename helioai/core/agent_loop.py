@@ -42,6 +42,7 @@ from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
     _extract_artifact,
     _history_tool_result,
     _summarize_tool_result,
+    check_answer,
     compact_history,
     emit_post_tool_events,
     inject_run_python_args,
@@ -311,6 +312,11 @@ async def stream_chat(
     history = store.get_or_create(user_id, session_id)
     history.append(Message(role="user", content=user_text))
 
+    # What this run exported, kept so the answer can be checked against the recipe shelf
+    # the same way a sub-agent's is. The lead does its own physics often enough that
+    # leaving it unchecked was the hole, not an edge case.
+    run_artifacts: list[dict] = []
+
     existing_dir = store.get_workspace_dir(user_id, session_id)
     if existing_dir:
         _label_token = _ws.set_label(existing_dir)
@@ -369,8 +375,15 @@ async def stream_chat(
                     }
                     yield {"event": "done", "data": {"n_iterations": turn}}
                     return
-                yield {"event": "reply", "data": {"text": response.content}}
-                for ev in _provenance_events(response.content):
+                final_text, bogus, bypassed = check_answer(response.content, history, run_artifacts)
+                yield {"event": "reply", "data": {"text": final_text}}
+                if bogus:
+                    log.warning("lead_invented_ids", ids=bogus)
+                    yield {"event": "invalid_ids", "data": {"ids": bogus}}
+                if bypassed:
+                    log.warning("lead_recipe_bypassed", recipes=bypassed)
+                    yield {"event": "recipe_bypassed", "data": {"recipes": bypassed}}
+                for ev in _provenance_events(final_text):
                     yield ev
                 yield {"event": "done", "data": {"n_iterations": turn}}
                 return
@@ -456,6 +469,8 @@ async def stream_chat(
                     yield {"event": "figure_review", "data": {"turn": turn, "text": figure_verdict}}
 
                 for ev in emit_post_tool_events(tc.name, result, tool_result_extra={"turn": turn}):
+                    if ev["event"] == "artifact":
+                        run_artifacts.append(ev["data"])
                     yield ev
                 if sub_end_event is not None:
                     yield {"event": "sub_agent_end", "data": sub_end_event}

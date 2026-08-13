@@ -329,7 +329,7 @@ def test_correction_names_the_bad_id_and_keeps_the_original_text(fake_index):
     The lead agent must be able to see that its sub-agent was unreliable, and
     guessing a replacement would repeat the original mistake.
     """
-    from helioai.core.sub_agents import _flag_unknown_ids
+    from helioai.core.tool_exec import _flag_unknown_ids
 
     bogus = "csa/C3_PP_CIS/bogus__X"
     out, flagged = _flag_unknown_ids(f"Recommended: {bogus}")
@@ -470,7 +470,7 @@ async def test_unrelated_exports_are_not_flagged(stub_registry):
 
 
 def test_flag_recipe_bypass_keeps_the_original_text():
-    from helioai.core.sub_agents import _flag_recipe_bypass
+    from helioai.core.tool_exec import _flag_recipe_bypass
 
     artifacts = [
         {

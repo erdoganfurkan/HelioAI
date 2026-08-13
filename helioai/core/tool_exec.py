@@ -13,6 +13,7 @@ This module imports neither agent_loop nor sub_agents, so there is no cycle.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -307,3 +308,177 @@ def emit_post_tool_events(
                 turn=tool_result_extra.get("turn"),
             )
         yield {"event": "artifact", "data": {**art, **common_extra}}
+
+
+def _flag_unknown_ids(text: str) -> tuple[str, list[str]]:
+    """Append a correction when an answer quotes parameter ids that do not exist.
+
+    Prompting alone does not stop this. Asked whether to use Cluster onboard
+    moments or prime parameters, a `parameter_hunter` run searched correctly and
+    then spliced two real products into one id that exists in neither:
+    `csa/C3_PP_CIS/...` grafted the CDAWeb prime-parameter dataset onto the CSA
+    onboard-moments path. A confidently wrong id is the most damaging possible
+    answer, so it is checked against the index rather than trusted.
+
+    The wrong ids are left in place and contradicted, not silently rewritten:
+    the reader needs to see that the answer was unreliable, and guessing a
+    replacement would repeat the original mistake.
+
+    Args:
+        text: The finished answer.
+
+    Returns:
+        The text (with a correction appended when needed) and the unknown ids.
+    """
+    from helioai.tools.rag import extract_ids, unknown_ids
+
+    bogus = unknown_ids(extract_ids(text))
+    if not bogus:
+        return text, []
+    listed = "\n".join(f"  - {i}" for i in bogus)
+    return (
+        f"{text}\n\n"
+        f"⚠️ AUTOMATED CORRECTION — the following ids are NOT in the catalogue and "
+        f"must not be used:\n{listed}\n"
+        f"They were not returned by any search. Call `search_parameters` again and "
+        f"copy the ids from its output verbatim.",
+        bogus,
+    )
+
+
+# Words from a recipe's own `# outputs:` header that carry no diagnostic weight — they
+# name the domain, not the specific calibrated quantity, and appear in almost any
+# hand-written stand-in for the same computation regardless of whether it was ever
+# pasted in and called.
+_GENERIC_OUTPUT_WORDS = frozenset({"shock", "speed", "figure", "plot", "table", "array", "printed"})
+
+
+def _exported_names(artifacts: list[dict]) -> set[str]:
+    """Lower-cased names of every value a run actually exported."""
+    return {
+        name.lower()
+        for art in artifacts
+        if art.get("kind") == "exports"
+        for name, stats in (art.get("values") or {}).items()
+        if isinstance(stats, dict) and not stats.get("error")
+    }
+
+
+def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tuple[str, list[dict]]:
+    """Append a note when a run's exports suggest a recipe was skipped, or read but
+    not actually used.
+
+    Provenance checks where a number came from; this checks whether it should have come
+    from a calibrated recipe instead of memory. Both annotate, neither blocks — the same
+    design as `_flag_unknown_ids`.
+
+    Two independent signals, both read from data already in the run's history:
+
+    - **never loaded** — exported values match a recipe's usual vocabulary
+      (`RECIPE_SIGNATURES`), and `load_recipe` was never called for it. Matching against
+      the recipe's OWN export names does not work here: a hand-written Rankine-Hugoniot on
+      the St Patrick 2015 shock exported "density_compression_ratio" and
+      "predicted_RH_compression", not the recipe's "r" / "r_predicted".
+    - **loaded but shallow** — `load_recipe` WAS called, but none of that recipe's own
+      declared outputs (its `# outputs:` header, already sitting in the tool result) show
+      up among what was actually exported. This is the case the first signal misses: on
+      one run, `rankine_hugoniot` and `shock_timing_2sc` were both loaded first, as
+      instructed — and both were then read for their constants and formula shape and
+      reimplemented anyway, with hand-picked averaging windows instead of the recipe's
+      calibrated ones, and none of `transverse_separation_km` / `verdict` /
+      `mom_residual` — the recipe's own consistency checks — ever computed. One task's own
+      code left three inert strings named after the recipes as its only trace of having
+      "used" them.
+
+    Neither signal is proof, and the second under-fires on a recipe whose declared outputs
+    share the field's ordinary vocabulary ("compression ratio", "spacecraft frame") with
+    whatever a hand-written stand-in would also naturally call itself — it catches the
+    recipes with distinctive output names, not all of them.
+
+    Args:
+        text: The finished answer.
+        history: The run's message history, to check which recipes were loaded and
+            read their declared outputs from the matching tool results.
+        artifacts: The run's artifacts, to read what was exported.
+
+    Returns:
+        The text (with a note appended when needed) and the flags raised, each
+        `{"recipe": name, "reason": "not_loaded" | "shallow_use"}`.
+    """
+    from helioai.tools.recipes import RECIPE_SIGNATURES
+
+    loaded_calls: dict[str, str] = {}  # tool_call_id -> recipe name
+    for m in history:
+        for tc in m.tool_calls or []:
+            if tc.name == "load_recipe":
+                name = (tc.arguments or {}).get("name")
+                if name:
+                    loaded_calls[tc.id] = name
+    loaded_names = set(loaded_calls.values())
+
+    exported = _exported_names(artifacts)
+    if not exported:
+        return text, []
+
+    flags: list[dict] = [
+        {"recipe": recipe_name, "reason": "not_loaded"}
+        for recipe_name, signatures in RECIPE_SIGNATURES.items()
+        if recipe_name not in loaded_names
+        and any(sig in name for name in exported for sig in signatures)
+    ]
+
+    tool_results = {m.tool_call_id: m.content for m in history if m.role == "tool"}
+    for call_id, recipe_name in loaded_calls.items():
+        raw = tool_results.get(call_id)
+        if not raw:
+            continue
+        try:
+            outputs_field = (json.loads(raw).get("metadata") or {}).get("outputs", "")
+        except (ValueError, TypeError):
+            continue
+        tokens = {
+            t
+            for t in re.split(r"[^a-z0-9]+", outputs_field.lower())
+            if len(t) > 4 and t not in _GENERIC_OUTPUT_WORDS
+        }
+        if tokens and not any(tok in name for name in exported for tok in tokens):
+            flags.append({"recipe": recipe_name, "reason": "shallow_use"})
+
+    if not flags:
+        return text, []
+
+    lines = [
+        f"  - {f['recipe']}: never loaded"
+        if f["reason"] == "not_loaded"
+        else f"  - {f['recipe']}: loaded, but its declared outputs never appeared in what was exported"
+        for f in flags
+    ]
+    return (
+        f"{text}\n\n"
+        "ℹ️ RECIPE CHECK — these exported values resemble a computation that has a "
+        "calibrated recipe:\n" + "\n".join(lines) + "\n"
+        "Recipes carry calibrated parameters and a self-test that hand-written code does "
+        "not have — verify the numbers above against `load_recipe(name)` (read AND call its "
+        "functions, not just its constants) before trusting them.",
+        flags,
+    )
+
+
+def check_answer(
+    text: str, history: list, artifacts: list[dict]
+) -> tuple[str, list[str], list[dict]]:
+    """Confront a finished answer with the catalogue and the recipe shelf.
+
+    Both loops call this, which is the whole point of it living here. Both checks were
+    written inside the sub-agent loop and stayed there, so a lead agent that did the
+    physics itself — Acts III and IV of the showcase notebook, on a run where
+    `load_recipe` was called zero times all session — was never checked at all. The
+    detectors were not silent because the run was clean; they were silent because
+    nothing called them.
+
+    Returns:
+        The text (annotated when a check fires), the unknown ids, and the recipe flags.
+    """
+    text, bogus = _flag_unknown_ids(text)
+    text, bypassed = _flag_recipe_bypass(text, history, artifacts)
+    return text, bogus, bypassed

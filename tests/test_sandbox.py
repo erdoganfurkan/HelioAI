@@ -602,3 +602,56 @@ export('fill_blanked', magnitude(np.array([[1e31, 1e31, 1e31]])))
     assert ex["gap_is_nan"]["mean"] == 1.0
     assert ex["nansum_idiom_gives_zero"]["mean"] == 0.0, "this is the trap being replaced"
     assert ex["fill_blanked"]["n_finite"] == 0, "1e31 fill must not become a magnitude"
+
+
+def test_a_fresh_sandbox_home_gets_the_hosts_speasy_inventory(tmp_path, monkeypatch):
+    """Regression: a session could burn every run_python without executing user code.
+
+    The sandbox hands each session a new HOME, so speasy found no inventory and
+    rebuilt it — longer than the run timeout, so the spawn was killed mid-build, so
+    the index stayed incomplete, so the next spawn started over. Five run_python calls
+    were lost to it in one Act, including a bare `print("hello")` at 30 s.
+    """
+    from helioai.tools.sandbox import _seed_speasy_inventory
+
+    host = tmp_path / "host"
+    (host / "speasy" / "index").mkdir(parents=True)
+    (host / "speasy" / "index" / "cache.db").write_text("inventory", encoding="utf-8")
+    monkeypatch.setenv("XDG_DATA_HOME", str(host))
+
+    home = tmp_path / "session"
+    home.mkdir()
+    _seed_speasy_inventory(str(home))
+
+    assert (home / ".local" / "share" / "speasy" / "index" / "cache.db").read_text(
+        encoding="utf-8"
+    ) == "inventory"
+
+
+def test_seeding_never_overwrites_an_inventory_the_session_already_built(tmp_path, monkeypatch):
+    """The session's own index is the fresher one; clobbering it would lose its warm state."""
+    from helioai.tools.sandbox import _seed_speasy_inventory
+
+    host = tmp_path / "host"
+    (host / "speasy").mkdir(parents=True)
+    (host / "speasy" / "cache.db").write_text("host", encoding="utf-8")
+    monkeypatch.setenv("XDG_DATA_HOME", str(host))
+
+    home = tmp_path / "session"
+    own = home / ".local" / "share" / "speasy"
+    own.mkdir(parents=True)
+    (own / "cache.db").write_text("session", encoding="utf-8")
+
+    _seed_speasy_inventory(str(home))
+    assert (own / "cache.db").read_text(encoding="utf-8") == "session"
+
+
+def test_seeding_is_silent_when_the_host_has_no_inventory(tmp_path, monkeypatch):
+    """No host inventory is the fresh-install case: pay the rebuild, never raise."""
+    from helioai.tools.sandbox import _seed_speasy_inventory
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "nothing-here"))
+    home = tmp_path / "session"
+    home.mkdir()
+    _seed_speasy_inventory(str(home))  # must not raise
+    assert not (home / ".local" / "share" / "speasy").exists()

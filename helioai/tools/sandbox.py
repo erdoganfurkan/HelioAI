@@ -102,7 +102,44 @@ def _sandbox_env(home: str = "/tmp") -> dict[str, str]:
     # explicitly rather than letting it fall back to a fresh temp directory and
     # rebuild the font cache on every single run.
     env["MPLCONFIGDIR"] = os.path.join(home, ".cache", "matplotlib")
+    # Keeping the inventory fresh is the host's job, not the sandbox's. The copy seeded
+    # by `_seed_speasy_inventory` is only ever as old as the host's own, which speasy
+    # refreshes on its usual cycle outside here; letting each spawn re-validate it over
+    # the network instead costs a round trip per run (11 s against 5 s measured) and
+    # buys nothing, since every session starts from that same copy.
+    env["SPEASY_INVENTORIES_CACHE_RETENTION_DAYS"] = "365"
     return env
+
+
+def _seed_speasy_inventory(home: str) -> None:
+    """Give a fresh sandbox home the speasy inventory the host already built.
+
+    The sandbox hands every session a new HOME, so `XDG_DATA_HOME` is new too, so
+    `import speasy` finds no inventory and rebuilds it — 35 MB fetched from the
+    providers, well past the default run timeout. The spawn is then SIGKILLed
+    mid-build, the index stays incomplete, and the next spawn starts over: a session
+    can burn every one of its `run_python` calls without executing a line of user
+    code. A `print("hello")` timing out at 30 s is what this looks like from outside.
+
+    Copying is deliberate rather than sharing one directory across sessions: the
+    index is a diskcache SQLite that the sandbox must be able to write, and under
+    bwrap only the session's own directory is really on disk (`data_dir` is masked by
+    a tmpfs). A copy needs no new bind mount and no cross-session locking.
+
+    Best-effort by construction — no host inventory, no permission, no space, and the
+    session simply pays the rebuild as before. It must never be the reason a run fails.
+    """
+    src = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share", "speasy")
+    dst = Path(home, ".local", "share", "speasy")
+    if dst.exists() or not src.is_dir():
+        return
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dst)
+    except (OSError, shutil.Error) as e:
+        from helioai.logging_config import get_logger
+
+        get_logger(__name__).debug("speasy_inventory_not_seeded", src=str(src), error=str(e))
 
 
 def _kill_proc_tree(proc: asyncio.subprocess.Process) -> None:
@@ -619,6 +656,7 @@ async def run_python(
 
     try:
         if using_bwrap:
+            _seed_speasy_inventory(plot_dir)
             sandbox_env = _sandbox_env(home=plot_dir)
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import helioai.tools.setup  # noqa: F401 — registers all tools at import time
 from helioai.config import dev_unlock, settings
@@ -77,7 +77,7 @@ app.mount("/static", StaticFiles(directory=_STATIC), name="static")
 
 class _ChatRequest(BaseModel):
     message: str
-    session_id: str
+    session_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     provider: str | None = None
 
 
@@ -285,8 +285,12 @@ async def delete_session(session_id: str, user_id: str = Depends(require_user)):
     wdir = store.get_workspace_dir(user_id, session_id)
     store.reset(user_id, session_id)
     if wdir:
-        ws_path = user_home(user_id) / "workspace" / wdir
-        if ws_path.exists():
+        # Containment, not trust: the label is persisted data, and a row written by
+        # an older build (before session ids were sanitised) would walk this rmtree
+        # straight out of the user's home.
+        ws_root = (user_home(user_id) / "workspace").resolve()
+        ws_path = (ws_root / wdir).resolve()
+        if ws_path.is_relative_to(ws_root) and ws_path.exists():
             shutil.rmtree(ws_path, ignore_errors=True)
     return {"deleted": session_id}
 
@@ -358,8 +362,16 @@ def serve_web(host: str = "127.0.0.1", port: int = 7890) -> None:
     network without putting auth in front of it.
     """
     import uvicorn
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
 
     from helioai.workspace import cleanup_old_runs
 
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        # A loopback bind is not a boundary: any web page can resolve its own
+        # domain to 127.0.0.1 and reach this server (DNS rebinding). Pinning Host
+        # costs nothing here and CORS does not cover it.
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
+    else:
+        log.warning("web_exposed_beyond_loopback", host=host)
     cleanup_old_runs()
     uvicorn.run(app, host=host, port=port)

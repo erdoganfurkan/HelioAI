@@ -512,12 +512,12 @@ def export_session_notebook(user_id: str, session_id: str, out_path: Path | None
     nb = build_notebook(user_id, session_id)
 
     if out_path is None:
-        from helioai.workspace import user_home
+        from helioai.workspace import safe_id, user_home
 
         label = store.get_workspace_dir(user_id, session_id) or session_id
         root = user_home(user_id) / "workspace"
         root.mkdir(parents=True, exist_ok=True)
-        out_path = root / f"{label}.ipynb"
+        out_path = root / f"{safe_id(label)}.ipynb"
     out_path = Path(out_path)
     nbf.write(nb, str(out_path))
     return out_path

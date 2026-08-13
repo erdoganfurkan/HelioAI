@@ -634,3 +634,39 @@ def test_every_streamed_event_has_a_web_handler():
 
     missing = emitted - handled
     assert not missing, f"events emitted but not rendered in the web UI: {sorted(missing)}"
+
+
+def test_delete_session_cannot_escape_the_user_workspace(web_client, tmp_path, monkeypatch):
+    """DELETE /api/sessions/{id} rmtree'd `<home>/workspace/<label>` with no containment.
+
+    The label is derived from a client-supplied session_id, so `../../..` walked the
+    delete out of the user's home. Sanitising the id closes the front door; this pins
+    the back one, where the label is already-persisted data from an older build.
+    """
+    from helioai.config import settings
+    from helioai.core.llm.base import Message
+    from helioai.interfaces.web.app import store
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    sentinel = tmp_path / "users" / "web" / "catalogs"
+    sentinel.mkdir(parents=True)
+    (sentinel / "keepme.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "users" / "web" / "workspace").mkdir()
+
+    store.save("web", "sess-1", [Message(role="user", content="hi")])
+    store.set_workspace_dir("web", "sess-1", "../catalogs")
+    assert store.get_workspace_dir("web", "sess-1") == "../catalogs", "test would be vacuous"
+
+    r = web_client.delete("/api/sessions/sess-1")
+
+    assert r.status_code == 200
+    assert (sentinel / "keepme.json").exists(), "rmtree escaped the workspace root"
+
+
+def test_chat_stream_rejects_a_traversal_session_id(web_client):
+    """session_id reached the filesystem unvalidated — uuid4 is all we ever mint."""
+    r = web_client.post(
+        "/chat/stream",
+        json={"message": "hello", "session_id": "../../../etc"},
+    )
+    assert r.status_code == 422

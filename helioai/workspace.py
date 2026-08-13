@@ -75,6 +75,19 @@ def reset_label(token: object) -> None:
     _current_label.reset(token)  # type: ignore[arg-type]
 
 
+def safe_id(value: str, fallback: str = "session") -> str:
+    """Reduce an identifier to something that cannot escape its parent directory.
+
+    Session ids are caller-supplied — a web request body, an MCP client, a CLI
+    flag — and end up as path components here, in the export filename, and in the
+    `rmtree` behind `DELETE /api/sessions/{id}`. Everything the project mints is a
+    uuid4, so stripping to `[A-Za-z0-9_-]` is lossless in practice and turns
+    `../..` into the fallback rather than a parent directory.
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "", value)[:64]
+    return cleaned or fallback
+
+
 def make_session_label(first_message: str, session_id: str) -> str:
     """Build a human-readable slug for the session workspace folder.
 
@@ -82,7 +95,7 @@ def make_session_label(first_message: str, session_id: str) -> str:
     """
     words = re.sub(r"[^a-z0-9\s]", "", first_message.lower().strip()).split()
     slug = "-".join(words[:4]) if words else "session"
-    return f"{slug[:25]}_{session_id[:6]}"
+    return f"{slug[:25]}_{safe_id(session_id)[:6]}"
 
 
 def get_session_dir() -> Path:
@@ -93,12 +106,12 @@ def get_session_dir() -> Path:
     """
     label = _current_label.get()
     if label:
-        d = _root() / label
+        d = _root() / safe_id(label)
         d.mkdir(parents=True, exist_ok=True)
         return d
     session_id = _current_session.get()
     if session_id:
-        d = _root() / session_id
+        d = _root() / safe_id(session_id)
         d.mkdir(parents=True, exist_ok=True)
         return d
     return _no_session_dir()

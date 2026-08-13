@@ -15,7 +15,7 @@ import logging
 import re
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 
 from .base import LLMClient, Message, ToolCall, ToolDef, call_with_retry, close_sdk_client
 
@@ -127,22 +127,48 @@ def from_openai_response(response: Any, provider: str = "openai") -> Message:
     Returns:
         The assistant's reply, with `tool_calls` set when the model requested any.
     """
-    msg = response.choices[0].message
-    content = _strip_reasoning(msg.content or "")
+    choice = response.choices[0]
+    msg = choice.message
+    raw_content = msg.content or ""
+    content = _strip_reasoning(raw_content)
     tool_calls_raw = getattr(msg, "tool_calls", None) or []
+    finish_reason = getattr(choice, "finish_reason", None)
+
     if not tool_calls_raw:
+        if not content.strip():
+            # A turn that produced nothing has exactly three causes and they need
+            # different fixes: the budget ran out mid-generation (raise it), the model
+            # spent the whole turn inside <think> and closed with nothing (shorten the
+            # question), or it genuinely returned an empty completion (retry/provider).
+            # The agent loop used to state the first as fact for all three. It is
+            # visible here and nowhere else, so it is recorded here.
+            log.warning(
+                "%s empty completion: finish_reason=%s, %d raw chars, %d after stripping reasoning",
+                provider,
+                finish_reason,
+                len(raw_content),
+                len(content),
+            )
         return Message(role="assistant", content=content)
 
     tool_calls: list[ToolCall] = []
     for tc in tool_calls_raw:
         try:
             args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            # `finish_reason="length"` next to unparseable arguments is not "the model
+            # emits bad JSON" — it is OUR output budget slicing a valid call mid-string.
+            # The two need different fixes (raise max_output_tokens vs distrust the
+            # model), and a log line that cannot tell them apart cost an hour of
+            # diagnosis on a run where six 12k-char run_python calls all "lost" their code.
             log.warning(
-                "%s tool_call %s bad JSON args: %r",
+                "%s tool_call %s args unparseable (finish_reason=%s, %d chars, %s): %r",
                 provider,
                 tc.function.name,
-                tc.function.arguments,
+                finish_reason,
+                len(tc.function.arguments or ""),
+                "output budget truncated the call" if finish_reason == "length" else e,
+                (tc.function.arguments or "")[:200],
             )
             args = {}
         tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
@@ -233,5 +259,31 @@ class OpenAICompatClient(LLMClient):
             kwargs["tools"] = to_openai_tools(tools)
             kwargs["tool_choice"] = tool_choice
 
-        response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
-        return from_openai_response(response, self._provider)
+        try:
+            response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
+        except BadRequestError as e:
+            # Forcing a tool call is a preference, never worth losing the turn over.
+            # DeepSeek v4 in thinking mode rejects `required` outright ("Thinking mode
+            # does not support this tool_choice"), which killed a sub-agent on its very
+            # first turn. Whether a model accepts it depends on the model and its
+            # reasoning mode, not on the provider, so it is asked rather than tabulated.
+            if tool_choice == "auto" or "tool_choice" not in str(e):
+                raise
+            log.warning("tool_choice_rejected_falling_back_to_auto: %s", self._model)
+            kwargs["tool_choice"] = "auto"
+            response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
+
+        reply = from_openai_response(response, self._provider)
+        if not (reply.content or "").strip() and not reply.tool_calls:
+            # A turn with neither text nor a tool call is not an answer, and on a
+            # reasoning model it is not rare either: the whole output allowance can go
+            # into hidden reasoning and leave nothing to emit. It is also transient —
+            # the identical request, replayed, came back with two tool calls in half
+            # the wall time. The loop above treats this as fatal and abandons the
+            # question, so two acts of a six-act notebook were lost to a condition that
+            # one more attempt clears. Retried once, not in a loop: if the second is
+            # empty too, the caller's error is the honest outcome.
+            log.warning("%s empty turn, retrying once: %s", self._provider, self._model)
+            response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
+            reply = from_openai_response(response, self._provider)
+        return reply

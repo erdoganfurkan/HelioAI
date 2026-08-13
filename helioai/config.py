@@ -104,11 +104,18 @@ class OpenCodeConfig:
     `HELIOAI_OPENCODE_MODEL` to the exact id from your dashboard — an empty string
     fails at the API with a clear "unknown model" rather than silently routing to a
     guessed default that may not exist on your plan.
+
+    16384 output tokens because everything this gateway serves is a reasoning model,
+    and reasoning, prose AND tool-call arguments all draw on the same budget. At 4096,
+    DeepSeek v4's run_python calls (~12k chars of JSON once a plot script is in them)
+    were cut mid-string: the model saw "missing 1 required positional argument: 'code'",
+    could not know why, and burned five turns re-sending the same truncated call.
+    Same lesson as Azure's 2048→8192, one provider later.
     """
 
     base_url: str = "https://opencode.ai/zen/go"
     model: str = ""
-    max_output_tokens: int = 4096
+    max_output_tokens: int = 16384
     temperature: float = 0.2
     api_key: str = ""
 

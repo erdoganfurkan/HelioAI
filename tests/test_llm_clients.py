@@ -687,3 +687,72 @@ async def test_a_short_window_is_still_waited_out(slept):
 
     assert await call_with_retry(fn, max_delay=60.0) == "ok"
     assert slept == [14.0]
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_tool_choice_falls_back_to_auto():
+    """DeepSeek v4 in thinking mode 400s on `required`; losing the turn is worse.
+
+    Whether a model accepts a forced tool call depends on the model and its reasoning
+    mode, not on the provider, so the client asks rather than consulting a table.
+    """
+    from openai import BadRequestError
+
+    client, fake = _groq_client()
+
+    class _Resp:
+        status_code = 400
+        headers: dict = {}
+        request = None
+
+        def json(self):
+            return {"error": {"message": "Thinking mode does not support this tool_choice"}}
+
+    async def flaky(**kwargs):
+        fake.completions.calls.append(kwargs)
+        if kwargs.get("tool_choice") == "required":
+            raise BadRequestError(
+                "Thinking mode does not support this tool_choice", response=_Resp(), body=None
+            )
+        return _openai_response(content="ok")
+
+    fake.completions.create = flaky
+    tools = [ToolDef(name="t", description="d", parameters={"type": "object", "properties": {}})]
+    await client.chat([Message(role="user", content="hi")], tools, tool_choice="required")
+
+    assert [c.get("tool_choice") for c in fake.calls] == ["required", "auto"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_turn_is_retried_once():
+    """Neither text nor a tool call is transient on a reasoning model, not an answer.
+
+    The whole output allowance can go into hidden reasoning and leave nothing to emit;
+    the identical request replayed came back with two tool calls. The agent loop treats
+    an empty turn as fatal, so without this the question is abandoned.
+    """
+    client, fake = _groq_client()
+    replies = [_openai_response(content=""), _openai_response(content="second time lucky")]
+
+    async def flaky(**kwargs):
+        fake.completions.calls.append(kwargs)
+        return replies[len(fake.completions.calls) - 1]
+
+    fake.completions.create = flaky
+    msg = await client.chat([Message(role="user", content="hi")], [])
+
+    assert len(fake.calls) == 2, "the empty turn should have been retried"
+    assert msg.content == "second time lucky"
+
+
+@pytest.mark.asyncio
+async def test_a_turn_with_tool_calls_but_no_text_is_not_retried():
+    """Empty content next to a tool call is the normal shape of a working turn."""
+    client, fake = _groq_client()
+    fake.completions.response = _openai_response(
+        content="", tool_calls=[("c1", "search_parameters", '{"queries": ["x"]}')]
+    )
+    msg = await client.chat([Message(role="user", content="hi")], [])
+
+    assert len(fake.calls) == 1, "a tool call is an answer; retrying would double the work"
+    assert [t.name for t in msg.tool_calls] == ["search_parameters"]

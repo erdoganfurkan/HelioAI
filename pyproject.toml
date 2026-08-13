@@ -68,7 +68,6 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
     "ruff>=0.4",
-    "httpx2>=0.28",
 ]
 
 [tool.uv]

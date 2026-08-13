@@ -3,7 +3,6 @@
 Usage:
     helioai index           # incremental (skip existing)
     helioai index --rebuild # wipe and rebuild
-    python indexer.py       # direct call from repo root
 """
 
 from __future__ import annotations

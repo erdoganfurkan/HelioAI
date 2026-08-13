@@ -675,3 +675,30 @@ async def test_spz_still_resolves_when_actually_touched() -> None:
     result = await run_python("print(type(spz.get_data).__name__)")
     assert result.get("error") is None
     assert result["stdout"] in {"function", "method"}
+
+
+def test_reports_when_the_fallback_path_isolates_nothing(monkeypatch):
+    """_drop_privileges swallows its failure in the forked child, where it must.
+
+    The consequence was that a host with neither bubblewrap nor root ran
+    model-written code as the server, with nothing said anywhere. The condition is
+    knowable in the parent, so it is asserted in the parent.
+    """
+    import helioai.tools.sandbox as sb
+
+    monkeypatch.setattr(sb.os, "geteuid", lambda: 1000)
+    assert "not root" in (sb._isolation_gap() or "")
+
+
+def test_the_isolation_warning_is_said_once_not_per_run(monkeypatch):
+    """Every run_python on a dev box takes this path — a per-run warning is noise."""
+    import helioai.tools.sandbox as sb
+
+    monkeypatch.setattr(sb.os, "geteuid", lambda: 1000)
+    sb._warn_if_not_isolated.cache_clear()
+    try:
+        for _ in range(3):
+            sb._warn_if_not_isolated()
+        assert sb._warn_if_not_isolated.cache_info().misses == 1
+    finally:
+        sb._warn_if_not_isolated.cache_clear()

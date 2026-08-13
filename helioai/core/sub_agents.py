@@ -19,6 +19,7 @@ from helioai.core.llm.base import LLMClient, Message, ToolDef
 from helioai.core.skills_loader import SkillError
 from helioai.core.skills_loader import load_skill as load_skill_body
 from helioai.core.tool_exec import (
+    _history_tool_result,
     check_answer,
     compact_history,
     emit_post_tool_events,
@@ -431,7 +432,13 @@ async def stream_subagent(
                         )
                     yield ev
 
-                history.append(Message(role="tool", tool_call_id=tc.id, content=result))
+                history.append(
+                    Message(
+                        role="tool",
+                        tool_call_id=tc.id,
+                        content=_history_tool_result(tc.name, result),
+                    )
+                )
         else:
             capped = True
             final_text = f"(sub-agent {role!r} reached its {role_cfg.max_turns}-turn cap)"

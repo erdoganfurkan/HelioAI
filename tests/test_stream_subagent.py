@@ -525,3 +525,36 @@ def test_inventory_is_a_noop_without_a_manifest(tmp_path, monkeypatch):
         assert _with_inventory("Do the thing.") == "Do the thing."
     finally:
         ws.reset_label(tok)
+
+
+async def test_heavy_tool_results_are_truncated_in_sub_agent_history(stub_registry):
+    """The lead summarised heavy tools before storing them; the sub-agent did not.
+
+    agent_loop went through _history_tool_result, sub_agents appended the raw string —
+    so a catalog preview or an SEA flooded the sub-agent's context verbatim, on the
+    loop with the *smaller* turn budget. Same shared-mechanism lesson as check_answer:
+    the truncation lives in tool_exec and both loops must consume it.
+    """
+    _, results = stub_registry
+    results["get_events_timeseries"] = "x" * 20_000
+
+    llm = ScriptedLLM([calls("get_events_timeseries"), text("done")])
+    await drain(**base(llm, role="data_analyst", description="stack the events"))
+
+    second_turn = llm.calls[1]["messages"]
+    tool_msgs = [m for m in second_turn if m.role == "tool"]
+    assert tool_msgs, "the tool result never reached the history"
+    assert len(tool_msgs[0].content) < 2_000, "heavy tool result stored verbatim"
+
+
+async def test_ordinary_tool_results_still_reach_the_sub_agent_verbatim(stub_registry):
+    """Truncating search_parameters would hide the candidates it exists to show."""
+    _, results = stub_registry
+    payload = json.dumps({"results": [{"id": f"cda/DS_{i}/param"} for i in range(80)]})
+    results["search_parameters"] = payload
+
+    llm = ScriptedLLM([calls("search_parameters"), text("done")])
+    await drain(**base(llm, role="parameter_hunter"))
+
+    tool_msgs = [m for m in llm.calls[1]["messages"] if m.role == "tool"]
+    assert tool_msgs[0].content == payload

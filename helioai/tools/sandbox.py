@@ -22,6 +22,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+from functools import lru_cache
 from pathlib import Path
 
 _MAX_TIMEOUT_S = 300.0  # hard ceiling regardless of the caller-supplied timeout
@@ -252,6 +253,44 @@ def _drop_privileges() -> None:
         os.setuid(nb.pw_uid)
     except Exception:
         pass
+
+
+def _isolation_gap() -> str | None:
+    """Why the fallback path will not drop privileges, or None if it will.
+
+    Separate from the warning so it can be asserted on directly: whether a log line
+    lands in stdout, stderr or the stdlib capture depends on who configured logging
+    first, which is not what this needs to be right about.
+    """
+    if not hasattr(os, "geteuid"):
+        return "no POSIX privilege model on this platform"
+    if os.geteuid() != 0:
+        return "server is not root, so setuid in the child cannot succeed"
+    try:
+        import pwd
+
+        pwd.getpwnam("helioai-sandbox")
+    except KeyError:
+        return "user 'helioai-sandbox' does not exist"
+    return None
+
+
+@lru_cache(maxsize=1)
+def _warn_if_not_isolated() -> None:
+    """Say once, in the parent, that the fallback path isolates nothing.
+
+    `_drop_privileges` runs in the forked child via preexec_fn — it cannot log
+    (structlog after fork, before exec) and it swallows its own failure, which is
+    correct there and invisible everywhere else. So a host without bubblewrap and
+    without root ran model-written code under the server's own uid, silently. The
+    condition is knowable before the spawn, so it is checked before the spawn.
+    """
+    reason = _isolation_gap()
+    if reason is None:
+        return
+    from helioai.logging_config import get_logger
+
+    get_logger(__name__).warning("sandbox_not_isolated", reason=reason, remedy="install bubblewrap")
 
 
 def _set_subprocess_limits() -> None:
@@ -681,6 +720,7 @@ async def run_python(
                 start_new_session=True,
             )
         else:
+            _warn_if_not_isolated()
             sandbox_env = _sandbox_env()
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

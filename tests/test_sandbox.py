@@ -702,3 +702,34 @@ def test_the_isolation_warning_is_said_once_not_per_run(monkeypatch):
         assert sb._warn_if_not_isolated.cache_info().misses == 1
     finally:
         sb._warn_if_not_isolated.cache_clear()
+
+
+def test_the_fallback_warns_even_when_privileges_do_drop(monkeypatch):
+    """Reaching the fallback means no bwrap, so no filesystem isolation — say it.
+
+    The Docker image is precisely this case: root, with the helioai-sandbox user
+    present, so the privilege drop works and the earlier version of this warning
+    stayed silent about the isolation that is missing.
+    """
+    import helioai.logging_config as lc
+    import helioai.tools.sandbox as sb
+
+    monkeypatch.setattr(sb, "_isolation_gap", lambda: None)
+    said = []
+
+    class _Rec:
+        def warning(self, event, **kw):
+            said.append((event, kw))
+
+    monkeypatch.setattr(lc, "get_logger", lambda _n: _Rec())
+
+    sb._warn_if_not_isolated.cache_clear()
+    try:
+        sb._warn_if_not_isolated()
+    finally:
+        sb._warn_if_not_isolated.cache_clear()
+
+    assert said, "the fallback path said nothing at all"
+    event, kw = said[0]
+    assert event == "sandbox_not_isolated"
+    assert "filesystem isolation" in kw["detail"]

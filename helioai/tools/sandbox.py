@@ -279,18 +279,24 @@ def _isolation_gap() -> str | None:
 def _warn_if_not_isolated() -> None:
     """Say once, in the parent, that the fallback path isolates nothing.
 
-    `_drop_privileges` runs in the forked child via preexec_fn — it cannot log
+    Reaching this function already means bwrap is unavailable or non-functional, so
+    generated code has no filesystem isolation whatever the privilege drop does —
+    that is worth saying even when the drop succeeds, which is exactly the Docker
+    case (root plus the helioai-sandbox user, and nothing else).
+
+    `_drop_privileges` itself runs in the forked child via preexec_fn — it cannot log
     (structlog after fork, before exec) and it swallows its own failure, which is
-    correct there and invisible everywhere else. So a host without bubblewrap and
-    without root ran model-written code under the server's own uid, silently. The
-    condition is knowable before the spawn, so it is checked before the spawn.
+    correct there and invisible everywhere else. The condition is knowable before the
+    spawn, so it is checked before the spawn.
     """
-    reason = _isolation_gap()
-    if reason is None:
-        return
     from helioai.logging_config import get_logger
 
-    get_logger(__name__).warning("sandbox_not_isolated", reason=reason, remedy="install bubblewrap")
+    get_logger(__name__).warning(
+        "sandbox_not_isolated",
+        detail="bubblewrap unavailable: generated code has no filesystem isolation",
+        privileges=_isolation_gap() or "dropped to helioai-sandbox",
+        remedy="install bubblewrap",
+    )
 
 
 def _set_subprocess_limits() -> None:

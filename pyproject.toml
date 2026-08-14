@@ -37,7 +37,7 @@ dependencies = [
     # client lost `streamablehttp_client(headers=...)` and its 3-tuple yield, and
     # the server lost the @server.list_tools()/@server.call_tool() decorators
     # entirely. PHEP 3 allows an upper bound when genuinely necessary; migrating
-    # mcp_server.py is tracked separately and this cap comes off with it.
+    # mcp_server.py is tracked in issue #1 and this cap comes off with it.
     "mcp>=1.0,<2",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",

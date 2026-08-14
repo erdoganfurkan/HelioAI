@@ -34,7 +34,7 @@ No API key required for data access. No manual parameter hunting.
 - **PlasmaPy tools** — plasma β, gyrofrequency, Debye length, Alfvén speed, inertial length, power spectrum — ready-made for the agent.
 - **Sandboxed Python** — the agent writes and runs analysis code under bubblewrap isolation on Linux (see SECURITY.md). All scripts are saved for reproducibility.
 - **6 specialised skills** — `parameter_hunter`, `data_analyst`, `plasma_physicist`, `librarian`, `plotting`, `helioai_helper` — loaded as markdown, zero coupling to the agent loop.
-- **Derived recipes** — 9 reusable scientific scripts, each with a cited reference: θ_Bn, Walén test, MVAB, Rankine-Hugoniot jump conditions, pressure balance, pitch angle distribution, superposed epoch, SEP onset (Poisson-CUSUM), Parker spiral connectivity.
+- **Derived recipes** — 10 reusable scientific scripts, each with a cited reference: θ_Bn, Walén test, MVAB, Rankine-Hugoniot jump conditions, two-spacecraft shock timing, pressure balance, pitch angle distribution, superposed epoch, SEP onset (Poisson-CUSUM), Parker spiral connectivity.
 - **Literature search** — `find_papers` queries NASA ADS for papers relevant to an event or parameter; a dedicated `librarian` sub-agent handles multi-round literature searches without derailing the main analysis.
 - **Fill value masking** — `clean()` helper in the sandbox automatically masks CDF fill values (`|x| ≥ 1e30`, `±inf`) before any plot or analysis.
 - **Data quality checks** — every `get_timeseries` download is scanned (deterministically, no LLM) for missing/fill values, data gaps, and 5σ outliers; the agent flags them only when they matter, so you know what you're working with *before* analysis.
@@ -267,7 +267,7 @@ helioai/
 │   ├── tool_exec.py            shared tool execution logic
 │   ├── session.py              SQLite conversation history
 │   ├── skills_loader.py        markdown skill loader
-│   ├── skills/                 5 × SKILL.md
+│   ├── skills/                 6 × SKILL.md
 │   └── llm/                    groq · gemini · azure · ollama + factory
 ├── tools/
 │   ├── rag.py                  hybrid BM25+dense RAG (RRF fusion)
@@ -291,9 +291,9 @@ helioai/
 
 ```bash
 uv sync --extra dev
-uv run pytest                          # 627 tests, 77% coverage (no exclusions)
-uv run ruff check helioai/ tests/      # lint
-uv run ruff format helioai/ tests/     # format
+.venv/bin/python -m pytest             # 797 tests, 80% coverage (no exclusions)
+.venv/bin/python -m ruff check .       # lint
+.venv/bin/python -m ruff format .      # format
 ```
 
 Pre-commit hooks (ruff + trailing-whitespace):
@@ -306,10 +306,10 @@ pre-commit install
 
 ## Roadmap
 
-- [x] CI/CD — GitHub Actions (lint + test matrix Python 3.11/3.12)
+- [x] CI/CD — GitHub Actions (lint + test matrix Python 3.12/3.13/3.14)
 - [x] Docker — `helioai serve --web` in a container (`docker/`)
+- [x] PyPI release — `pip install helioai-agent`
 - [ ] JOSS paper
-- [ ] PyPI release
 
 ---
 

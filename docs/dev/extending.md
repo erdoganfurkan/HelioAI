@@ -94,9 +94,9 @@ that needs more than a handful of turns is usually two roles.
 ## Before you open a PR
 
 ```bash
-uv run ruff format .
-uv run ruff check .
-uv run pytest
+.venv/bin/python -m ruff format .
+.venv/bin/python -m ruff check .
+.venv/bin/python -m pytest
 ```
 
 Every behaviour change needs a test, and tests use real objects where practical — a real

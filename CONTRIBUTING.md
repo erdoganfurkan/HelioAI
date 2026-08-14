@@ -28,9 +28,13 @@ uv run helioai index
 ## Running the tests
 
 ```bash
-uv run pytest                      # full suite
-uv run pytest tests/test_rag.py -v # one module
+.venv/bin/python -m pytest                      # full suite
+.venv/bin/python -m pytest tests/test_rag.py -v # one module
 ```
+
+Call the interpreter in `.venv/` directly rather than `uv run pytest`: `uv run`
+re-syncs the environment first, which pulls the multi-gigabyte CUDA build of
+torch behind `sentence-transformers`.
 
 Note that `uv sync --extra X` *purges* extras that are not listed, so always
 combine them: `uv sync --extra dev --extra solarmach`. Otherwise pytest

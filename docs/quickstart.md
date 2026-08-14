@@ -76,7 +76,7 @@ See [Reproducible export](guide/export.md) for what is rewritten and why.
 
 Two example notebooks live in
 [`examples/`](https://github.com/erdoganfurkan/HelioAI/tree/main/examples):
-a guided Jupyter tour, and the 2003 Halloween storm worked end to end. They ship without
+a guided Jupyter tour, and the 2015 St. Patrick's Day storm worked end to end. They ship without
 outputs on purpose — run them and produce your own.
 
 ## Where to next

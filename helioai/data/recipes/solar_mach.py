@@ -9,7 +9,7 @@
 Standard community figure for SEP / CME multi-spacecraft studies: positions of
 the selected observers, their Parker spiral field lines and the longitude of
 their solar magnetic footpoint. Requires the optional `solarmach` package
-(heavy sunpy stack) — install with `pip install "helioai[solarmach]"`.
+(heavy sunpy stack) — install with `pip install "helioai-agent[solarmach]"`.
 
 Usage inside run_python:
     date = "2021-10-28T15:15:00"
@@ -30,7 +30,7 @@ vsw = globals().get("vsw", [400] * len(bodies))
 if SolarMACH is None:
     print(
         "solarmach is not installed in this environment. "
-        'Install the optional extra: pip install "helioai[solarmach]" (or: uv add solarmach), '
+        'Install the optional extra: pip install "helioai-agent[solarmach]" (or: uv add solarmach), '
         "then re-run this recipe."
     )
 else:

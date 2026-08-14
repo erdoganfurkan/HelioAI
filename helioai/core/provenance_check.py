@@ -57,6 +57,14 @@ class Claim:
 
 @dataclass
 class Report:
+    """Tally of how the numbers in an answer relate to the provenance ledger.
+
+    A number is `matched` when a ledger entry backs it, `contradicted` when an
+    entry with the same name and unit holds a different value, `derived` when
+    the answer states the calculation behind it, and `unsourced` otherwise.
+    `details` carries one dict per number, for display.
+    """
+
     matched: int = 0
     contradicted: int = 0
     derived: int = 0
@@ -64,6 +72,12 @@ class Report:
     details: list[dict] = field(default_factory=list)
 
     def as_event(self) -> dict:
+        """Flatten the tally into the `provenance` SSE event payload.
+
+        Example:
+            >>> Report(matched=3, derived=1).as_event()
+            {'matched': 3, 'contradicted': 0, 'derived': 1, 'unsourced': 0, ...}
+        """
         return {
             "matched": self.matched,
             "contradicted": self.contradicted,

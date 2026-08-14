@@ -68,6 +68,14 @@ class SessionStore:
     Histories are cached in memory per key and written back whole on `save`.
     Tests use a real database on `tmp_path` rather than a mock: a mocked store
     passed happily through a schema migration that broke production.
+
+    Example:
+        >>> store = SessionStore(tmp_path / "sessions.db")
+        >>> history = store.get_or_create("cli", "sess-1")   # [] on first call
+        >>> history.append(Message(role="user", content="hello"))
+        >>> store.save("cli", "sess-1", history)
+        >>> store.get_or_create("cli", "sess-1")[0].role
+        'user'
     """
 
     def __init__(self, db_path: Path = DEFAULT_DB) -> None:

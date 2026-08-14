@@ -42,6 +42,11 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
 
     Raises:
         RuntimeError: If the provider is unknown or its API key is missing.
+
+    Example:
+        >>> llm = build_llm_client("groq")
+        >>> type(llm).__name__
+        'OpenAICompatClient'
     """
     p = (provider or settings.llm.provider).lower()
 

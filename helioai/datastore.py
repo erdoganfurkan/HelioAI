@@ -39,6 +39,10 @@ def fill_mask(values, fillval: float | list | None = None):
             `float(fillval)` on it raises. Compared with rtol=1e-6 to survive a
             float32 round-trip while staying far tighter than the ~1% gap to real
             nearby values.
+
+    Example:
+        >>> fill_mask(np.array([1.2, -1e31, 3.4]), [-1e31]).tolist()
+        [False, True, False]
     """
     import numpy as np
 
@@ -64,6 +68,11 @@ def blank_fill(values, fillval=None):
 
     Non-numeric parameters (string labels, epochs) have no fill convention and are
     passed through untouched.
+
+    Example:
+        >>> vals, mask = blank_fill(np.array([1.2, -1e31, 3.4]), [-1e31])
+        >>> vals.tolist(), mask.tolist()
+        ([1.2, nan, 3.4], [False, True, False])
     """
     import numpy as np
 
@@ -122,7 +131,15 @@ def _write_manifest_file(data_dir: Path, manifest: dict) -> None:
 
 
 def read_manifest(session_dir: Path) -> dict:
-    """Return the manifest dict for a given session directory."""
+    """Return the manifest dict for a given session directory.
+
+    Args:
+        session_dir: A session workspace directory (contains `data/`).
+
+    Returns:
+        {"datasets": {name: {kind, param_id, start, stop, ...}}} — empty
+        datasets dict when no manifest exists.
+    """
     return _read_manifest_file(session_dir / DATA_SUBDIR)
 
 
@@ -183,7 +200,23 @@ def save_timeseries(
     columns,
     source: str,
 ) -> dict | None:
-    """Persist a timeseries download. Returns {"dataset": name} or None on failure."""
+    """Persist a timeseries download as npz + a manifest entry.
+
+    Args:
+        name_hint: Basis for the dataset name (slugged, collision-suffixed).
+        time (array-like): Time axis as returned by speasy.
+        values (numpy.ndarray): Data array (fill already blanked).
+        param_id: Speasy id, recorded in the manifest for the export rewrite.
+        units: Physical units string.
+        start: ISO window start, recorded for the export rewrite.
+        stop: ISO window stop.
+        columns (list[str]): Component names.
+        source: Which tool produced the download.
+
+    Returns:
+        {"dataset": <final name>} to reference in `load_data()`, or None when
+        persisting failed (the download result is still usable in-memory).
+    """
     try:
         import time as _time
 

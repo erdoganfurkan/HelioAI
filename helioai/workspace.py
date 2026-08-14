@@ -45,7 +45,12 @@ def _users_root() -> Path:
 
 
 def user_home(user: str) -> Path:
-    """A user's private storage home: <data>/users/<user>/ (not created here)."""
+    """A user's private storage home: <data>/users/<user>/ (not created here).
+
+    Example:
+        >>> user_home("cli")
+        PosixPath('.../data/users/cli')
+    """
     return _users_root() / user
 
 
@@ -83,6 +88,10 @@ def safe_id(value: str, fallback: str = "session") -> str:
     `rmtree` behind `DELETE /api/sessions/{id}`. Everything the project mints is a
     uuid4, so stripping to `[A-Za-z0-9_-]` is lossless in practice and turns
     `../..` into the fallback rather than a parent directory.
+
+    Example:
+        >>> safe_id("../../etc/passwd"), safe_id("sess-abc-123456")
+        ('etcpasswd', 'sess-abc-123456')
     """
     cleaned = re.sub(r"[^A-Za-z0-9_-]", "", value)[:64]
     return cleaned or fallback

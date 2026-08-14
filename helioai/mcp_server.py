@@ -45,7 +45,14 @@ def _init_options() -> InitializationOptions:
 
 
 async def serve_stdio() -> None:
-    """Run the MCP server over stdio, for clients like Claude Desktop."""
+    """Run the MCP server over stdio, for clients like Claude Desktop.
+
+    Blocks until the client closes the pipe. All 17 registry tools are exposed.
+
+    Example:
+        Claude Desktop config: {"command": "helioai-mcp"} — stdio is the default
+        transport, no flags needed.
+    """
     from mcp.server.stdio import stdio_server
 
     async with stdio_server() as (read, write):
@@ -53,7 +60,11 @@ async def serve_stdio() -> None:
 
 
 def build_http_app():
-    """Build the streamable-HTTP ASGI app exposing the MCP server."""
+    """Build the streamable-HTTP ASGI app exposing the MCP server.
+
+    Returns a Starlette app mounting the MCP session manager at `/mcp`,
+    suitable for any ASGI server (`serve_http` wraps it in uvicorn).
+    """
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
     from starlette.routing import Mount
@@ -69,7 +80,13 @@ def build_http_app():
 
 
 def serve_http(host: str, port: int) -> None:
-    """Run the MCP server over streamable HTTP."""
+    """Run the MCP server over streamable HTTP.
+
+    Args:
+        host: Bind address. Anything but loopback logs a warning — `run_python`
+            would be reachable from that network without authentication.
+        port: TCP port.
+    """
     import uvicorn
 
     uvicorn.run(build_http_app(), host=host, port=port)
@@ -83,7 +100,12 @@ def _arg(args: list[str], flag: str, default: str) -> str:
 
 
 def main() -> None:
-    """Entry point for the `helioai-mcp` command."""
+    """Entry point for the `helioai-mcp` command.
+
+    Example:
+        helioai-mcp                        # stdio (Claude Desktop, claude CLI)
+        helioai-mcp --http --port 8765     # streamable HTTP on 127.0.0.1:8765
+    """
     setup_logging("WARNING")
     args = sys.argv[1:]
     if "--http" in args:

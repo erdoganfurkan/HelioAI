@@ -161,7 +161,23 @@ def _is_dataset_node(child_vars: dict, provider_prefix: str) -> bool:
 
 
 def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = True) -> int:
-    """Walk the speasy inventory and index all parameters into ChromaDB."""
+    """Walk the speasy inventory and index all parameters into ChromaDB.
+
+    Backs `helioai index` and must run once before `search_parameters` works;
+    the index persists under `settings.rag.chroma_dir`.
+
+    Args:
+        rebuild: Drop and re-create the collection instead of appending.
+        batch_size: Documents per ChromaDB insert.
+        verbose: Print per-provider progress to stdout.
+
+    Returns:
+        Number of parameters indexed (0 when speasy or chromadb is missing).
+
+    Example:
+        >>> build_index(rebuild=True)   # equivalent to: helioai index --rebuild
+        82433
+    """
     try:
         import chromadb
         import speasy as spz

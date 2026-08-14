@@ -32,6 +32,11 @@ def transform_coords(time, vectors, frm: str = "gse", to: str = "gsm") -> np.nda
     time: ISO string(s), datetime(s), numpy datetime64 or epoch seconds (UTC);
     vectors: shape (3,) or (N, 3). Returns the same shape.
     Per-point geopack.recalc — fine up to ~1e4 points.
+
+    Example:
+        >>> t = np.array(["2015-03-17T04:00:00"], dtype="datetime64[s]")
+        >>> transform_coords(t, np.array([[10.0, 0.0, 0.0]]), "gse", "gsm")
+        array([[10., 0., 0.]])   # the X axis is shared by GSE and GSM
     """
     from geopack import geopack as gp
 
@@ -81,6 +86,11 @@ def mp_shue1998(pdyn_nPa: float, bz_nT: float, theta_deg=None):
     Returns (theta_deg, r_RE); theta defaults to 0..170 deg. theta is the
     angle from the Earth-Sun line, r in Earth radii (aberrated GSE).
     Reference: Shue et al. (1998), JGR 103, 17691, doi:10.1029/98JA01103.
+
+    Example:
+        >>> theta, r = mp_shue1998(2.0, -5.0)   # Pdyn=2 nPa, Bz=-5 nT
+        >>> round(float(r[0]), 2), round(float(r[90]), 2)
+        (9.81, 15.13)                            # standoff and flank, in R_E
     """
     theta = (
         np.linspace(0.0, 170.0, 171)
@@ -101,6 +111,11 @@ def bs_jelinek2012(pdyn_nPa: float, theta_deg=None):
     (theta_deg, r_RE) with NaN where the parabola has no solution.
     theta defaults to 0..120 deg.
     Reference: Jelinek et al. (2012), JGR 117, A05208, doi:10.1029/2011JA017252.
+
+    Example:
+        >>> theta, r = bs_jelinek2012(2.0)   # Pdyn=2 nPa
+        >>> round(float(r[0]), 2)
+        13.51                                 # subsolar standoff, in R_E
     """
     theta = (
         np.linspace(0.0, 120.0, 121)

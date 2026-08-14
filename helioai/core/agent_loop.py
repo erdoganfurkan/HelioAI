@@ -303,7 +303,34 @@ async def stream_chat(
     *,
     restricted: bool = True,
 ) -> AsyncIterator[dict]:
-    """Async generator core of the agent loop."""
+    """Run one conversational turn of the agent and stream its progress as events.
+
+    This is the package's central API: every interface (CLI, web SSE, Jupyter,
+    MCP) is a consumer of this generator. History is loaded from and persisted
+    to the session store keyed by (user_id, session_id), so consecutive calls
+    with the same ids continue the same conversation.
+
+    Args:
+        llm_client: Provider client from `build_llm_client()`.
+        user_id: Storage namespace — workspaces and profiles live under it.
+        session_id: Conversation id; reuse it to continue, mint one to start fresh.
+        user_text: The user's message for this turn.
+        restricted: True (default) appends the heliophysics scope guardrail;
+            False (dev token) exposes the base prompt only.
+
+    Yields:
+        Dicts with an `"event"` key, one of: `reply` (streamed answer text),
+        `tool_call` / `tool_result`, `artifact` (figure, parameter card, code),
+        `plan`, `sub_agent_start` / `sub_agent_end`, `skill_loaded`,
+        `figure_review`, `provenance`, `invalid_ids`, `recipe_bypassed`,
+        `error`, and finally `done`.
+
+    Example:
+        >>> llm = build_llm_client()
+        >>> async for ev in stream_chat(llm, "cli", "my-session", "IMF Bz at L1 today?"):
+        ...     if ev["event"] == "reply":
+        ...         print(ev["text"], end="")
+    """
     import helioai.workspace as _ws
 
     _ws_token = _ws.set_session(session_id)
@@ -525,7 +552,22 @@ async def chat(
     *,
     restricted: bool = True,
 ) -> ChatResult:
-    """Non-streaming consumer of stream_chat."""
+    """Run one agent turn to completion and return the final result.
+
+    Non-streaming wrapper over `stream_chat` — same arguments, same session
+    semantics — for callers that want the answer, not the progress feed
+    (Jupyter magic, scripts, tests).
+
+    Returns:
+        ChatResult with `reply` (final text), `n_iterations` (LLM turns used),
+        `artifacts` (figures, parameter cards, code) and `events` (full trace).
+
+    Example:
+        >>> result = await chat(build_llm_client(), "cli", "my-session",
+        ...                     "Plasma beta for B=5 nT, n=10 cm^-3, T=20 eV?")
+        >>> print(result.reply)        # final assistant text (model-dependent)
+        >>> len(result.artifacts)      # figures / parameter cards / code produced
+    """
     artifacts: list[dict] = []
     events: list[dict] = []
     reply = ""

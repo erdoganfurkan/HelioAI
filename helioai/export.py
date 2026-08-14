@@ -293,6 +293,19 @@ def to_standalone(code_src: str, manifest: dict, *, with_header: bool = True) ->
     Strips agent-only calls, rewrites load_data() → spz.get_data(), and (unless
     embedded in a notebook that already has a setup cell) prepends the imports
     plus real clean()/export() helpers it needs.
+
+    Args:
+        code_src: A `code_N.py` saved by the sandbox.
+        manifest: The session manifest from `read_manifest()` — provides the
+            param_id and window behind each `load_data()` name.
+        with_header: Prepend the standalone imports/helpers header.
+
+    Example:
+        >>> manifest = {"datasets": {"imf_gsm": {"kind": "timeseries",
+        ...     "param_id": "amda/imf_gsm", "start": "2005-01-17", "stop": "2005-01-18"}}}
+        >>> to_standalone('d = load_data("imf_gsm")\\nparam_card(d, "amda/imf_gsm")\\n',
+        ...               manifest, with_header=False)
+        'd = spz.get_data("amda/imf_gsm", "2005-01-17", "2005-01-18")'
     """
     body = _strip_known_imports(
         _rewrite_load_data_calls(_strip_agent_only_calls(code_src), manifest)

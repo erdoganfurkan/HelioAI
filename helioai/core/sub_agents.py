@@ -511,7 +511,23 @@ async def run_subagent(
     llm_client: LLMClient,
     task_id: str | None = None,
 ) -> SubAgentResult:
-    """Backward-compat wrapper — consumes stream_subagent and returns SubAgentResult."""
+    """Run a sub-agent to completion and return only its outcome.
+
+    Non-streaming wrapper over `stream_subagent` — same arguments.
+
+    Args:
+        role: One of the whitelisted roles (parameter_hunter, data_analyst,
+            plasma_physicist, librarian).
+        description: The task handed to the sub-agent, in natural language.
+        parent_session_id: The lead conversation this run belongs to.
+        user_id: Storage namespace of that conversation.
+        llm_client: Provider client shared with the lead.
+        task_id: Optional id echoed in events, for UI correlation.
+
+    Returns:
+        SubAgentResult — `summary` (full final text), `artifacts`,
+        `n_iterations`, and `error` (set when the run failed or hit its cap).
+    """
     async for ev in stream_subagent(
         role=role,
         description=description,

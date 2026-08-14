@@ -506,6 +506,19 @@ def search_batch(
     multi-vector ChromaDB query (Chroma returns one result set per query
     natively), then fuses each independently. Returns one result list per input
     query, aligned by index (blank queries map to []).
+
+    Args:
+        queries: One free-text query per parameter to resolve.
+        top_k: Results per query.
+        provider: Same filter as `search()`.
+        region: Same filter as `search()`.
+        measurement_type: Same filter as `search()`.
+
+    Example:
+        >>> ace, wind = search_batch(["ACE solar wind proton density",
+        ...                           "Wind magnetic field GSE"], top_k=3)
+        >>> ace[0].get("id"), wind[0].get("id")
+        ('cda/AC_H2_SWE/Np', 'cda/WI_H0_MFI/BGSEa')
     """
     results: list[list[dict]] = [[] for _ in queries]
     active = [(i, q) for i, q in enumerate(queries) if q and q.strip()]
@@ -695,6 +708,19 @@ def search(
 
     For several queries at once use `search_batch` (one embedding pass + one
     Chroma call). Returns a list of dicts: {id, name, description, score}.
+
+    Args:
+        query: Free-text English description of ONE parameter.
+        top_k: Number of results.
+        provider: Restrict to one provider (amda/cda/csa/ssc).
+        region: SPASE region filter (exact indexed string).
+        measurement_type: Measurement-type filter (exact indexed string).
+
+    Example:
+        >>> search("ACE solar wind proton density", top_k=2)[0]
+        {'id': 'cda/AC_H2_SWE/Np', 'name': 'Proton No. density',
+         'description': 'Proton No. density. Solar Wind Proton Number Density, '
+                        'scalar. ACE/SWEPAM ... Units: #/cc. ...', 'score': 1.0, ...}
     """
     if not query or not query.strip():
         return []

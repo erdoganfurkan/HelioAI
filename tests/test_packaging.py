@@ -3,7 +3,7 @@
 These guard a bug that shipped: `[tool.hatch.build.targets.wheel] packages =
 ["helioai"]` never included `data/recipes/`, and every storage path was derived
 from `Path(__file__).parent.parent`, which resolves to `site-packages/` once
-installed. A `pip install helioai` therefore had zero recipes and tried to write
+installed. A pip install therefore had zero recipes and tried to write
 user data into site-packages. Nothing in the suite noticed, because the test
 suite only ever ran from a git clone.
 """
@@ -51,7 +51,7 @@ def test_recipes_dir_defaults_to_the_packaged_copy():
 def test_dot_env_in_the_working_directory_is_read_once_installed():
     """`load_dotenv(_ROOT / ".env")` alone is a no-op once installed: _ROOT is
     site-packages/, which never holds a user's .env. The README instructs
-    `pip install helioai` then "copy .env.example to .env" — that file has to be
+    `pip install helioai-agent` then "copy .env.example to .env" — that file has to be
     read from the working directory the user actually runs `helioai` from, which
     `_ROOT/.env` cannot see. A subprocess with a bare env and a cwd of its own is
     the only way to prove this without polluting the importing process's os.environ.

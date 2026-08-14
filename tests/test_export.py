@@ -99,6 +99,30 @@ def test_export_custom_out_path(wired, tmp_path) -> None:
     assert out.exists()
 
 
+def test_export_reports_helioai_version_without_distribution_metadata(wired, monkeypatch) -> None:
+    """The distribution is `helioai-agent`, so `version("helioai")` finds nothing.
+
+    On a fresh install that lookup raises and `_version` degrades to "unknown" —
+    silently, in every exported notebook. The dev venv still carries the old
+    `helioai` metadata, so the miss is simulated here; both the provenance header
+    and the Methods footer must fall back on `helioai.__version__` instead.
+    """
+    import helioai
+
+    def _no_dist(pkg):
+        raise export_module.PackageNotFoundError(pkg)
+
+    monkeypatch.setattr(export_module, "version", _no_dist)
+    path = export_session_notebook(_USER, _SESSION)
+    md = "\n".join(
+        c.source for c in nbformat.read(str(path), as_version=4).cells if c.cell_type == "markdown"
+    )
+    assert f"**helioai:** {helioai.__version__}" in md
+    assert f"helioai {helioai.__version__}._" in md
+    assert "helioai unknown" not in md
+    assert "**helioai:** unknown" not in md
+
+
 def test_setup_cell_defines_clean() -> None:
     from helioai.export import _SETUP_CELL_BASE
 

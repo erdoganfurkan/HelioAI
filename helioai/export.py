@@ -469,7 +469,7 @@ def build_notebook(user_id: str, session_id: str):
             methods.append(f"- **Event catalog:** {cite}")
         methods.append(
             f"\n_Libraries: speasy {_version('speasy')}, plasmapy {_version('plasmapy')}, "
-            f"helioai {_version('helioai')}._"
+            f"helioai {_helioai_version()}._"
         )
         cells.append(nbf.v4.new_markdown_cell("\n".join(methods)))
 

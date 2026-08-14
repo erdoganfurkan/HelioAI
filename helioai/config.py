@@ -19,7 +19,7 @@ _ROOT = _PKG.parent
 load_dotenv(_ROOT / ".env")
 # Installed from PyPI, _ROOT is site-packages/ — no .env there ever exists, so the line
 # above is silently a no-op and every key comes from the shell. README says
-# `pip install helioai` then "copy .env.example to .env": search upward from the
+# `pip install helioai-agent` then "copy .env.example to .env": search upward from the
 # working directory too, so that file is the one actually read. override=False (the
 # load_dotenv default) on both calls, so a repo-clone .env still wins when both exist.
 load_dotenv(find_dotenv(usecwd=True))

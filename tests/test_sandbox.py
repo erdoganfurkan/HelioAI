@@ -686,15 +686,27 @@ def test_reports_when_the_fallback_path_isolates_nothing(monkeypatch):
     """
     import helioai.tools.sandbox as sb
 
-    monkeypatch.setattr(sb.os, "geteuid", lambda: 1000)
+    # raising=False: os.geteuid does not exist on Windows, and monkeypatch refuses to
+    # set an absent attribute — which failed the Windows job while the code under test
+    # was fine, since it checks hasattr first.
+    monkeypatch.setattr(sb.os, "geteuid", lambda: 1000, raising=False)
     assert "not root" in (sb._isolation_gap() or "")
+
+
+def test_isolation_gap_answers_on_a_platform_with_no_privilege_model(monkeypatch):
+    """Windows has no os.geteuid. The check must answer, not raise — asserted here
+    rather than discovered on the one CI job that is allowed to fail."""
+    import helioai.tools.sandbox as sb
+
+    monkeypatch.delattr(sb.os, "geteuid", raising=False)
+    assert "POSIX" in (sb._isolation_gap() or "")
 
 
 def test_the_isolation_warning_is_said_once_not_per_run(monkeypatch):
     """Every run_python on a dev box takes this path — a per-run warning is noise."""
     import helioai.tools.sandbox as sb
 
-    monkeypatch.setattr(sb.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(sb.os, "geteuid", lambda: 1000, raising=False)
     sb._warn_if_not_isolated.cache_clear()
     try:
         for _ in range(3):

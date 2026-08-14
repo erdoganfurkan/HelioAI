@@ -153,7 +153,7 @@ anyone can install.
 
 - `mcp` is capped below 2.0: that release is a breaking rewrite of both the client and
   server APIs HelioAI uses. Lifting the cap is tracked with the `mcp_server.py` migration.
-- Test coverage is now measured across every module with no exclusion list — 795 tests,
+- Test coverage is now measured across every module with no exclusion list — 796 tests,
   80%. The previous 60% floor sat *below* the project's real coverage, because the
   excluded set included modules at 100% while genuinely thin ones were never on it.
 - The Docker image's bubblewrap support has not been exercised in a running container:

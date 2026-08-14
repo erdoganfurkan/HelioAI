@@ -22,12 +22,20 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/helioai /app/helioai
 
 WORKDIR /app
+# Without HELIOAI_DATA_DIR the runtime stage has no pyproject.toml, so the repo
+# check fails and data_dir lands in /root/.local/share — outside the volume below,
+# which made sessions and the Chroma index vanish on every recreate.
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    HELIOAI_DATA_DIR=/app/data
 
-# preexec_fn drops the sandbox subprocess to this dedicated user so
-# LLM-generated code cannot read /proc/<server>/environ (see sandbox.py).
-RUN useradd -r -s /bin/false helioai-sandbox
+# bubblewrap is the sandbox's only real isolation, and SECURITY.md tells people to
+# use this image to get it. preexec_fn drops the sandbox subprocess to the dedicated
+# user so LLM-generated code cannot read /proc/<server>/environ (see sandbox.py).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bubblewrap \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -s /bin/false helioai-sandbox
 
 VOLUME /app/data
 EXPOSE 7890

@@ -4,7 +4,10 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     ports:
-      - "7890:7890"
+      # Loopback only: the image ships no authentication and run_python executes
+      # model-written code, so "7890:7890" published that on every interface of the
+      # host. Put auth in front of it before widening this.
+      - "127.0.0.1:7890:7890"
     volumes:
       - ../data:/app/data
     env_file:

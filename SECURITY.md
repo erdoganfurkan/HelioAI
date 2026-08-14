@@ -27,11 +27,18 @@ the model writes can read and write anything your user account can.
 Check what you are getting:
 
 ```bash
-which bwrap   # empty means you are on the fallback path
+which bwrap   # empty means you are certainly on the fallback path
 ```
 
-Install it on Debian/Ubuntu with `apt install bubblewrap`, or run HelioAI in the
-provided Docker image, which has it.
+Finding the binary is not enough: the kernel may refuse unprivileged user
+namespaces (a Debian default, and some container security profiles), so HelioAI
+tests bubblewrap functionally before using it. The authoritative signal is the
+logs — a `sandbox_not_isolated` warning on the first `run_python` means generated
+code is running with no filesystem isolation, whatever `which bwrap` says.
+
+Install it on Debian/Ubuntu with `apt install bubblewrap`. The provided Docker
+image installs it too, but a container's own policy can still deny the namespace:
+read the logs there as well rather than assuming the image settles it.
 
 ### What the sandbox does protect against, on every platform
 

@@ -37,9 +37,13 @@ data/catalogs/
 data/users.json
 data/users/
 data/profiles/
+data/profile.md
 
 # Local MCP config
 .mcp.json
+
+# Local agent tooling
+.opencode/
 
 # Demo recordings
 demo/

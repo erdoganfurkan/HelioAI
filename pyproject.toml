@@ -92,6 +92,30 @@ path = "helioai/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["helioai"]
 
+[tool.hatch.build.targets.sdist]
+# Explicit selection. The default — everything not gitignored — swept whatever
+# untracked files were sitting in the working tree into the tarball (review
+# reports, .opencode/node_modules: 5 MB), so a locally built sdist was one
+# manual `twine upload` away from publishing them. CI builds from a clean
+# checkout and never hit this; the list makes local and CI builds identical.
+only-include = [
+    "helioai",
+    "tests",
+    "docs",
+    "examples",
+    "scripts",
+    "docker",
+    "README.md",
+    "CHANGELOG.md",
+    "CITATION.cff",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "SECURITY.md",
+    "mkdocs.yml",
+    ".env.example",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

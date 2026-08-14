@@ -3,7 +3,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "helioai"
+# Distribution name only; the import package stays `helioai`. PyPI rejects "helioai"
+# as confusable with the existing "helloai": it folds l/i to 1 and o to 0, so both
+# names reduce to he110a1.
+name = "helioai-agent"
 dynamic = ["version"]
 description = "AI agent for heliophysics and space plasma data analysis"
 readme = "README.md"

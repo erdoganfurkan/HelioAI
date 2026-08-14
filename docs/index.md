@@ -55,7 +55,7 @@ directly in [SciQLop](https://github.com/SciQLop/SciQLop) for visual inspection.
 
 ## Next steps
 
-- [Install it](installation.md) — `pip install helioai`, then build the parameter index once.
+- [Install it](installation.md) — `pip install helioai-agent`, then build the parameter index once.
 - [Quickstart](quickstart.md) — your first question, end to end.
 - [Interfaces](guide/interfaces.md) — CLI, Jupyter, web UI, or MCP server.
 

@@ -10,7 +10,7 @@ Runnable notebooks. Outputs are stripped on purpose — run them and produce you
 
 ## Prerequisites
 
-1. **Install** — `pip install helioai`, or `uv sync` from a clone.
+1. **Install** — `pip install helioai-agent`, or `uv sync` from a clone.
 2. **One LLM provider key** in `.env`. See the
    [installation guide](https://erdoganfurkan.github.io/HelioAI/installation/).
    Data access itself needs no credentials.

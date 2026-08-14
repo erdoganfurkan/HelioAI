@@ -49,7 +49,7 @@ No API key required for data access. No manual parameter hunting.
 ## Installation
 
 ```bash
-pip install helioai
+pip install helioai-agent
 ```
 
 Or from source with [uv](https://docs.astral.sh/uv/):

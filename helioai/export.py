@@ -310,6 +310,19 @@ def _version(pkg: str) -> str:
         return "unknown"
 
 
+def _helioai_version() -> str:
+    """Our own version, read from the package rather than the distribution.
+
+    `version("helioai")` looked up the *distribution* name, which is `helioai-agent`
+    on PyPI — the import name and the distribution name are allowed to differ, and
+    here they must. The lookup degraded to "unknown" instead of failing, so the miss
+    would have been silent, in the provenance header of every exported notebook.
+    """
+    from helioai import __version__
+
+    return __version__
+
+
 _CATALOG_CITATIONS = {
     "helio4cast/icmecat": (
         "HELIO4CAST ICMECAT v2.3 (https://helioforecast.space/icmecat) — "
@@ -429,7 +442,7 @@ def build_notebook(user_id: str, session_id: str):
         f"- **Generated:** {now}",
         f"- **Session:** `{session_id}`",
         f"- **speasy:** {_version('speasy')} · **plasmapy:** {_version('plasmapy')} "
-        f"· **helioai:** {_version('helioai')}",
+        f"· **helioai:** {_helioai_version()}",
     ]
     if param_ids:
         prov.append("- **Parameters referenced:** " + ", ".join(f"`{p}`" for p in param_ids))

@@ -17,7 +17,7 @@
 === "From PyPI"
 
     ```bash
-    pip install helioai
+    pip install helioai-agent
     ```
 
 === "From source"

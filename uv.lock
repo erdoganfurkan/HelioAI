@@ -1510,7 +1510,7 @@ wheels = [
 ]
 
 [[package]]
-name = "helioai"
+name = "helioai-agent"
 source = { editable = "." }
 dependencies = [
     { name = "astropy" },

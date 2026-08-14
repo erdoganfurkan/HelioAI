@@ -13,6 +13,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 First published release. `0.1.0` was never released to PyPI, so this is the first version
 anyone can install.
 
+**Install it with `pip install helioai-agent`, then `import helioai`.** PyPI rejects
+`helioai` as confusable with the existing `helloai` — its check folds `l` and `i` to `1`,
+so both names reduce to the same string. The distribution name is the only thing that
+changed; the import package, the CLI commands and the API are all unchanged.
+
 ### Added
 
 - **Documentation site** built with MkDocs Material and mkdocstrings, deployed to GitHub
@@ -81,7 +86,7 @@ anyone can install.
 
 ### Fixed
 
-- **`pip install helioai` produced an unusable install.** The wheel never contained
+- **`pip install` produced an unusable install.** The wheel never contained
   `data/recipes/`, so an installed copy had zero recipes, and every storage path resolved
   under `site-packages/`, so the agent tried to write ChromaDB, the session database and
   user workspaces inside the installed package. Recipes now ship inside the package and
@@ -92,7 +97,7 @@ anyone can install.
 - The Jupyter demo notebook called the PlasmaPy tools without `await`, returning coroutine
   objects.
 - **`.env` was ignored once pip-installed** — it was read relative to the package
-  directory, so following the README (`pip install helioai`, then copy `.env.example`)
+  directory, so following the README (`pip install helioai-agent`, then copy `.env.example`)
   raised `AZURE_OPENAI_API_KEY is not set` no matter what the file contained.
 - **`helioai profile` and `%helioai_profile` edited a file nothing reads.** Namespacing
   storage per user split the path the commands wrote from the one the agent loads, and

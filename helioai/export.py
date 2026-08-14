@@ -519,6 +519,13 @@ def export_session_notebook(user_id: str, session_id: str, out_path: Path | None
     """Write the session as a .ipynb and return its path.
 
     Default location: <workspace>/<label>.ipynb (or <workspace>/<session>.ipynb).
+
+    Example:
+        >>> export_session_notebook("cli", "8f3aa012-...")
+        PosixPath('.../data/users/cli/workspace/plot-imf-bz_8f3aa0/plot-imf-bz_8f3aa0.ipynb')
+
+        The notebook opens with a provenance header (parameter ids, library versions),
+        then one runnable cell per saved sandbox run, rewritten to standalone speasy calls.
     """
     import nbformat as nbf
 

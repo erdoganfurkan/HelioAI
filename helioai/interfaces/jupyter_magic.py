@@ -225,6 +225,13 @@ class HelioAIMagics(Magics):
         """`%%helioai` — send a natural-language query to the agent.
 
         Figures render inline; parameter cards and catalog previews render as HTML.
+
+        Example:
+            %load_ext helioai.interfaces.jupyter_magic
+
+            %%helioai
+            Download ACE IMF for the 2015-03-17 storm, plot Bz and mark
+            the shock arrival.
         """
         import helioai.tools.setup  # noqa: F401
         from helioai.core.agent_loop import stream_chat

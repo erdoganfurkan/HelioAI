@@ -691,6 +691,16 @@ async def run_python(
         - figure_paths: list of absolute paths to saved PNG files
         - exports: dict of named numerical summaries (from export() calls)
         - error: error message if execution failed
+
+    Example:
+        >>> await run_python(
+        ...     "import numpy as np\\n"
+        ...     "export('rms', np.sqrt(np.mean(np.arange(8) ** 2)))\\n"
+        ...     "print('done')"
+        ... )
+        {'stdout': 'done', 'exports': {'rms': {'mean': 4.1833..., 'min': 4.1833...,
+         'max': 4.1833..., 'std': 0.0, 'n_finite': 1, 'n_nan': 0, ...}},
+         'figure_paths': [], 'error': None, ...}
     """
     timeout = min(timeout, _MAX_TIMEOUT_S)
     if _plot_dir is None:

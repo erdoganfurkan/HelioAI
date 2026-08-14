@@ -70,6 +70,11 @@ async def list_recipes() -> dict:
     Returns dict with 'recipes' list (sorted by name). Each entry has
     'name', 'description', 'inputs', 'outputs' (when present in header).
     Returns {"recipes": []} when the recipes directory does not exist.
+
+    Example:
+        >>> await list_recipes()
+        {'recipes': [{'name': 'fill_values', 'description': '...'},
+                     {'name': 'mvab', ...}, {'name': 'rankine_hugoniot', ...}, ...]}
     """
     try:
         recipes_dir = settings.recipes.recipes_dir
@@ -100,6 +105,10 @@ async def load_recipe(name: str) -> dict:
 
     Returns dict with 'name' and 'code'. Returns {'error': ...} when not found
     or when the name contains path-traversal characters.
+
+    Example:
+        >>> await load_recipe("theta_bn")
+        {'name': 'theta_bn', 'code': '# name: theta_bn\\n# description: Compute the shock...'}
     """
     try:
         if not name or any(c in name for c in ("/", "\\", "..")):

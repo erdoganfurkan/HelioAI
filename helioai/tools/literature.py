@@ -28,6 +28,15 @@ async def find_papers(
 
     Requires `ADS_API_TOKEN`; without it the tool returns an error rather than
     raising, so the agent can tell the user what is missing.
+
+    Example:
+        >>> await find_papers("interplanetary shock Rankine-Hugoniot multi-spacecraft",
+        ...                   max_results=2)
+        {'query': '...', 'papers': [
+         {'title': 'Multiple spacecraft observations of interplanetary shocks: ...',
+          'authors': 'Russell, C. T. et al.', 'year': '1983',
+          'bibcode': '1983JGR....88.9941R', 'doi': '10.1029/JA088iA12p09941',
+          'citations': 72, 'abstract': '...'}, ...], 'note': '...'}
     """
     token = settings.literature.ads_token
     if not token:

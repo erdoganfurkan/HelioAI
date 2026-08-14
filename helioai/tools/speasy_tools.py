@@ -83,6 +83,13 @@ async def get_timeseries(
     (returned by search_parameters).
 
     Returns dict with: param_id, start, stop, units, shape, n_points, preview (first 10 rows as CSV)
+
+    Example:
+        >>> await get_timeseries("amda/imf", "2010-01-01T00:00:00", "2010-01-01T06:00:00")
+        {'dataset': 'imf', 'param_id': 'amda/imf', 'units': 'nT',
+         'components': ['bx', 'by', 'bz'], 'cadence': '16 s', 'shape': [1350, 3],
+         'n_points': 1350, 'n_valid': 1350, 'quality': {'missing_pct': 0.0, ...},
+         'preview': '2010-01-01T00:00:09.000000000  -1.839, 2.308, 0.108\\n...', ...}
     """
     try:
         import numpy as np
@@ -389,6 +396,11 @@ async def list_missions() -> dict:
     """List available speasy data providers and their top-level missions.
 
     Returns a summary dict with provider names and approximate product counts.
+
+    Example:
+        >>> await list_missions()
+        {'providers': ['amda', 'archive', 'cda', 'csa', 'ssc', 'uiowaephtool'],
+         'note': 'Use search_parameters to find specific parameters. ...'}
     """
     try:
         import speasy as spz
@@ -462,6 +474,14 @@ async def search_parameters(
 
     Returns either {query, provider, results} (single) or
     {provider, groups: [{query, results}]} (batch).
+
+    Example:
+        >>> await search_parameters(query="ACE solar wind proton density", top_k=3)
+        {'query': 'ACE solar wind proton density', 'provider': None, 'results': [
+         {'id': 'cda/AC_H2_SWE/Np',
+          'description': 'Proton No. density. Solar Wind Proton Number Density, scalar. '
+                         'ACE/SWEPAM ... 1-Hour Level 2 Data ... Units: #/cc. ...',
+          'coverage': '1998-02-04 → 2024-07-09', 'score': 1.0}, ...]}
     """
     window = (start, stop) if start and stop else None
     if queries:

@@ -251,6 +251,13 @@ async def list_catalogs(
 
     Returns a list of entries with id, name, type, nb_events, survey range and description.
     Use the `id` field with get_catalog() and get_events_timeseries().
+
+    Example:
+        >>> await list_catalogs(type="catalog", region="ICME")
+        {'total': 3, 'type_filter': 'catalog', 'region_filter': 'ICME', 'catalogs': [
+         {'id': 'amda/sharedcatalog_41', 'name': 'ICME_multi-catalog', 'type': 'catalog',
+          'nb_events': 2003, 'survey_start': '1975-01-08', 'survey_stop': '2022-10-21',
+          'description': '...'}, ...]}
     """
     spz = _get_spz()
     if spz is None:
@@ -341,6 +348,14 @@ async def get_catalog(
 
     Returns catalog metadata + a sample of events (start, stop, key columns).
     Use get_events_timeseries() to download a parameter over all events.
+
+    Example:
+        >>> await get_catalog("amda/sharedcatalog_41", start="2015-01-01", stop="2016-01-01",
+        ...                   max_events=5, sort_by="start")
+        {'_kind': 'catalog_preview', 'catalog_id': 'amda/sharedcatalog_41',
+         'name': 'ICME_multi-catalog', 'nb_events_total': 2003, 'nb_events_filtered': ...,
+         'returned': 5, 'columns': [...], 'sample': [{'start': ..., 'stop': ..., ...}, ...],
+         'survey_start': '1975-01-08', 'survey_stop': '2022-10-21'}
     """
     spz = _get_spz()
     if spz is None:
@@ -472,6 +487,13 @@ async def get_events_timeseries(
         max_events: cap on events to download (default 20 — each is one speasy call slot).
 
     Returns per-event statistics and saves the raw data to the workspace for run_python.
+
+    Example:
+        >>> await get_events_timeseries("amda/sharedcatalog_41", "amda/imf",
+        ...                             "2015-01-01", "2016-01-01", max_events=10)
+        {'catalog_id': 'amda/sharedcatalog_41', 'param_id': 'amda/imf', 'stats': [
+         {'event': 0, 'start': '2015-01-03T...', 'stop': '2015-01-04T...',
+          'n_points': ..., ...}, ...], ...}
     """
     spz = _get_spz()
     if spz is None:
@@ -716,6 +738,12 @@ async def save_catalog(
     Returns {"catalog_id": "local/<name>", "nb_events": N, "note": "..."}.
     Overwrites an existing catalog with the same name.
     Use list_catalogs() then get_catalog("local/<name>") to inspect it.
+
+    Example:
+        >>> await save_catalog("my-shocks",
+        ...                    [{"start": "2015-03-17T04:01:00", "stop": "2015-03-17T05:00:00",
+        ...                      "note": "St. Patrick's Day storm shock"}])
+        {'catalog_id': 'local/my-shocks', 'nb_events': 1, 'overwritten': False, 'note': '...'}
     """
     if not _LOCAL_NAME_RE.fullmatch(name):
         return {

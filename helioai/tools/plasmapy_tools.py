@@ -43,6 +43,11 @@ async def plasma_beta(B_nT: float, n_cm3: float, T_eV: float) -> dict:
         T_eV:  Temperature in eV
 
     Returns dict with beta (dimensionless) and regime interpretation.
+
+    Example:
+        >>> await plasma_beta(B_nT=5.0, n_cm3=10.0, T_eV=20.0)
+        {'beta': 3.221367, 'unit': 'dimensionless',
+         'regime': 'high-β plasma (β ~ 1-10) — typical magnetosheath / plasma sheet', ...}
     """
     try:
         import astropy.units as u
@@ -81,6 +86,13 @@ async def gyrofrequency(B_nT: float, particle: str = "proton") -> dict:
         particle: 'proton', 'electron', 'alpha' (default: proton)
 
     Returns dict with frequency in Hz and angular frequency in rad/s.
+
+    Example:
+        >>> await gyrofrequency(B_nT=5.0)
+        {'frequency_Hz': 0.0762, 'angular_frequency_rad_s': 0.4789, 'particle': 'proton',
+         'B_nT': 5.0, 'period_s': 13.118895}
+        >>> await gyrofrequency(B_nT=5.0, particle="electron")
+        {'frequency_Hz': 139.9624, ...}
     """
     try:
         import astropy.units as u
@@ -112,6 +124,11 @@ async def debye_length(n_cm3: float, T_eV: float) -> dict:
         T_eV:  Electron temperature in eV
 
     Returns dict with Debye length in km and meters.
+
+    Example:
+        >>> await debye_length(n_cm3=10.0, T_eV=12.0)
+        {'debye_length_m': 8.143475, 'debye_length_km': 0.008143475,
+         'inputs': {'n_cm3': 10.0, 'T_eV': 12.0}}
     """
     try:
         import astropy.units as u
@@ -142,6 +159,11 @@ async def alfven_speed(B_nT: float, n_cm3: float, mass_amu: float = 1.0) -> dict
         mass_amu:  Ion mass in atomic mass units (default 1.0 = proton)
 
     Returns dict with Alfvén speed in km/s.
+
+    Example:
+        >>> await alfven_speed(B_nT=5.0, n_cm3=5.0)
+        {'alfven_speed_km_s': 48.937, 'alfven_speed_m_s': 48936.9,
+         'inputs': {'B_nT': 5.0, 'n_cm3': 5.0, 'mass_amu': 1.0}, ...}
     """
     try:
         import astropy.constants as const
@@ -175,6 +197,11 @@ async def inertial_length(n_cm3: float, particle: str = "proton") -> dict:
         particle: 'proton' or 'electron' (default: proton)
 
     Returns dict with inertial length in km and meters.
+
+    Example:
+        >>> await inertial_length(n_cm3=5.0)
+        {'inertial_length_km': 101.8354, 'inertial_length_m': 101835.35,
+         'particle': 'proton', 'inputs': {'n_cm3': 5.0}}
     """
     try:
         import astropy.units as u
@@ -211,6 +238,13 @@ async def power_spectrum(
 
     Returns dict with frequencies (Hz), PSD values, peak frequency,
     and export-ready summary for LLM interpretation.
+
+    Example:
+        >>> import math
+        >>> wave = [math.sin(2 * math.pi * 0.1 * i) for i in range(512)]
+        >>> psd = await power_spectrum(wave, dt_s=1.0)
+        >>> psd["peak_frequency_Hz"], psd["peak_period_s"]
+        (0.101562, 9.846)
     """
     try:
         import numpy as np

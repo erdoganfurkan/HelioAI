@@ -8,6 +8,43 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-08-14
+
+Documentation only — no behaviour change. Everything here was already true of the code in
+0.2.0; what shipped was the description of it.
+
+### Fixed
+
+- **The `solar_mach` recipe told users to install a package that no longer exists.** Its
+  runtime error message read `pip install "helioai[solarmach]"`, a name PyPI stopped
+  serving when the distribution was renamed to `helioai-agent` — so a user who hit the
+  missing-extra path was handed a command that fails.
+- **README claims had drifted from the code**: the test count and coverage (627/77% →
+  797/80%), the CI matrix (3.11/3.12 → 3.12/3.13/3.14), the skill count (5 → 6), the recipe
+  count (9 → 10), and a "PyPI release" roadmap box left unchecked on a published package.
+  The README is what PyPI renders as the project page, so these were the first thing a
+  visitor read.
+- **The quickstart pointed at the wrong event**: it advertised the 2003 Halloween storm for
+  a notebook that has covered the 2015 St. Patrick's Day storm since the coverage of the
+  Halloween window was measured unusable.
+- **CONTRIBUTING and the developer docs recommended `uv run pytest`**, which re-syncs the
+  environment and pulls the multi-gigabyte CUDA build of torch behind
+  `sentence-transformers`. They now call the interpreter in `.venv/` directly.
+
+### Added
+
+- **Docstring examples across the public API.** The 19 agent-facing entry points (plasma
+  tools, parameter search and download, catalogs, recipes, literature, sandbox, notebook
+  export, the `%%helioai` magic) carry `Example:` blocks whose outputs were captured from
+  real executions rather than written by hand. The core surface — `stream_chat` (including
+  its 14 event kinds), `chat`, `build_index`, `build_llm_client`, `SessionStore`, the
+  datastore and workspace helpers, `rag.search`/`search_batch`, the MCP server entry
+  points, `to_standalone` and the boundary models — gained argument and return
+  documentation it never had.
+- **Issue #1** tracks migrating `mcp_server.py` to mcp 2.x, which the `mcp>=1.0,<2` cap in
+  `pyproject.toml` had claimed was "tracked separately" without anything actually tracking
+  it.
+
 ## [0.2.0] — 2026-08-14
 
 First published release. `0.1.0` was never released to PyPI, so this is the first version

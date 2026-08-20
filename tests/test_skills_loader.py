@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from helioai.core import skills_loader
-from helioai.core.skills_loader import SkillError, load_index, load_skill
+from helioai.core.skills_loader import SkillError, list_skills, load_index, load_skill
 
 
 def _write_skill(root: Path, name: str, frontmatter: str, body: str = "Body text.") -> Path:
@@ -50,6 +50,19 @@ def test_discover_and_load_valid_skill(tmp_path: Path, monkeypatch) -> None:
     body = load_skill("demo")
     assert body.startswith("# Procedure")
     assert "name:" not in body
+
+
+def test_list_skills_returns_metadata(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(skills_loader, "SKILLS_DIR", tmp_path)
+    skills_loader._discover.cache_clear()
+    _write_skill(
+        tmp_path,
+        "demo",
+        frontmatter="name: demo\ndescription: A demo skill.\nwhen_to_use: x\n",
+    )
+    metas = list_skills()
+    assert [m.name for m in metas] == ["demo"]
+    assert metas[0].description == "A demo skill."
 
 
 def test_load_unknown_skill_raises(tmp_path: Path, monkeypatch) -> None:

@@ -8,8 +8,8 @@ from contextlib import asynccontextmanager
 
 import mcp.types as types
 import pytest
+from mcp.client import Client
 from mcp.server import Server
-from mcp.shared.memory import create_connected_server_and_client_session
 
 from helioai.config import settings
 from helioai.tools import mcp_client
@@ -17,35 +17,36 @@ from helioai.tools.registry import registry
 
 
 def _toy_server(big: bool = False) -> Server:
-    srv = Server("toy")
+    async def _list(ctx, params):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="echo",
+                    description="Echo text back",
+                    input_schema={
+                        "type": "object",
+                        "properties": {"text": {"type": "string"}},
+                        "required": ["text"],
+                    },
+                )
+            ]
+        )
 
-    @srv.list_tools()
-    async def _list():
-        return [
-            types.Tool(
-                name="echo",
-                description="Echo text back",
-                inputSchema={
-                    "type": "object",
-                    "properties": {"text": {"type": "string"}},
-                    "required": ["text"],
-                },
-            )
-        ]
+    async def _call(ctx, params):
+        args = params.arguments or {}
+        text = "x" * 10_000 if big else f"echo:{args.get('text', '')}"
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=text)], is_error=False
+        )
 
-    @srv.call_tool()
-    async def _call(name, arguments):
-        text = "x" * 10_000 if big else f"echo:{arguments.get('text', '')}"
-        return [types.TextContent(type="text", text=text)]
-
-    return srv
+    return Server("toy", on_list_tools=_list, on_call_tool=_call)
 
 
 def _fake_session(server: Server):
     @asynccontextmanager
     async def fake(spec):
-        async with create_connected_server_and_client_session(server) as session:
-            yield session
+        async with Client(server) as client:
+            yield client
 
     return fake
 
@@ -125,9 +126,9 @@ async def test_real_stdio_roundtrip(monkeypatch, tmp_path):
     server_script.write_text(
         textwrap.dedent(
             """
-            from mcp.server.fastmcp import FastMCP
+            from mcp.server.mcpserver import MCPServer
 
-            mcp = FastMCP("stdio-toy")
+            mcp = MCPServer("stdio-toy")
 
             @mcp.tool()
             def shout(text: str) -> str:

@@ -16,9 +16,10 @@ import json
 import re
 from contextlib import asynccontextmanager
 
+import httpx2
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 from helioai.config import settings
 from helioai.logging_config import get_logger
@@ -59,12 +60,17 @@ async def _session(spec: dict):
                 await session.initialize()
                 yield session
     elif "url" in spec:
+        # v1's streamablehttp_client() defaulted to a 30s/300s-read timeout and
+        # followed redirects; a bare httpx2.AsyncClient() falls back to a flat 5s
+        # timeout, too short for the long-lived GET stream — set both explicitly.
+        http_client = httpx2.AsyncClient(
+            headers=spec.get("headers"),
+            timeout=httpx2.Timeout(30, read=300),
+            follow_redirects=True,
+        )
         async with (
-            streamablehttp_client(spec["url"], headers=spec.get("headers")) as (
-                read,
-                write,
-                _,
-            ),
+            http_client,
+            streamable_http_client(spec["url"], http_client=http_client) as (read, write),
             ClientSession(read, write) as session,
         ):
             await session.initialize()
@@ -137,7 +143,7 @@ async def discover_and_register() -> list[str]:
             if name in registry:
                 log.warning("mcp_tool_collision_skipped", server=alias, tool=name)
                 continue
-            schema = t.inputSchema or {"type": "object", "properties": {}}
+            schema = t.input_schema or {"type": "object", "properties": {}}
             props = schema.get("properties") or {}
             if any(k.startswith("_") for k in props):
                 log.warning("mcp_tool_private_args", server=alias, tool=name)

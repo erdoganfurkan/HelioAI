@@ -61,14 +61,16 @@ therefore pins the `Host` header when it binds to loopback.
 
 ### The MCP server over HTTP
 
-`helioai-mcp` exposes **every registered tool, `run_python` included, with no
-authentication**. Over stdio that is the normal MCP contract — the client owns the
-process. Over `--http` it is not: anything that can reach the port executes Python
-on that host, outside the web UI's scope guardrail.
+`helioai-mcp --http` exposes every registered tool, `run_python` included, and
+read-only recipe/skill resources, behind an optional shared-secret token: set
+`HELIOAI_MCP_TOKEN` and every HTTP request must carry
+`Authorization: Bearer <token>`, checked in constant time (`hmac.compare_digest`).
+Over stdio no token applies — the client owns the process, the normal MCP contract.
 
-Keep it on loopback (the default). `helioai-mcp --http --host 0.0.0.0` logs a
-warning for this reason; treat that warning as a deployment error unless you have
-put authentication in front of the port yourself.
+Empty `HELIOAI_MCP_TOKEN` (the default) means no auth, which is fine on the
+loopback default bind. Binding to anything else (`--host 0.0.0.0` or a real
+interface) with no token set is refused at startup — `helioai-mcp` exits rather
+than starting an unauthenticated, network-reachable Python sandbox.
 
 ## Supported versions
 

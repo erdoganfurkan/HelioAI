@@ -1,43 +1,127 @@
-"""MCP server for HelioAI — exposes all registered tools via stdio or HTTP streamable transport.
+"""MCP server for HelioAI — exposes registered tools and read-only resources (recipes,
+skills) via stdio or HTTP streamable transport.
 
 Usage:
     helioai serve              # stdio (Claude Desktop / claude CLI)
     helioai serve --http       # HTTP streamable on 127.0.0.1:8765
-    helioai serve --http --host 0.0.0.0 --port 9000
+    helioai serve --http --host 0.0.0.0 --port 9000   # requires HELIOAI_MCP_TOKEN
     helioai-mcp                # direct entry point (stdio only)
+
+Skills are listed from a process-lifetime-cached index (skills_loader._discover is
+lru_cache'd): a skill added or edited after this process started is invisible until
+restart. Recipes re-glob the filesystem on every call and need no restart.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import sys
-from typing import Any
+from urllib.parse import urlparse
 
-from mcp import types
-from mcp.server import Server
-from mcp.server.lowlevel import NotificationOptions
+from mcp import MCPError
+from mcp.server import NotificationOptions, Server, ServerRequestContext
 from mcp.server.models import InitializationOptions
+from mcp.types import (
+    INVALID_PARAMS,
+    CallToolRequestParams,
+    CallToolResult,
+    ListResourcesResult,
+    ListToolsResult,
+    PaginatedRequestParams,
+    ReadResourceRequestParams,
+    ReadResourceResult,
+    Resource,
+    TextContent,
+    TextResourceContents,
+    Tool,
+)
 
 import helioai.tools.setup  # noqa: F401 — registers all tools at import time
+from helioai.config import settings
+from helioai.core.skills_loader import SkillError, list_skills, load_skill
 from helioai.logging_config import get_logger, setup_logging
+from helioai.tools.recipes import list_recipes, load_recipe
 from helioai.tools.registry import registry
 
-server = Server("helioai")
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
-@server.list_tools()
-async def _list_tools() -> list[types.Tool]:
-    return [
-        types.Tool(name=t.name, description=t.description, inputSchema=t.parameters)
-        for t in registry.list_tool_defs()
+async def _list_tools(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListToolsResult:
+    return ListToolsResult(
+        tools=[
+            Tool(name=t.name, description=t.description, input_schema=t.parameters)
+            for t in registry.list_tool_defs()
+        ]
+    )
+
+
+async def _call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
+    # registry.call_tool() never raises — it catches everything into a JSON
+    # {"error": ...} string — so is_error stays False unconditionally, same as v1.
+    result = await registry.call_tool(params.name, params.arguments or {})
+    return CallToolResult(content=[TextContent(type="text", text=result)], is_error=False)
+
+
+async def _list_resources(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListResourcesResult:
+    resources = [
+        Resource(
+            uri=f"recipe://{r['name']}",
+            name=r["name"],
+            description=r.get("description", ""),
+            mime_type="text/x-python",
+        )
+        for r in (await list_recipes()).get("recipes", [])
     ]
+    resources += [
+        Resource(
+            uri=f"skill://{m.name}",
+            name=m.name,
+            description=m.description,
+            mime_type="text/markdown",
+        )
+        for m in list_skills()
+    ]
+    return ListResourcesResult(resources=resources)
 
 
-@server.call_tool()
-async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.TextContent]:
-    result = await registry.call_tool(name, arguments or {})
-    return [types.TextContent(type="text", text=result)]
+async def _read_resource(
+    ctx: ServerRequestContext, params: ReadResourceRequestParams
+) -> ReadResourceResult:
+    parsed = urlparse(params.uri)
+    name = parsed.netloc or parsed.path.lstrip("/")
+    if parsed.scheme == "recipe":
+        data = await load_recipe(name)
+        if "error" in data:
+            raise MCPError(INVALID_PARAMS, data["error"])
+        return ReadResourceResult(
+            contents=[
+                TextResourceContents(uri=params.uri, text=data["code"], mime_type="text/x-python")
+            ]
+        )
+    if parsed.scheme == "skill":
+        try:
+            body = load_skill(name)
+        except SkillError as e:
+            raise MCPError(INVALID_PARAMS, str(e)) from e
+        return ReadResourceResult(
+            contents=[TextResourceContents(uri=params.uri, text=body, mime_type="text/markdown")]
+        )
+    raise MCPError(INVALID_PARAMS, f"unsupported resource URI scheme: {parsed.scheme!r}")
+
+
+server = Server(
+    "helioai",
+    on_list_tools=_list_tools,
+    on_call_tool=_call_tool,
+    on_list_resources=_list_resources,
+    on_read_resource=_read_resource,
+)
 
 
 def _init_options() -> InitializationOptions:
@@ -47,11 +131,8 @@ def _init_options() -> InitializationOptions:
 async def serve_stdio() -> None:
     """Run the MCP server over stdio, for clients like Claude Desktop.
 
-    Blocks until the client closes the pipe. All 17 registry tools are exposed.
-
-    Example:
-        Claude Desktop config: {"command": "helioai-mcp"} — stdio is the default
-        transport, no flags needed.
+    Blocks until the client closes the pipe. All registry tools and the recipe/skill
+    resources are exposed — over stdio the client owns the process, so no auth applies.
     """
     from mcp.server.stdio import stdio_server
 
@@ -59,11 +140,40 @@ async def serve_stdio() -> None:
         await server.run(read, write, _init_options())
 
 
+def _require_bearer_token(app, token: str):
+    """Wrap an ASGI app with a constant-time Bearer-token check.
+
+    No-op when `token` is empty — same semantics as `config.dev_unlock`: an
+    unconfigured instance requires no token. A raw ASGI wrapper (not
+    starlette.middleware.base.BaseHTTPMiddleware) so it never buffers the
+    streamable-HTTP SSE body.
+    """
+    if not token:
+        return app
+    expected = f"Bearer {token}".encode()
+
+    async def _checked(scope, receive, send):
+        if scope["type"] == "http":
+            from starlette.responses import PlainTextResponse
+
+            supplied = dict(scope["headers"]).get(b"authorization", b"")
+            if not hmac.compare_digest(supplied, expected):
+                response = PlainTextResponse(
+                    "Unauthorized", status_code=401, headers={"WWW-Authenticate": "Bearer"}
+                )
+                await response(scope, receive, send)
+                return
+        await app(scope, receive, send)
+
+    return _checked
+
+
 def build_http_app():
     """Build the streamable-HTTP ASGI app exposing the MCP server.
 
-    Returns a Starlette app mounting the MCP session manager at `/mcp`,
-    suitable for any ASGI server (`serve_http` wraps it in uvicorn).
+    Returns a Starlette app mounting the MCP session manager at `/mcp`, wrapped in a
+    Bearer-token check when `HELIOAI_MCP_TOKEN` is set, suitable for any ASGI server
+    (`serve_http` wraps it in uvicorn).
     """
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
@@ -76,15 +186,15 @@ def build_http_app():
         async with manager.run():
             yield
 
-    return Starlette(routes=[Mount("/mcp", app=manager.handle_request)], lifespan=lifespan)
+    app = Starlette(routes=[Mount("/mcp", app=manager.handle_request)], lifespan=lifespan)
+    return _require_bearer_token(app, settings.mcp.token)
 
 
 def serve_http(host: str, port: int) -> None:
     """Run the MCP server over streamable HTTP.
 
     Args:
-        host: Bind address. Anything but loopback logs a warning — `run_python`
-            would be reachable from that network without authentication.
+        host: Bind address.
         port: TCP port.
     """
     import uvicorn
@@ -111,16 +221,17 @@ def main() -> None:
     if "--http" in args:
         host = _arg(args, "--host", "127.0.0.1")
         port = int(_arg(args, "--port", "8765"))
-        if host not in {"127.0.0.1", "localhost", "::1"}:
-            # Over stdio the client owns the process, so exposing run_python is the
-            # normal contract. Over HTTP there is no authentication and no scope
-            # guardrail: anything that reaches this port runs Python on this host.
-            get_logger(__name__).warning(
-                "mcp_http_exposed_without_auth",
+        if host not in _LOOPBACK_HOSTS and not settings.mcp.token:
+            # run_python is arbitrary code execution. Binding off loopback with no
+            # token is a deployment error, not a warning someone might read after
+            # the fact — refuse to start instead of trusting that.
+            get_logger(__name__).error(
+                "mcp_http_refused_without_auth",
                 host=host,
                 port=port,
-                detail="every registered tool, run_python included, is reachable unauthenticated",
+                detail="set HELIOAI_MCP_TOKEN or bind to loopback",
             )
+            raise SystemExit(1)
         serve_http(host, port)
     else:
         asyncio.run(serve_stdio())

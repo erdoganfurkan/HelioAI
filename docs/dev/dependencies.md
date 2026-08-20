@@ -38,9 +38,7 @@ opened at the same time to remove it.
 
 ### Current exceptions
 
-| Pin | Why | Removal |
-|---|---|---|
-| `mcp>=1.0,<2` | mcp 2.0 is a breaking rewrite of both the client and server APIs HelioAI uses | tracked; lifts with the `mcp_server.py` migration |
+None currently.
 
 There is also a uv-only constraint, `torch>=2.6`, in `[tool.uv]`. It exists purely so the
 lockfile resolves a torch with cp313/cp314 wheels — left alone the universal resolve

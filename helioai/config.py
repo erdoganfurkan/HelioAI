@@ -225,9 +225,13 @@ class LiteratureConfig:
 
 @dataclass
 class MCPConfig:
-    """Remote MCP servers to mount, as a JSON object keyed by alias."""
+    """Remote MCP servers to mount, plus auth for HelioAI's own MCP HTTP transport."""
 
     servers_json: str = ""
+    # Shared secret required as `Authorization: Bearer <token>` on the HTTP transport
+    # (stdio needs none — the client owns the process). Empty (default) → no auth
+    # required on loopback; a non-loopback bind then refuses to start (mcp_server.main).
+    token: str = ""
 
 
 @dataclass
@@ -342,7 +346,10 @@ def _load() -> Settings:
         recipes=RecipesConfig(recipes_dir=recipes_dir),
         catalogs=CatalogsConfig(catalogs_dir=catalogs_dir),
         literature=LiteratureConfig(ads_token=os.environ.get("ADS_API_TOKEN", "")),
-        mcp=MCPConfig(servers_json=os.environ.get("HELIOAI_MCP_SERVERS", "")),
+        mcp=MCPConfig(
+            servers_json=os.environ.get("HELIOAI_MCP_SERVERS", ""),
+            token=os.environ.get("HELIOAI_MCP_TOKEN", ""),
+        ),
         vision=VisionConfig(
             enabled=os.environ.get("HELIOAI_VISION_ENABLED", "0") not in ("0", "", "false"),
             provider=os.environ.get("HELIOAI_VISION_PROVIDER", "azure").lower(),

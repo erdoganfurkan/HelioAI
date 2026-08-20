@@ -128,3 +128,8 @@ def load_skill(name: str) -> str:
 def list_skill_names() -> list[str]:
     """Return the names of all available skills."""
     return list(_discover().keys())
+
+
+def list_skills() -> list[SkillMeta]:
+    """Return metadata for every discovered skill, for listings like MCP resources."""
+    return list(_discover().values())

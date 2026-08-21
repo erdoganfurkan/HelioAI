@@ -46,6 +46,7 @@ from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
     compact_history,
     emit_post_tool_events,
     inject_run_python_args,
+    unknown_id_correction,
 )
 from helioai.core.vision import maybe_review
 from helioai.logging_config import get_logger
@@ -361,6 +362,7 @@ async def stream_chat(
     if profile:
         effective_prompt = f"{effective_prompt}\n\n## User profile\n{profile}"
 
+    retried_bogus_ids = False
     try:
         for i in range(settings.agent.max_iterations):
             turn = i + 1
@@ -403,6 +405,14 @@ async def stream_chat(
                     yield {"event": "done", "data": {"n_iterations": turn}}
                     return
                 final_text, bogus, bypassed = check_answer(response.content, history, run_artifacts)
+                # Detecting a fabricated id and annotating the answer still ships the
+                # fabrication: the reply is already written. Spend one more turn instead,
+                # once, so the model can copy the real ids it was just handed.
+                if bogus and not retried_bogus_ids:
+                    retried_bogus_ids = True
+                    log.warning("lead_invented_ids_retry", ids=bogus, turn=turn)
+                    history.append(Message(role="user", content=unknown_id_correction(bogus)))
+                    continue
                 yield {"event": "reply", "data": {"text": final_text}}
                 if bogus:
                     log.warning("lead_invented_ids", ids=bogus)

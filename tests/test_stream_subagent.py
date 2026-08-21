@@ -304,16 +304,47 @@ def fake_index(monkeypatch):
     return real
 
 
-async def test_invented_id_is_contradicted_in_the_summary(stub_registry, fake_index):
-    """The real regression: a spliced id that exists in neither source dataset."""
-    bogus = "csa/C3_PP_CIS/C3_CP_CIS-HIA_ONBOARD_MOMENTS/N_p__C3_CP_CIS-HIA_ONBOARD_MOMENTS"
-    llm = ScriptedLLM([text(f"Use {bogus} for the ion density.")])
+BOGUS_ID = "csa/C3_PP_CIS/C3_CP_CIS-HIA_ONBOARD_MOMENTS/N_p__C3_CP_CIS-HIA_ONBOARD_MOMENTS"
+
+
+async def test_invented_id_buys_one_more_turn(stub_registry, fake_index):
+    """A fabricated id costs a turn, it does not just earn a footnote.
+
+    HelioBench `n1_mms_fgm` failed 3/3 byte-identically on exactly this: the detector
+    fired and the run ended anyway, shipping the fabrication with a warning stapled on.
+    """
+    llm = ScriptedLLM(
+        [
+            text(f"Use {BOGUS_ID} for the ion density."),
+            text(f"Use {fake_index} for the ion density."),
+        ]
+    )
+
+    events = await drain(**base(llm))
+
+    assert len(llm.calls) == 2, "the correction must be spent on another turn"
+    correction = llm.calls[1]["messages"][-1]
+    assert correction.role == "user"
+    assert BOGUS_ID in correction.content, "the retry must name the id it rejected"
+    assert not [e for e in events if e["event"] == "invalid_ids"], (
+        "an answer corrected on retry is clean, not flagged"
+    )
+    end = [e for e in events if e["event"] == "sub_agent_end"][0]
+    assert fake_index in end["data"]["summary"]
+
+
+async def test_invented_id_is_contradicted_when_the_retry_does_not_help(stub_registry, fake_index):
+    """The real regression: a spliced id that exists in neither source dataset.
+
+    One retry, not a loop — a model that repeats itself still gets contradicted.
+    """
+    llm = ScriptedLLM([text(f"Use {BOGUS_ID} for the ion density.")] * 2)
 
     events = await drain(**base(llm))
 
     flagged = [e for e in events if e["event"] == "invalid_ids"]
     assert flagged, "an id absent from the catalogue must raise an invalid_ids event"
-    assert flagged[0]["data"]["ids"] == [bogus]
+    assert flagged[0]["data"]["ids"] == [BOGUS_ID]
     assert flagged[0]["data"]["sub_agent_ctx"]["role"] == "parameter_hunter"
 
 

@@ -502,6 +502,23 @@ def interp_to(t_target, t_source, values):
     return np.column_stack(cols)
 
 
+def _resolve_dataset_name(name, datasets):
+    \"\"\"Map whatever the caller typed onto a manifest key.
+
+    The manifest keys a dataset by the slug of its product id's last component, but
+    every tool result and prompt in front of the model says the full id, so
+    load_data("cda/WI_H0_MFI/BGSM") is the natural thing to write. Mirrors
+    datastore._slug, including its _data suffix for names the preamble already binds.
+    \"\"\"
+    if name in datasets:
+        return name
+    _slug = _re.sub(r"[^a-z0-9]+", "_", name.rstrip("/").split("/")[-1].lower()).strip("_")
+    for _cand in (_slug, _slug + "_data"):
+        if _cand in datasets:
+            return _cand
+    return name
+
+
 def load_data(name):
     \"\"\"Load a dataset saved by get_timeseries or get_events_timeseries.
 
@@ -511,16 +528,15 @@ def load_data(name):
     of samples with no measurement.
     \"\"\"
     import json as _json, types as _types
-    if not _re.fullmatch(r"[a-z0-9_]+", str(name)):
-        raise ValueError(f"invalid dataset name {name!r} — use only lowercase letters, digits and underscores")
     _ddir = os.path.join(__sandbox_plot_dir, "data")
     _mfile = os.path.join(_ddir, "manifest.json")
     if not os.path.exists(_mfile):
         raise FileNotFoundError("no dataset manifest found — run get_timeseries or get_events_timeseries first")
     _manifest = _json.loads(open(_mfile).read())
-    _entry = _manifest.get("datasets", {}).get(name)
+    _datasets = _manifest.get("datasets", {})
+    _entry = _datasets.get(_resolve_dataset_name(str(name), _datasets))
     if _entry is None:
-        _available = sorted(_manifest.get("datasets", {}).keys())
+        _available = sorted(_datasets.keys())
         raise KeyError(f"unknown dataset {name!r} — available: {_available}")
     _fpath = os.path.join(_ddir, _entry["file"])
     _z = np.load(_fpath, allow_pickle=False)

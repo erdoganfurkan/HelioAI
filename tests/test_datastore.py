@@ -309,6 +309,41 @@ async def test_sandbox_load_data_roundtrip(session_dir):
 
 
 @pytest.mark.asyncio
+async def test_sandbox_load_data_accepts_the_product_id(session_dir):
+    """The id every tool result and prompt shows must work, not just the slug.
+
+    HelioBench n3 spent 41 of its 51 tool errors here: the prompt said "the dataset
+    saved from cda/WI_H0_MFI/BGSM", the model typed exactly that, and load_data
+    rejected it for not being lowercase. The `_data` suffix case matters too — ACE
+    density slugs to `np`, which the preamble already binds.
+    """
+    from helioai.tools.sandbox import run_python
+
+    t = np.array(["2005-01-17T00:00:00", "2005-01-17T01:00:00"], dtype="datetime64[s]")
+    for pid, vals in (("cda/WI_H0_MFI/BGSM", [10.0, 20.0]), ("cda/AC_H0_SWE/Np", [3.0, 5.0])):
+        save_timeseries(
+            pid,
+            time=t,
+            values=np.array(vals),
+            param_id=pid,
+            units="nT",
+            start="2005-01-17T00:00:00",
+            stop="2005-01-18T00:00:00",
+            columns=[],
+            source="get_timeseries",
+        )
+
+    code = (
+        "export('b', load_data('cda/WI_H0_MFI/BGSM').values)\n"
+        "export('n', load_data('cda/AC_H0_SWE/Np').values)"
+    )
+    result = await run_python(code, _plot_dir=str(session_dir))
+
+    assert abs(result["exports"]["b"]["mean"] - 15.0) < 0.01
+    assert abs(result["exports"]["n"]["mean"] - 4.0) < 0.01, "the _data suffix case"
+
+
+@pytest.mark.asyncio
 async def test_sandbox_load_data_unknown_name(session_dir):
     from helioai.tools.sandbox import run_python
 

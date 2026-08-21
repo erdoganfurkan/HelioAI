@@ -24,6 +24,7 @@ from helioai.core.tool_exec import (
     compact_history,
     emit_post_tool_events,
     inject_run_python_args,
+    unknown_id_correction,
 )
 from helioai.core.vision import maybe_review
 from helioai.logging_config import get_logger
@@ -376,6 +377,7 @@ async def stream_subagent(
         n_iters = 0
         t0 = time.monotonic()
         capped = False
+        retried_bogus_ids = False
 
         for i in range(role_cfg.max_turns):
             n_iters = i + 1
@@ -387,6 +389,19 @@ async def stream_subagent(
 
             if not response.tool_calls:
                 final_text = response.content or ""
+                # Same reasoning as the lead loop: a fabricated id must cost a turn, not
+                # a footnote on an answer that has already been written.
+                if not retried_bogus_ids:
+                    from helioai.tools.rag import extract_ids, unknown_ids
+
+                    bogus_now = unknown_ids(extract_ids(final_text))
+                    if bogus_now:
+                        retried_bogus_ids = True
+                        log.warning("subagent_invented_ids_retry", role=role, ids=bogus_now)
+                        history.append(
+                            Message(role="user", content=unknown_id_correction(bogus_now))
+                        )
+                        continue
                 break
 
             for tc in response.tool_calls:

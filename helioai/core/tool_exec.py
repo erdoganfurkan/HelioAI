@@ -310,6 +310,27 @@ def emit_post_tool_events(
         yield {"event": "artifact", "data": {**art, **common_extra}}
 
 
+def unknown_id_correction(bogus: list[str]) -> str:
+    """The correction handed back when an answer quotes ids that are not in the catalogue.
+
+    Shared between the retry that buys the model another turn and the annotation left
+    on an answer that has run out of turns, so both say exactly the same thing.
+
+    Args:
+        bogus: The ids that are absent from the index.
+
+    Returns:
+        The correction text, without the answer it refers to.
+    """
+    listed = "\n".join(f"  - {i}" for i in bogus)
+    return (
+        f"⚠️ AUTOMATED CORRECTION — the following ids are NOT in the catalogue and "
+        f"must not be used:\n{listed}\n"
+        f"They were not returned by any search. Call `search_parameters` again and "
+        f"copy the ids from its output verbatim."
+    )
+
+
 def _flag_unknown_ids(text: str) -> tuple[str, list[str]]:
     """Append a correction when an answer quotes parameter ids that do not exist.
 
@@ -335,15 +356,7 @@ def _flag_unknown_ids(text: str) -> tuple[str, list[str]]:
     bogus = unknown_ids(extract_ids(text))
     if not bogus:
         return text, []
-    listed = "\n".join(f"  - {i}" for i in bogus)
-    return (
-        f"{text}\n\n"
-        f"⚠️ AUTOMATED CORRECTION — the following ids are NOT in the catalogue and "
-        f"must not be used:\n{listed}\n"
-        f"They were not returned by any search. Call `search_parameters` again and "
-        f"copy the ids from its output verbatim.",
-        bogus,
-    )
+    return f"{text}\n\n{unknown_id_correction(bogus)}", bogus
 
 
 # Words from a recipe's own `# outputs:` header that carry no diagnostic weight — they

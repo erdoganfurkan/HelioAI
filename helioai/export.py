@@ -82,9 +82,16 @@ def load_data(name):
             f"manifest not found at {mfile} — copy the session data/ folder next to this notebook"
         )
     manifest = json.loads(mfile.read_text(encoding="utf-8"))
-    entry = manifest.get("datasets", {}).get(name)
+    datasets = manifest.get("datasets", {})
+    key = name
+    if key not in datasets:
+        # The manifest keys a dataset by the slug of its id's last component, but the
+        # session (and this notebook's prose) names the full product id.
+        slug = re.sub(r"[^a-z0-9]+", "_", name.rstrip("/").split("/")[-1].lower()).strip("_")
+        key = next((c for c in (slug, slug + "_data") if c in datasets), name)
+    entry = datasets.get(key)
     if entry is None:
-        available = sorted(manifest.get("datasets", {}).keys())
+        available = sorted(datasets.keys())
         raise KeyError(f"unknown dataset {name!r} — available: {available}")
     z = np.load(_HELIOAI_DATA_DIR / entry["file"], allow_pickle=False)
     if entry["kind"] == "timeseries":
@@ -501,7 +508,7 @@ def build_notebook(user_id: str, session_id: str):
     setup_cell = _SETUP_CELL_BASE
     if shim_needed:
         setup_cell += (
-            f"\n\nimport json, types\nfrom pathlib import Path\n"
+            f"\n\nimport json, re, types\nfrom pathlib import Path\n"
             f"_HELIOAI_DATA_DIR = Path({str(data_dir)!r})\n" + _LOAD_DATA_SHIM
         )
     cells.append(nbf.v4.new_code_cell(setup_cell))

@@ -89,3 +89,74 @@ async def test_lead_says_nothing_when_it_exported_nothing(monkeypatch, tmp_path,
 
     assert not [e for e in events if e["event"] == "recipe_bypassed"]
     assert next(e for e in events if e["event"] == "reply")["data"]["text"] == "Wind flies at L1."
+
+
+@pytest.mark.asyncio
+async def test_lead_retries_once_on_an_invented_id(monkeypatch, tmp_path, fake_llm_factory):
+    """The fabrication must cost a turn, not earn a footnote.
+
+    HelioBench `n1_mms_fgm` failed 3/3 byte-identically: the lead spliced a speasy
+    *path* into an id that exists nowhere, the detector fired, and the loop ended at
+    `n_iterations: 2` — shipping the invented id with the correction stapled to it.
+    """
+    from helioai.config import settings
+    from helioai.core import agent_loop
+    from helioai.core.session import SessionStore
+    from helioai.tools import rag
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
+
+    real = "cda/MMS1_FGM_SRVY_L2/mms1_fgm_b_gsm_srvy_l2"
+    bogus = "cda/MMS/MMS1/FGM/SRVY/mms1_fgm_srvy_l2/mms1_fgm_b_gsm_srvy_l2_clean"
+
+    class _Collection:
+        def get(self, ids):
+            return {"ids": [i for i in ids if i == real]}
+
+    monkeypatch.setattr(rag, "_collection_only", lambda: _Collection())
+
+    llm = fake_llm_factory(
+        [
+            Message(role="assistant", content=f"Use {bogus}."),
+            Message(role="assistant", content=f"Use {real}."),
+        ]
+    )
+
+    events = await _collect(agent_loop.stream_chat(llm, "u", "s", "MMS1 FGM survey B in GSM"))
+
+    assert len(llm.calls) == 2, "the correction must be spent on another turn"
+    correction = llm.calls[1]["messages"][-1]
+    assert correction.role == "user" and bogus in correction.content
+
+    assert not [e for e in events if e["event"] == "invalid_ids"]
+    reply = [e for e in events if e["event"] == "reply"][-1]["data"]["text"]
+    assert real in reply and "AUTOMATED CORRECTION" not in reply
+
+
+@pytest.mark.asyncio
+async def test_lead_gives_up_after_one_retry(monkeypatch, tmp_path, fake_llm_factory):
+    """One retry, not a loop — a model that repeats itself still gets contradicted."""
+    from helioai.config import settings
+    from helioai.core import agent_loop
+    from helioai.core.session import SessionStore
+    from helioai.tools import rag
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
+
+    bogus = "cda/MMS1_FGM_SRVY_L2/mms1_fgm_b_gsm_srvy_l2_clean"
+    monkeypatch.setattr(
+        rag, "_collection_only", lambda: type("C", (), {"get": lambda s, ids: {"ids": []}})()
+    )
+
+    llm = fake_llm_factory([Message(role="assistant", content=f"Use {bogus}.")] * 2)
+
+    events = await _collect(agent_loop.stream_chat(llm, "u", "s", "MMS1 FGM survey B in GSM"))
+
+    assert len(llm.calls) == 2, "exactly one retry, then the answer ships annotated"
+    flagged = [e for e in events if e["event"] == "invalid_ids"]
+    assert flagged and flagged[0]["data"]["ids"] == [bogus]
+    assert (
+        "AUTOMATED CORRECTION" in [e for e in events if e["event"] == "reply"][-1]["data"]["text"]
+    )

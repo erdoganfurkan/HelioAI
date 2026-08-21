@@ -126,12 +126,23 @@ class Message:
             narrated what it was about to do.
         tool_calls: Tools the assistant wants invoked, when it requested any.
         tool_call_id: For `tool` messages, the `ToolCall.id` being answered.
+        prompt_tokens: Input tokens the provider billed for this reply, 0 when it
+            reported none.
+        completion_tokens: Output tokens the provider billed for this reply.
+        cached_tokens: The subset of `prompt_tokens` served from the provider's
+            prompt cache. Priced differently by every provider, so it is kept
+            apart from the total rather than folded into it.
     """
 
     role: Literal["system", "user", "assistant", "tool"]
     content: str = ""
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
+    # Telemetry about the response, not part of the conversation: `SessionStore`
+    # deliberately does not persist these, so a reloaded history reports no cost.
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cached_tokens: int = 0
 
 
 @dataclass

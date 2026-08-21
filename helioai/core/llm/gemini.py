@@ -152,6 +152,19 @@ class GeminiClient(LLMClient):
             text = getattr(part, "text", None)
             if text:
                 text_chunks.append(text)
+        # google-genai names every count differently from the OpenAI wire format,
+        # which is the whole reason this client is not the compat one.
+        um = getattr(response, "usage_metadata", None)
+        usage = {
+            "prompt_tokens": (getattr(um, "prompt_token_count", 0) or 0) if um else 0,
+            "completion_tokens": (getattr(um, "candidates_token_count", 0) or 0) if um else 0,
+            "cached_tokens": (getattr(um, "cached_content_token_count", 0) or 0) if um else 0,
+        }
         if tool_calls:
-            return Message(role="assistant", content="".join(text_chunks), tool_calls=tool_calls)
-        return Message(role="assistant", content="".join(text_chunks))
+            return Message(
+                role="assistant",
+                content="".join(text_chunks),
+                tool_calls=tool_calls,
+                **usage,
+            )
+        return Message(role="assistant", content="".join(text_chunks), **usage)

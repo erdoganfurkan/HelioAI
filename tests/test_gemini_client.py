@@ -272,3 +272,30 @@ async def test_round_trip_id_survives_a_tool_reply(client):
     await c.chat([Message(role="tool", content="{}", tool_call_id=call.id)], tools=[])
     part = models.calls[-1]["contents"][0].parts[0]
     assert part.function_response.name == "power_spectrum"
+
+
+async def test_token_counts_reach_the_agent_loop(client):
+    """Gemini names every count differently, which is why it has its own client."""
+    c, models = client
+    models.response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(parts=[SimpleNamespace(function_call=None, text="ok")])
+            )
+        ],
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=4096,
+            candidates_token_count=57,
+            cached_content_token_count=1024,
+        ),
+    )
+
+    reply = await c.chat([Message(role="user", content="hi")], tools=[])
+
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.cached_tokens) == (4096, 57, 1024)
+
+
+async def test_missing_usage_metadata_costs_zero(client):
+    c, models = client
+    reply = await c.chat([Message(role="user", content="hi")], tools=[])
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.cached_tokens) == (0, 0, 0)

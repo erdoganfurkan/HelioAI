@@ -756,3 +756,41 @@ async def test_a_turn_with_tool_calls_but_no_text_is_not_retried():
 
     assert len(fake.calls) == 1, "a tool call is an answer; retrying would double the work"
     assert [t.name for t in msg.tool_calls] == ["search_parameters"]
+
+
+# ── inbound: token accounting ──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("build", OPENAI_CLIENTS)
+@pytest.mark.asyncio
+async def test_token_counts_reach_the_agent_loop(build):
+    """The response already carries the cost; throwing it away made it unmeasurable.
+
+    HelioBench had to wrap the SDK client to recover numbers that were sitting on
+    `response.usage` all along.
+    """
+    client, fake = build()
+    fake.completions.response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+        usage=SimpleNamespace(
+            prompt_tokens=11250,
+            completion_tokens=84,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=8192),
+        ),
+    )
+
+    reply = await client.chat([Message(role="user", content="hi")], tools=[])
+
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.cached_tokens) == (11250, 84, 8192)
+
+
+@pytest.mark.parametrize("build", OPENAI_CLIENTS)
+@pytest.mark.asyncio
+async def test_a_provider_reporting_no_usage_costs_zero_not_a_crash(build):
+    """Not every OpenAI-compatible endpoint fills `usage`, and none fill it always."""
+    client, fake = build()
+    fake.completions.response = _openai_response(content="ok")
+
+    reply = await client.chat([Message(role="user", content="hi")], tools=[])
+
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.cached_tokens) == (0, 0, 0)

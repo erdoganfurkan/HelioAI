@@ -111,6 +111,23 @@ def to_openai_tools(tools: list[ToolDef]) -> list[dict]:
     ]
 
 
+def _usage(response: Any) -> dict[str, int]:
+    """Token counts as the provider reported them, zeroed when it reported none.
+
+    Every OpenAI-compatible endpoint fills `usage`, but not all of them fill
+    `prompt_tokens_details`, so the cached count is read defensively rather than
+    assumed. These were thrown away until the benchmark had to wrap the SDK client
+    to recover what the response already carried.
+    """
+    u = getattr(response, "usage", None)
+    details = getattr(u, "prompt_tokens_details", None) if u else None
+    return {
+        "prompt_tokens": (getattr(u, "prompt_tokens", 0) or 0) if u else 0,
+        "completion_tokens": (getattr(u, "completion_tokens", 0) or 0) if u else 0,
+        "cached_tokens": (getattr(details, "cached_tokens", 0) or 0) if details else 0,
+    }
+
+
 def from_openai_response(response: Any, provider: str = "openai") -> Message:
     """Convert an OpenAI chat-completions response to a neutral message.
 
@@ -129,6 +146,7 @@ def from_openai_response(response: Any, provider: str = "openai") -> Message:
     """
     choice = response.choices[0]
     msg = choice.message
+    usage = _usage(response)
     raw_content = msg.content or ""
     content = _strip_reasoning(raw_content)
     tool_calls_raw = getattr(msg, "tool_calls", None) or []
@@ -149,7 +167,7 @@ def from_openai_response(response: Any, provider: str = "openai") -> Message:
                 len(raw_content),
                 len(content),
             )
-        return Message(role="assistant", content=content)
+        return Message(role="assistant", content=content, **usage)
 
     tool_calls: list[ToolCall] = []
     for tc in tool_calls_raw:
@@ -172,7 +190,7 @@ def from_openai_response(response: Any, provider: str = "openai") -> Message:
             )
             args = {}
         tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
-    return Message(role="assistant", content=content, tool_calls=tool_calls)
+    return Message(role="assistant", content=content, tool_calls=tool_calls, **usage)
 
 
 class OpenAICompatClient(LLMClient):

@@ -82,12 +82,12 @@ Safety: NEVER print or iterate raw catalog events in run_python (thousands of ro
 
 ## Delegation (do NOT call the underlying tools yourself)
 - Analysis, plots, spectra, multi-mission, event detection → ONE `data_analyst`. Put the (possibly vague) parameter descriptions in the task; data_analyst resolves the ids itself — do NOT run `parameter_hunter` first, it would just repeat the search.
-- Plasma quantities (β, gyrofrequency, Debye length…) → `plasma_physicist`.
+- Plasma quantities (β, gyrofrequency, Debye length, Alfvén speed…) and quantitative plasma structures (Rankine-Hugoniot shock jumps, θ_Bn, Walén test, MVAB discontinuity normal, pressure balance) → `plasma_physicist`.
 - Literature search, or comparing computed values with published results → ONE `librarian`. Put the event context AND the computed values in the task description.
-- Requests mixing analysis AND literature (e.g. "compute θ_Bn then find papers about it"): ONE `data_analyst` first, then ONE `librarian` fed with the analyst's key values — never run both workflows inline yourself, you would exhaust your iteration budget.
+- Requests mixing analysis AND literature (e.g. "compute θ_Bn then find papers about it"): ONE `plasma_physicist` (or `data_analyst`) first, then ONE `librarian` fed with the analyst's key values — never run both workflows inline yourself, you would exhaust your iteration budget.
 - `parameter_hunter` ONLY when the user just wants parameter ids resolved, with no download or analysis.
 Then you interpret and reply.
-- The test is mechanical, not a judgement call: **count the stages the request needs.** Resolving ids, downloading, computing and plotting are four stages. Three or more → delegate to `data_analyst`, always, even when you already know the ids and even when it looks quick. Do it yourself only when one or two tool calls finish the job (a single download, a single plot of data already in hand, one lookup).
+- The test is mechanical, not a judgement call: **count the stages the request needs.** Resolving ids, downloading, computing and plotting are four stages. Three or more → delegate to `data_analyst` or `plasma_physicist`, always, even when you already know the ids and even when it looks quick. Do it yourself only when one or two tool calls finish the job (a single download, a single plot of data already in hand, one lookup).
 
 ## Only when you run code yourself (rare — see Delegation above)
 - `load_data()` returns arrays with NaN wherever the mission declared a fill value. Use `np.nanargmax`/`nanargmin`/`nanmean`/`nanstd`: plain `np.argmax` returns the index of the first NaN, because no comparison ever displaces it — that points a shock detector at a data gap.

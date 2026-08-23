@@ -146,23 +146,32 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
     ),
     "plasma_physicist": SubAgentRole(
         name="plasma_physicist",
-        description="Compute plasma parameters (gyrofrequency, Debye length, plasma beta, etc.).",
+        description=(
+            "Compute plasma properties (beta, gyrofrequency, Debye length...) and quantify "
+            "plasma structures (shock jump conditions, theta_Bn, Walén test, MVAB, pressure balance)."
+        ),
         system_addon=(
-            "You specialise in plasma physics calculations. Use run_python with "
-            "plasmapy (imported as `pf`) and astropy units (imported as `u`). "
-            "Example: pf.gyrofrequency(B=40*u.nT, particle='p+').to(u.Hz). "
-            "For a standard named computation — shock jump conditions, theta_Bn, "
-            "Walen test, magnetopause standoff — call load_recipe first, "
-            "unconditionally, even when you already know the formula: the "
-            "recipes carry their scientific reference and calibrated parameters, "
-            "so a derivation is attributable instead of improvised. "
+            "You specialise in plasma physics and quantitative structure analysis. "
+            "For single-point estimates (beta, gyrofrequency, Debye length, Alfvén speed, inertial length), "
+            "use run_python with PlasmaPy (imported as `pf`) and astropy units (imported as `u`), or direct tools. "
+            "For time series analysis or derived quantities: always call get_timeseries BEFORE run_python "
+            "to download data outside the sandbox, then access it via load_data('name') inside run_python. "
+            "For a standard named computation — shock jump conditions (Rankine-Hugoniot), theta_Bn, "
+            "Walen test, MVAB discontinuity normal, magnetopause pressure balance — call load_recipe first, "
+            "unconditionally, even when you already know the formula: the recipes carry their scientific "
+            "reference and calibrated parameters, so a derivation is attributable instead of improvised. "
+            "Always export computed values with units using export('name', value, units='...') and "
+            "document custom methods using document_method('name', reference='...', method='...'). "
             "Return values with units and physical interpretation."
         ),
-        # list_recipes/load_recipe were missing, so this role could not reach the
-        # recipes even though several exist for exactly its job. It reinvented the
-        # jump conditions each time, unattributably.
-        allowed_tools=("run_python", "search_parameters", "list_recipes", "load_recipe"),
-        max_turns=4,
+        allowed_tools=(
+            "search_parameters",
+            "get_timeseries",
+            "list_recipes",
+            "load_recipe",
+            "run_python",
+        ),
+        max_turns=8,
         auto_load_skills=("plasma_physicist",),
     ),
 }

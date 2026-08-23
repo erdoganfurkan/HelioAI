@@ -250,8 +250,8 @@ Full catalog catalogue via `list_catalogs()` or `helioai "what event catalogs ar
 | Role | Purpose | Max turns |
 |---|---|---|
 | `parameter_hunter` | Resolve vague descriptions → speasy parameter IDs | 4 |
-| `data_analyst` | Download, analyse, plot, multi-mission, event detection | 8 |
-| `plasma_physicist` | PlasmaPy calculations, sanity checks by region | 4 |
+| `data_analyst` | Download, analyse, plot, multi-mission, event detection | 12 |
+| `plasma_physicist` | PlasmaPy calculations, shock jumps, discontinuities, recipes | 8 |
 | `librarian` | NASA ADS literature search, multi-round funnel | 4 |
 
 ---

@@ -251,7 +251,7 @@ Full catalog catalogue via `list_catalogs()` or `helioai "what event catalogs ar
 |---|---|---|
 | `parameter_hunter` | Resolve vague descriptions → speasy parameter IDs | 4 |
 | `data_analyst` | Download, analyse, plot, multi-mission, event detection | 12 |
-| `plasma_physicist` | PlasmaPy calculations, shock jumps, discontinuities, recipes | 8 |
+| `plasma_physicist` | PlasmaPy calculations, shock jumps, discontinuities, recipes | 10 |
 | `librarian` | NASA ADS literature search, multi-round funnel | 4 |
 
 ---

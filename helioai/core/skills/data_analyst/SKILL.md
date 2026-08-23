@@ -1,7 +1,7 @@
 ---
 name: data_analyst
 description: Download and analyze heliophysics time series — statistics, FFT, multi-mission comparison, event detection, plotting.
-when_to_use: The user wants to retrieve data, compute statistics, plot a time series, compare multiple missions, detect plasma events (shocks, reconnection, CME, SIR), or run any numerical analysis on speasy parameters.
+when_to_use: The user wants to retrieve data, compute statistics, plot a time series, compare multiple missions, run event detection surveys, or perform superposed epoch analysis (SEA). For specialized plasma jump conditions and quantitative boundary analysis (Rankine-Hugoniot, θ_Bn, Walén, MVAB), the lead delegates to plasma_physicist.
 allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_recipe, run_python]
 ---
 
@@ -13,11 +13,7 @@ A text description of a plot is not a figure. To produce a figure, call run_pyth
 ## RULE ZERO-BIS — a computation with a recipe is NEVER hand-written, even when you already know the formula
 Knowing the physics is not the point — `load_recipe(name)` before writing a single line for any
 task in the table below, unconditionally. A recipe carries calibrated parameters (averaging
-windows, physical constants) and a self-test that code written from memory does not have. Getting
-the formula right from memory and still being wrong is exactly how this table earned its entries:
-a hand-written Rankine-Hugoniot on this same event guessed an eV→K conversion instead of using the
-constant, picked averaging windows the recipe's own calibration table flags as the worst
-combination, and landed 10% off a compression ratio the recipe gets exactly. Load first, adapt
+windows, physical constants) and a self-test that code written from memory does not have. Load first, adapt
 second — never the other way around.
 
 ## RULE ONE — download outside the sandbox, always
@@ -32,14 +28,12 @@ using one also gives you provenance.
 
 | Task | Recipe |
 |---|---|
-| Shock normal angle θ_Bn | `theta_bn` |
-| Discontinuity / current-sheet normal (minimum variance) | `mvab` |
-| Shock jump conditions, compression ratio, shock speed | `rankine_hugoniot` — **also picks the upstream/downstream averaging windows**; call `upstream_downstream(t, values, shock_time)` per quantity and never pass averages you computed yourself. Choosing those windows by hand is where this analysis goes wrong: a generous guard band with a long window sounds careful, lands in the decaying sheath, and returns a compression of 1.89 instead of 2.59 with every downstream number wrong. |
-| Rotational vs tangential discontinuity | `walen_test` |
-| Shock timing between TWO spacecraft | `shock_timing_2sc` — two spacecraft do **not** determine a shock normal (that needs four). Pass the normal from `theta_bn` or `mvab`; deriving it from the separation and the lag makes the transverse separation come out as exactly 0 km for any input, and that tautology has already been published as a geometrical result. |
-| Magnetopause standoff distance (pressure balance) | `pressure_balance` |
-| Particle pitch-angle distribution | `pitch_angle_dist` |
 | Superposed epoch analysis over a catalog | `superposed_epoch` |
+| Particle event onset detection (Poisson CUSUM) | `sep_onset_poisson_cusum` |
+| Spacecraft fleet configuration / solar separation | `solar_mach` |
+| Standalone script data filtering outside HelioAI | `fill_values` |
+
+*(Note: Shock jump conditions (`rankine_hugoniot`, `theta_bn`), discontinuity classification (`walen_test`, `mvab`), and pressure balance (`pressure_balance`) are primarily handled by `plasma_physicist`. If analyzing them as part of a multi-mission time-series plot, load those recipes directly).*
 
 When you write custom code for a computation with no recipe, call
 `document_method("<name>", reference="<paper/formula>", method="<one line>")` in run_python so the

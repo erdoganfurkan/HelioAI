@@ -45,7 +45,7 @@ def test_plasma_physicist_tools() -> None:
     assert "run_python" in role.allowed_tools
     assert "get_timeseries" in role.allowed_tools
     assert "search_parameters" in role.allowed_tools
-    assert role.max_turns == 8
+    assert role.max_turns == 10
 
 
 def test_plasma_physicist_can_reach_the_recipes() -> None:

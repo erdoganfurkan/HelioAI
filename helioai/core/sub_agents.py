@@ -171,7 +171,7 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "load_recipe",
             "run_python",
         ),
-        max_turns=8,
+        max_turns=10,
         auto_load_skills=("plasma_physicist",),
     ),
 }

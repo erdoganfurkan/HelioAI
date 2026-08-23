@@ -88,7 +88,7 @@ one tool that is not in the registry — the agent loop intercepts it directly.
 |---|---|---|---|
 | `parameter_hunter` | vague description → speasy IDs | search only | 4 |
 | `data_analyst` | download, analyse, plot, detect | data + recipes + sandbox | 12 |
-| `plasma_physicist` | PlasmaPy, shock jumps, discontinuities, recipes | data + recipes + sandbox | 8 |
+| `plasma_physicist` | PlasmaPy, shock jumps, discontinuities, recipes | data + recipes + sandbox | 10 |
 | `librarian` | multi-round ADS literature search | `find_papers` | 4 |
 
 Delegation exists for context isolation, not parallelism: a parameter search that reads

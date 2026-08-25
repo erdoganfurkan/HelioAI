@@ -171,3 +171,37 @@ async def test_power_spectrum_reports_gap_fraction() -> None:
     assert "gap_fraction" in result
     assert "n_original" in result
     assert "n_dropped" in result
+
+
+async def test_power_spectrum_segmented_on_gapped_series() -> None:
+    import numpy as np
+
+    dt = 1.0
+    t = np.arange(1000) * dt
+    sig = np.sin(2 * math.pi * 0.05 * t)
+    # Insert a 100-sample gap in the middle
+    sig_gapped = sig.copy()
+    sig_gapped[450:550] = np.nan
+
+    result = await power_spectrum(sig_gapped.tolist(), dt_s=dt, nperseg=128)
+    assert result.get("error") is None
+    assert result["n_segments"] == 2
+    assert result["longest_gap_samples"] == 100
+    assert result["n_samples_used"] == 900
+    assert result["n_dropped"] == 100
+    assert result["peak_frequency_Hz"] == pytest.approx(0.05, abs=0.01)
+
+
+async def test_power_spectrum_ungapped_properties() -> None:
+    import numpy as np
+
+    dt = 0.5
+    t = np.arange(512) * dt
+    sig = np.sin(2 * math.pi * 0.2 * t)
+    result = await power_spectrum(sig.tolist(), dt_s=dt, nperseg=128)
+    assert result.get("error") is None
+    assert result["n_segments"] == 1
+    assert result["longest_gap_samples"] == 0
+    assert result["n_samples_used"] == 512
+    assert result["n_dropped"] == 0
+    assert result["peak_frequency_Hz"] == pytest.approx(0.2, abs=0.02)

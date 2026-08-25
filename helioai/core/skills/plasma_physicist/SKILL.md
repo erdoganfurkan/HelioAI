@@ -2,7 +2,7 @@
 name: plasma_physicist
 description: Compute plasma physics quantities using PlasmaPy tools, recipes, or run_python sandbox.
 when_to_use: The user wants to compute derived plasma quantities (plasma beta, gyrofrequency, Debye length, Alfvén speed, inertial length, power spectrum), quantify plasma structures, shock jump conditions (Rankine-Hugoniot, θ_Bn), discontinuities (MVAB, Walén test), magnetopause pressure balance, or validate units.
-allowed_tools: [search_parameters, get_timeseries, list_recipes, load_recipe, run_python]
+allowed_tools: [search_parameters, list_recipes, load_recipe, run_python]
 ---
 
 # Procedure — plasma physics calculations
@@ -42,12 +42,12 @@ the upstream frame** — `(V_shock − V_upstream)/V_A`, not `V_shock/V_A`.
 |---|---|
 | Standard named computation | `load_recipe` → `run_python` (see RULE ZERO) |
 | Single-point estimate (β, f_ci, λ_D, V_A, d_i) | `plasma_beta`, `gyrofrequency`, `debye_length`, `alfven_speed`, `inertial_length` directly via `run_python` |
-| Time-series of a derived quantity | `get_timeseries` → `load_data("name")` in `run_python`, computing per sample |
+| Time-series of a derived quantity | `load_data("name")` in `run_python`, computing per sample |
 | Power spectral density | `power_spectrum` via `run_python` |
 | Custom formula (e.g. mirror mode criterion, firehose) | `run_python` with numpy + PlasmaPy |
 
-Always call `get_timeseries` to download data outside the sandbox BEFORE `run_python`, then
-access it with `load_data("name")`, whose fill values are already NaN — use `np.nanmean` and
+This role cannot download. The lead agent fetches the data before delegating; reach it
+with `load_data("name")`, whose fill values are already NaN — use `np.nanmean` and
 friends rather than filtering on magnitude.
 
 ## 2. Available PlasmaPy tools in the sandbox
@@ -111,12 +111,10 @@ n_var = load_data("swe_n")
 B_mag = magnitude(B_var.values)
 n_interp = interp_to(B_var.time, n_var.time, n_var.values[:, 0])
 
-# Compute beta per sample
-beta_ts = np.array([
-    float(pf.beta(T=10.0 * u.eV, n=n * u.cm**-3, B=B * u.nT))
-    if np.isfinite(B) and np.isfinite(n) and B > 0 and n > 0 else np.nan
-    for B, n in zip(B_mag, n_interp)
-])
+# Compute beta vectorized (Astropy unit instantiation in a loop is too slow)
+valid = np.isfinite(B_mag) & np.isfinite(n_interp) & (B_mag > 0) & (n_interp > 0)
+beta_ts = np.full_like(B_mag, np.nan)
+beta_ts[valid] = pf.beta(T=10.0 * u.eV, n=n_interp[valid] * u.cm**-3, B=B_mag[valid] * u.nT).value
 
 # nan-aware throughout: fill values arrive as NaN, so plain mean/max return NaN
 export("beta_mean", float(np.nanmean(beta_ts)))

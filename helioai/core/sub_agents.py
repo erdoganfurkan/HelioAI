@@ -154,8 +154,8 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "You specialise in plasma physics and quantitative structure analysis. "
             "For single-point estimates (beta, gyrofrequency, Debye length, Alfvén speed, inertial length), "
             "use run_python with PlasmaPy (imported as `pf`) and astropy units (imported as `u`), or direct tools. "
-            "For time series analysis or derived quantities: always call get_timeseries BEFORE run_python "
-            "to download data outside the sandbox, then access it via load_data('name') inside run_python. "
+            "For time series analysis or derived quantities, use load_data('name') inside run_python "
+            "to access the data downloaded by the lead agent. "
             "For a standard named computation — shock jump conditions (Rankine-Hugoniot), theta_Bn, "
             "Walen test, MVAB discontinuity normal, magnetopause pressure balance — call load_recipe first, "
             "unconditionally, even when you already know the formula: the recipes carry their scientific "
@@ -166,12 +166,11 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
         ),
         allowed_tools=(
             "search_parameters",
-            "get_timeseries",
             "list_recipes",
             "load_recipe",
             "run_python",
         ),
-        max_turns=10,
+        max_turns=4,
         auto_load_skills=("plasma_physicist",),
     ),
 }

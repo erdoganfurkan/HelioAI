@@ -31,7 +31,7 @@ _TOKEN = re.compile(rf"(?<![\w.])(-?\d+(?:\.\d+)?)(?:\s*({_UNITS})(?![\w/^]))?")
 # A bare integer under this is almost always "3 panels" or "2 spacecraft"; matching them
 # floods the report with noise that hides the one number that matters. Written with a
 # decimal point it is a measurement — "M_A ~ 4.0" is a claim, "4 panels" is not.
-_MIN_BARE_INT = 10.0
+_MIN_BARE_INT = 32.0
 _YEARS = range(1994, 2031)
 
 _NAME_WINDOW = 40

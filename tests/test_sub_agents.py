@@ -43,9 +43,9 @@ def test_librarian_tools() -> None:
 def test_plasma_physicist_tools() -> None:
     role = AGENT_ROLES["plasma_physicist"]
     assert "run_python" in role.allowed_tools
-    assert "get_timeseries" in role.allowed_tools
+    assert "get_timeseries" not in role.allowed_tools
     assert "search_parameters" in role.allowed_tools
-    assert role.max_turns == 10
+    assert role.max_turns == 4
 
 
 def test_plasma_physicist_can_reach_the_recipes() -> None:
@@ -99,7 +99,7 @@ def test_task_tool_def_description_mentions_all_roles() -> None:
     [
         ("parameter_hunter", ["get_timeseries", "run_python"]),
         ("data_analyst", ["list_missions"]),
-        ("plasma_physicist", ["list_missions", "get_events_timeseries"]),
+        ("plasma_physicist", ["get_timeseries", "list_missions", "get_events_timeseries"]),
         ("librarian", ["run_python", "get_timeseries", "search_parameters"]),
     ],
 )

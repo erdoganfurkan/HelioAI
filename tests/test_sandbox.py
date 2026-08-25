@@ -848,3 +848,29 @@ except OSError as e:
     result = await sb.run_python(code, _no_net=True)
     assert result.get("error") is None
     assert "NET_BLOCKED:" in result["stdout"]
+
+
+def test_seed_skips_the_read_only_download_caches(tmp_path, monkeypatch):
+    """The seed copies what the sandbox must write, not speasy's whole data tree.
+
+    Copying everything cost 706 MB per spawn against 95 MB for the index, and the
+    homes are never deleted — fourteen of them filled a 149 GB disk in fifty minutes.
+    """
+    import helioai.tools.sandbox as sb
+
+    src = tmp_path / "xdg" / "speasy"
+    (src / "index" / "9b").mkdir(parents=True)
+    (src / "index" / "9b" / "cache.val").write_bytes(b"x" * 2048)
+    (src / "cda_inventory" / "masters_cdf").mkdir(parents=True)
+    (src / "cda_inventory" / "masters_cdf" / "aim_cips.cdf").write_bytes(b"y" * 4096)
+    (src / "index.diskcache.backup").mkdir()
+    (src / "index.diskcache.backup" / "old.val").write_bytes(b"z" * 4096)
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    home = tmp_path / "sandbox_home"
+    sb._seed_speasy_inventory(str(home))
+
+    seeded = home / ".local" / "share" / "speasy"
+    assert (seeded / "index" / "9b" / "cache.val").read_bytes() == b"x" * 2048
+    assert not (seeded / "cda_inventory").exists()
+    assert not (seeded / "index.diskcache.backup").exists()

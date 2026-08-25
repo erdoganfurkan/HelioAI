@@ -95,6 +95,17 @@ _SENSITIVE_HOME_PATHS = frozenset(
     }
 )
 
+# Subtrees of speasy's data directory NOT worth copying into every sandbox home.
+# `cda_inventory/masters_cdf` is a read-only download cache of CDAWeb master CDFs
+# (548 MB on the host that surfaced this) which only `spz.get_data()` inside the
+# sandbox would touch — and every prompt tells the model to use `load_data()` instead.
+# A run that really needs a master re-fetches it, or fails loudly under --unshare-net.
+#
+# ponytail: a skip-list, so a future speasy layout can grow a new heavy directory
+# unnoticed; seeding only the writable index explicitly would need speasy's own
+# layout contract, which it does not publish.
+_SEED_SKIP = ("cda_inventory", "*.backup")
+
 # ponytail: fork-bomb cap, generous so numpy/scipy thread pools still spawn.
 _MAX_PROCS = 4096
 
@@ -147,6 +158,14 @@ def _seed_speasy_inventory(home: str) -> None:
     bwrap only the session's own directory is really on disk (`data_dir` is masked by
     a tmpfs). A copy needs no new bind mount and no cross-session locking.
 
+    Only what the sandbox must be able to WRITE is copied — see `_SEED_SKIP`. Copying
+    the whole tree cost 706 MB per spawn on a host where speasy's data directory had
+    grown, against 95 MB for the index alone, and nothing deletes those homes: fourteen
+    of them filled a 149 GB disk in fifty minutes. The size was invisible from the code
+    because `XDG_DATA_HOME` decides which tree is read — under the VS Code snap it
+    points at `~/snap/code/<rev>/.local/share`, not `~/.local/share`, and that copy held
+    548 MB of CDAWeb master CDFs accumulated over months.
+
     Best-effort by construction — no host inventory, no permission, no space, and the
     session simply pays the rebuild as before. It must never be the reason a run fails.
     """
@@ -156,7 +175,7 @@ def _seed_speasy_inventory(home: str) -> None:
         return
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, dst)
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*_SEED_SKIP))
     except (OSError, shutil.Error) as e:
         from helioai.logging_config import get_logger
 

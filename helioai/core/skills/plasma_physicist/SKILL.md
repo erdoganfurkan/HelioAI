@@ -52,17 +52,15 @@ friends rather than filtering on magnitude.
 
 ## 2. Available PlasmaPy tools in the sandbox
 
-All accept keyword arguments with units. Import from `helioai.tools.plasmapy_tools`.
+`plasmapy.formulary` is pre-imported as `pf`, and `astropy.units` is pre-imported as `u`. Use `pf` directly:
 
 ```python
-from helioai.tools.plasmapy_tools import (
-    plasma_beta,       # (B_nT, n_cm3, T_eV) → β (dimensionless)
-    gyrofrequency,     # (B_nT, particle='p'|'e'|'He2+') → Hz
-    debye_length,      # (n_cm3, T_eV) → km
-    alfven_speed,      # (B_nT, n_cm3, ion_mass_amu=1.0) → km/s
-    inertial_length,   # (n_cm3, particle='p'|'e') → km
-    power_spectrum,    # (signal_array, dt_s, nperseg=256) → (freq, psd)
-)
+# Quantities accept astropy units attached via * u.<unit>
+beta = pf.beta(T=T_eV * u.eV, n=n_cm3 * u.cm**-3, B=B_nT * u.nT)  # dimensionless
+fci = pf.gyrofrequency(B=B_nT * u.nT, particle="p+").to(u.Hz)       # Hz
+lambda_D = pf.Debye_length(T=T_eV * u.eV, n_e=n_cm3 * u.cm**-3).to(u.km)  # km
+Va = pf.Alfven_speed(B=B_nT * u.nT, density=n_cm3 * u.cm**-3).to(u.km / u.s)  # km/s
+di = pf.inertial_length(n=n_cm3 * u.cm**-3, particle="p+").to(u.km)  # km
 ```
 
 ## 3. Unit conventions — always check before computing
@@ -79,19 +77,21 @@ If units come from `get_timeseries`, check the `units` field first. Common sourc
 - AMDA: nT for B, cm⁻³ for density, eV for temperature ✓
 - CDA/SPDF: can be in SI — check CATDESC or units field carefully
 
+Multi-species note: $\beta_{total} = \beta_i + \beta_e$. In the solar wind $T_i/T_e \sim 2\text{--}5$, and in the magnetosheath $T_i/T_e \sim 7$. A single temperature scalar underestimates $\beta_{total}$.
+
 ## 4. Single-point calculation template
 
 ```python
-from helioai.tools.plasmapy_tools import plasma_beta, alfven_speed, gyrofrequency
+# pf (plasmapy.formulary) and u (astropy.units) are already imported
 
 # Solar wind reference values
 B_nT = 5.0      # nT
 n_cm3 = 10.0    # cm⁻³
 T_eV = 10.0     # eV
 
-beta = plasma_beta(B_nT, n_cm3, T_eV)
-Va = alfven_speed(B_nT, n_cm3)
-fci = gyrofrequency(B_nT, particle='p')
+beta = float(pf.beta(T=T_eV * u.eV, n=n_cm3 * u.cm**-3, B=B_nT * u.nT))
+Va = float(pf.Alfven_speed(B=B_nT * u.nT, density=n_cm3 * u.cm**-3).to_value(u.km / u.s))
+fci = float(pf.gyrofrequency(B=B_nT * u.nT, particle="p+").to_value(u.Hz))
 
 export("plasma_beta", beta)
 export("alfven_speed_km_s", Va)
@@ -102,26 +102,34 @@ export("ion_gyrofreq_Hz", fci)
 
 ```python
 import numpy as np
-from helioai.tools.plasmapy_tools import plasma_beta
 
 # The lead agent downloaded these; load them, never spz.get_data here.
 B_var = load_data("imf_all")
 n_var = load_data("swe_n")
 
-# Align on B time grid (interpolate density)
-B_mag = np.linalg.norm(B_var.values, axis=1)
-n_interp = np.interp(
-    B_var.time.astype("int64"),
-    n_var.time.astype("int64"),
-    n_var.values[:, 0],
-)
+# Align on B time grid using interp_to (handles gaps and arrays cleanly)
+B_mag = magnitude(B_var.values)
+n_interp = interp_to(B_var.time, n_var.time, n_var.values[:, 0])
 
-beta_ts = np.array([plasma_beta(B, n, T_eV=10.0) for B, n in zip(B_mag, n_interp)])
+# Compute beta per sample
+beta_ts = np.array([
+    float(pf.beta(T=10.0 * u.eV, n=n * u.cm**-3, B=B * u.nT))
+    if np.isfinite(B) and np.isfinite(n) and B > 0 and n > 0 else np.nan
+    for B, n in zip(B_mag, n_interp)
+])
 
 # nan-aware throughout: fill values arrive as NaN, so plain mean/max return NaN
 export("beta_mean", float(np.nanmean(beta_ts)))
 export("beta_max", float(np.nanmax(beta_ts)))
-export("beta_gt_1_fraction", float(np.mean(beta_ts > 1.0)))
+
+# A fraction has to select the finite samples BEFORE comparing. `np.nanmean(beta_ts > 1.0)`
+# reads as nan-aware and is not: `NaN > 1.0` is False, so every gap has already been filed
+# under "does not exceed" and nanmean has no NaN left to skip. On a series half missing it
+# returns 0.25 where the measured fraction is 0.5 — an answer that is wrong in the safe
+# direction, which is the kind nobody checks.
+finite_beta = beta_ts[np.isfinite(beta_ts)]
+export("beta_gt_1_fraction", float(np.mean(finite_beta > 1.0)))
+export("beta_n_samples", float(finite_beta.size))
 ```
 
 ## 6. Physical sanity checks

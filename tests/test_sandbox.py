@@ -814,3 +814,37 @@ else:
     result = await sb.run_python(code)
     assert result.get("error") is None
     assert "SSH_ITEMS:[]" in result["stdout"]
+
+
+def test_build_sandbox_cmd_unshare_net(monkeypatch, tmp_path):
+    import helioai.tools.sandbox as sb
+
+    monkeypatch.setattr(sb, "_bwrap_works", lambda: True)
+    plot_dir = str(tmp_path / "plot")
+
+    cmd_net = sb._build_sandbox_cmd(plot_dir, "print(1)", no_net=False)
+    assert "--unshare-net" not in cmd_net
+
+    cmd_no_net = sb._build_sandbox_cmd(plot_dir, "print(1)", no_net=True)
+    assert "--unshare-net" in cmd_no_net
+
+
+@pytest.mark.asyncio
+async def test_unshare_net_blocks_outbound_network_e2e():
+    import helioai.tools.sandbox as sb
+
+    if not sb._bwrap_works():
+        pytest.skip("bubblewrap not functional on this host")
+
+    code = """
+import socket
+try:
+    s = socket.create_connection(("1.1.1.1", 53), timeout=0.5)
+    s.close()
+    print("NET_SUCCESS")
+except OSError as e:
+    print(f"NET_BLOCKED:{type(e).__name__}")
+"""
+    result = await sb.run_python(code, _no_net=True)
+    assert result.get("error") is None
+    assert "NET_BLOCKED:" in result["stdout"]

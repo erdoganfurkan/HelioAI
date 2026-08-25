@@ -204,3 +204,15 @@ def test_failed_run_python_still_yields_the_code_artifact():
 def test_other_tools_emit_nothing_on_error():
     arts = _extract_artifact("get_timeseries", json.dumps({"error": "no data"}))
     assert arts == []
+
+
+def test_inject_run_python_args_no_network() -> None:
+    from helioai.core.tool_exec import inject_run_python_args
+
+    args_default = inject_run_python_args("run_python")
+    assert "_no_net" not in args_default
+
+    args_no_net = inject_run_python_args("run_python", no_network=True)
+    assert args_no_net.get("_no_net") is True
+
+    assert inject_run_python_args("other_tool", no_network=True) == {}

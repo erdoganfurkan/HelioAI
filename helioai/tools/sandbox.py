@@ -196,7 +196,7 @@ def _bwrap_works() -> bool:
         return False
 
 
-def _build_sandbox_cmd(plot_dir: str, full_code: str) -> list[str]:
+def _build_sandbox_cmd(plot_dir: str, full_code: str, no_net: bool = False) -> list[str]:
     """Build the sandbox execution command.
 
     Prefers bubblewrap (bwrap) for PID-namespace isolation — prevents the
@@ -212,6 +212,10 @@ def _build_sandbox_cmd(plot_dir: str, full_code: str) -> list[str]:
             _BWARP,
             "--unshare-pid",
             "--unshare-ipc",
+        ]
+        if no_net:
+            cmd.append("--unshare-net")
+        cmd += [
             "--ro-bind",
             "/",
             "/",
@@ -719,7 +723,11 @@ def _error_summary(stderr: str, returncode: int) -> str:
 
 
 async def run_python(
-    code: str, timeout: float = 60.0, _plot_dir: str | None = None, _run_idx: int | None = None
+    code: str,
+    timeout: float = 60.0,
+    _plot_dir: str | None = None,
+    _run_idx: int | None = None,
+    _no_net: bool = False,
 ) -> dict:
     """Execute Python code in an isolated subprocess.
 
@@ -768,7 +776,7 @@ async def run_python(
         plot_dir_line + _SANDBOX_PREAMBLE + textwrap.dedent(code) + "\n" + _SANDBOX_POSTAMBLE
     )
 
-    cmd = _build_sandbox_cmd(plot_dir, full_code)
+    cmd = _build_sandbox_cmd(plot_dir, full_code, no_net=_no_net)
     using_bwrap = cmd[0].endswith("bwrap") if cmd else False
 
     try:

@@ -82,8 +82,7 @@ Python 3.12 / 3.13 / 3.14, core packages on a SPEC-0 24-month window, checked in
 official `heliophysicsPy/pyhc-actions/phep3-compliance` action.
 
 - Floors with `>=`. **No upper bounds** unless absolutely necessary, and then only with a
-  tracking issue.
-- The one current exception is `mcp>=1.0,<2` (mcp 2.0 rewrites both client and server).
+  tracking issue. There are currently none, and adding one needs its reason in the diff.
 - `[tool.uv] constraint-dependencies = ["torch>=2.6"]` exists only so the lock resolves a
   torch with cp313/cp314 wheels. It is **not** a direct dependency.
 - Lifting an upper bound **relocks the entire graph**. If you do it, read the full `uv lock`

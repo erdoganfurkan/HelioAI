@@ -4,6 +4,7 @@ Security model:
   - Runs in a fresh subprocess (separate memory, no shared globals)
   - Hard timeout (default 30s) — kills the process if exceeded
   - stdout/stderr captured and returned
+  - Host credentials (~/.ssh, ~/.gnupg, ~/.config/gh, etc.) and .env masked under bubblewrap
   - No network isolation (speasy needs network access) — trust LLM-generated code
 
 Pre-imports available in sandbox: speasy, plasmapy, numpy, scipy, matplotlib, astropy
@@ -74,6 +75,25 @@ _ENV_KEEP = frozenset(
     }
 )
 _ENV_KEEP_PREFIXES = ("XDG_", "LC_", "SPEASY_", "SPEDAS_", "PYTHON")
+
+# Sensitive host credential stores relative to Path.home().
+# Masked in the bubblewrap sandbox (tmpfs for dirs, /dev/null for files) so
+# LLM-generated code running as the operator's UID cannot read host credentials.
+_SENSITIVE_HOME_PATHS = frozenset(
+    {
+        ".ssh",
+        ".config/gh",
+        ".gnupg",
+        ".git-credentials",
+        ".docker",
+        ".config/gcloud",
+        ".aws",
+        ".kube",
+        ".netrc",
+        ".pypirc",
+        ".npmrc",
+    }
+)
 
 # ponytail: fork-bomb cap, generous so numpy/scipy thread pools still spawn.
 _MAX_PROCS = 4096
@@ -211,6 +231,17 @@ def _build_sandbox_cmd(plot_dir: str, full_code: str) -> list[str]:
         env_file = _ROOT / ".env"
         if env_file.exists():
             cmd += ["--ro-bind", "/dev/null", str(env_file)]
+        # Mask host credential stores before mounting plot_dir writable.
+        # ponytail: this is a denylist for known host stores; a dedicated UID or container
+        # remains the true boundary for multi-tenant isolation.
+        home = Path.home()
+        for rel in sorted(_SENSITIVE_HOME_PATHS):
+            target = home / rel
+            if target.exists():
+                if target.is_dir():
+                    cmd += ["--tmpfs", str(target)]
+                else:
+                    cmd += ["--ro-bind", "/dev/null", str(target)]
         # Re-bind THIS session's workspace writable LAST, so no earlier tmpfs
         # (/tmp or data/) can mask it — plot_dir may live under either.
         cmd += ["--bind", plot_dir, plot_dir]

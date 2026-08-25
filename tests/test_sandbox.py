@@ -760,3 +760,57 @@ def test_the_fallback_warns_even_when_privileges_do_drop(monkeypatch):
     event, kw = said[0]
     assert event == "sandbox_not_isolated"
     assert "filesystem isolation" in kw["detail"]
+
+
+def test_sensitive_home_paths_masked_before_workspace_bind(tmp_path, monkeypatch):
+    import helioai.tools.sandbox as sb
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    fake_ssh = fake_home / ".ssh"
+    fake_ssh.mkdir()
+    fake_netrc = fake_home / ".netrc"
+    fake_netrc.write_text("machine example.com login test password test")
+
+    monkeypatch.setattr(sb.Path, "home", lambda: fake_home)
+    monkeypatch.setattr(sb, "_bwrap_works", lambda: True)
+
+    plot_dir = str(tmp_path / "plot")
+    cmd = sb._build_sandbox_cmd(plot_dir, "print('test')")
+
+    assert "--tmpfs" in cmd
+    ssh_idx = cmd.index(str(fake_ssh))
+    assert cmd[ssh_idx - 1] == "--tmpfs"
+
+    assert "--ro-bind" in cmd
+    netrc_idx = cmd.index(str(fake_netrc))
+    assert cmd[netrc_idx - 1] == "/dev/null"
+    assert cmd[netrc_idx - 2] == "--ro-bind"
+
+    bind_idx = cmd.index("--bind")
+    assert ssh_idx < bind_idx
+    assert netrc_idx < bind_idx
+
+
+@pytest.mark.asyncio
+async def test_ssh_dir_empty_inside_bwrap_e2e():
+    import helioai.tools.sandbox as sb
+
+    if not sb._bwrap_works():
+        pytest.skip("bubblewrap not functional on this host")
+
+    ssh_dir = Path.home() / ".ssh"
+    if not ssh_dir.exists():
+        pytest.skip("~/.ssh does not exist on this host")
+
+    code = f"""
+import os
+ssh_path = {repr(str(ssh_dir))}
+if os.path.exists(ssh_path):
+    print(f"SSH_ITEMS:{{os.listdir(ssh_path)}}")
+else:
+    print("SSH_ABSENT")
+"""
+    result = await sb.run_python(code)
+    assert result.get("error") is None
+    assert "SSH_ITEMS:[]" in result["stdout"]

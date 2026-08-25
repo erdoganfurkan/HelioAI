@@ -366,3 +366,51 @@ def test_shock_timing_refuses_to_invent_a_normal_from_the_timing():
 
     # The degenerate case must read as degenerate, not as a measurement.
     assert timing(t1, t2, wind, ace, ace - wind)["transverse_separation_km"] < 1.0
+
+
+def test_rankine_hugoniot_normal_projection_differs_from_norm_on_oblique_flow():
+    """When a normal is provided, upstream_downstream projects V·n̂ instead of |V|."""
+    from pathlib import Path
+
+    import numpy as np
+
+    from helioai.config import settings
+
+    ns: dict = {}
+    exec(
+        (Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(encoding="utf-8"), ns
+    )
+
+    t = np.array(
+        [
+            "2015-03-17T03:40:00",
+            "2015-03-17T03:45:00",
+            "2015-03-17T03:50:00",
+            "2015-03-17T04:10:00",
+            "2015-03-17T04:15:00",
+            "2015-03-17T04:20:00",
+        ],
+        dtype="datetime64[s]",
+    )
+    # 45 deg flow: |V| = 500 km/s, Vx = Vy = 353.55 km/s
+    v = np.array(
+        [
+            [353.5534, 353.5534, 0.0],
+            [353.5534, 353.5534, 0.0],
+            [353.5534, 353.5534, 0.0],
+            [450.0, 450.0, 0.0],
+            [450.0, 450.0, 0.0],
+            [450.0, 450.0, 0.0],
+        ]
+    )
+    shock_time = np.datetime64("2015-03-17T04:00:59")
+    normal_x = np.array([1.0, 0.0, 0.0])
+
+    # Default normal=None averages Euclidean norm |V|
+    vu_norm, vd_norm = ns["upstream_downstream"](t, v, shock_time)
+    assert vu_norm == pytest.approx(500.0, abs=0.1)
+
+    # Passing normal projects V·n̂
+    vu_proj, vd_proj = ns["upstream_downstream"](t, v, shock_time, normal=normal_x)
+    assert vu_proj == pytest.approx(353.55, abs=0.1)
+    assert vu_proj < vu_norm

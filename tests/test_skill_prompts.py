@@ -76,3 +76,36 @@ def test_skill_has_frontmatter_and_a_body(name):
     assert body.startswith("---"), f"{name} is missing YAML frontmatter"
     assert "name:" in body and "description:" in body
     assert len(body) > 400, f"{name} is suspiciously short"
+    assert len(body) > 400, f"{name} is suspiciously short"
+
+
+def test_plasma_physicist_does_not_use_async_tools_or_np_interp():
+    body = skill("plasma_physicist")
+    assert "helioai.tools.plasmapy_tools" not in body, (
+        "the skill must not import async registry tools into synchronous sandbox code"
+    )
+    assert "np.interp(" not in body, (
+        "np.interp bridges across telemetry gaps; use interp_to instead"
+    )
+    assert "interp_to" in body
+    assert "magnitude" in body
+
+
+def test_plasma_physicist_takes_a_fraction_over_finite_samples_only():
+    """`np.nanmean(x > threshold)` is nan-aware in appearance only.
+
+    `NaN > 1.0` is False, so the comparison files every gap under "does not exceed"
+    and leaves a boolean array with no NaN for nanmean to skip. Measured on a series
+    half missing: 0.25 reported against a true fraction of 0.5. The template carried
+    that idiom, and a template is copied — this pins the shape that reads the same
+    and is correct.
+
+    Asserted on the export line alone, not on the whole file: the prompt names the
+    trap in prose right above the fix, the way the other skills name theirs, so the
+    bad form is *supposed* to appear in the text. A blanket substring check failed
+    on that comment — it could not tell a warning from a usage.
+    """
+    body = skill("plasma_physicist")
+    assert 'export("beta_gt_1_fraction", float(np.nanmean(' not in body
+    assert 'export("beta_gt_1_fraction", float(np.mean(finite_beta > 1.0)))' in body
+    assert "finite_beta = beta_ts[np.isfinite(beta_ts)]" in body

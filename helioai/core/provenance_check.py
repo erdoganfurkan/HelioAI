@@ -28,10 +28,13 @@ _UNITS = (
 
 _TOKEN = re.compile(rf"(?<![\w.])(-?\d+(?:\.\d+)?)(?:\s*({_UNITS})(?![\w/^]))?")
 
-# A bare integer under this is almost always "3 panels" or "2 spacecraft"; matching them
-# floods the report with noise that hides the one number that matters. Written with a
-# decimal point it is a measurement — "M_A ~ 4.0" is a claim, "4 panels" is not.
-_MIN_BARE_INT = 10.0
+# A bare integer under this is almost always "3 panels", "2 spacecraft" or a day of the
+# month; matching them floods the report with noise that hides the one number that matters.
+# Written with a decimal point it is a measurement — "M_A ~ 4.0" is a claim, "4 panels" is
+# not. The floor is 32 rather than 10 because a calendar day reaches 31: "the 17 March 2015
+# shock" put a bare 17 inside the name window of `compression_ratio` and reported the date as
+# contradicting a ratio of 2.59.
+_MIN_BARE_INT = 32.0
 _YEARS = range(1994, 2031)
 
 _NAME_WINDOW = 40

@@ -335,3 +335,22 @@ def test_a_name_written_out_in_prose_is_still_matched():
     entries = [{"name": "compression_ratio_density", "units": ""}]
     named = _named_entry("the density compression ratio is 2.46", "", entries)
     assert named is not None and named["name"] == "compression_ratio_density"
+
+
+def test_a_day_of_the_month_is_not_a_contradicted_measurement():
+    """A bare 17 next to `compression_ratio` is the date, not a rival value for the ratio.
+
+    HelioBench failed two runs of `n3_field_compression` on this: the reply opened with
+    "the magnetic compression ratio across the 17 March 2015 shock is 2.59", the ledger
+    held compression_ratio = 2.59, and the checker read the day of the month inside the
+    40-character name window as a number the session computed differently. The answer was
+    right and agreed with its own ledger, so the gate failed a correct run.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {"values": [{"name": "compression_ratio", "units": "", "mean": 2.59}]}
+    reply = "The magnetic compression ratio across the 17 March 2015 shock is 2.59."
+    report = verify(extract_claims(reply), ledger)
+
+    assert report.contradicted == 0, [d["text"] for d in report.details]
+    assert report.matched >= 1

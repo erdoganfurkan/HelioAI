@@ -874,3 +874,20 @@ def test_seed_skips_the_read_only_download_caches(tmp_path, monkeypatch):
     assert (seeded / "index" / "9b" / "cache.val").read_bytes() == b"x" * 2048
     assert not (seeded / "cda_inventory").exists()
     assert not (seeded / "index.diskcache.backup").exists()
+
+
+def test_build_sandbox_cmd_warns_when_no_net_and_no_bwrap(monkeypatch):
+    from structlog.testing import capture_logs
+
+    from helioai.tools.sandbox import _build_sandbox_cmd
+
+    monkeypatch.setattr("helioai.tools.sandbox._bwrap_works", lambda: False)
+
+    with capture_logs() as cap_logs:
+        _build_sandbox_cmd("/tmp/fake", "print(1)", no_net=True)
+
+    assert any(
+        log.get("event") == "sandbox_net_isolation_unavailable"
+        and log.get("log_level") == "warning"
+        for log in cap_logs
+    )

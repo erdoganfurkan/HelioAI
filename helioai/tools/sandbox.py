@@ -275,6 +275,14 @@ def _build_sandbox_cmd(plot_dir: str, full_code: str, no_net: bool = False) -> l
         cmd += ["--chdir", plot_dir]
         cmd += [sys.executable, "-c", full_code]
         return cmd
+
+    if no_net:
+        from helioai.logging_config import get_logger
+
+        get_logger(__name__).warning(
+            "sandbox_net_isolation_unavailable",
+            detail="network isolation requested but bwrap is unavailable",
+        )
     return [sys.executable, "-c", full_code]
 
 

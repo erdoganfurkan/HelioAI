@@ -254,17 +254,71 @@ async def power_spectrum(
         arr[~np.isfinite(arr)] = np.nan
         arr[np.abs(arr) >= 1e30] = np.nan
         n_original = len(arr)
-        valid_mask = ~np.isnan(arr)
-        arr = arr[valid_mask]
-        n_dropped = n_original - len(arr)
-        if len(arr) < 8:
-            return {"error": f"Need at least 8 finite samples, got {len(arr)}"}
+        if n_original == 0:
+            return {"error": "Input array is empty"}
+
+        valid_mask = np.isfinite(arr)
+        n_valid = int(np.sum(valid_mask))
+        n_dropped = n_original - n_valid
+        if n_valid < 8:
+            return {"error": f"Need at least 8 finite samples, got {n_valid}"}
+
+        # Identify contiguous finite runs (telemetry segments)
+        finite_indices = np.flatnonzero(valid_mask)
+        splits = np.where(np.diff(finite_indices) > 1)[0] + 1
+        runs = np.split(finite_indices, splits)
+
+        # Longest gap calculation
+        gap_indices = np.flatnonzero(~valid_mask)
+        if len(gap_indices) > 0:
+            gap_splits = np.where(np.diff(gap_indices) > 1)[0] + 1
+            gap_runs = np.split(gap_indices, gap_splits)
+            longest_gap_samples = int(max(len(g) for g in gap_runs))
+        else:
+            longest_gap_samples = 0
+
+        max_run_len = max(len(r) for r in runs)
+        if max_run_len < 8:
+            return {
+                "error": f"Longest contiguous valid segment has {max_run_len} samples, need at least 8"
+            }
 
         fs = 1.0 / dt_s
-        seg = nperseg or min(256, len(arr) // 4)
+        seg = nperseg or min(256, n_valid // 4)
         seg = max(seg, 8)
+        if seg > max_run_len:
+            seg = max(max_run_len, 8)
 
-        freqs, psd = signal.welch(arr, fs=fs, nperseg=seg)
+        # Compute Welch PSD per continuous run and average weighted by window count.
+        # Splicing separated runs together creates artificial high-frequency phase
+        # jumps at telemetry gaps, destroying the spectral slope.
+        usable_runs = 0
+        total_windows = 0
+        accumulated_psd = None
+        freqs = None
+        n_samples_used = 0
+
+        step = seg - seg // 2  # default welch 50% overlap step
+        for r_idx in runs:
+            run_len = len(r_idx)
+            if run_len < seg:
+                continue
+            run_arr = arr[r_idx]
+            f, p = signal.welch(run_arr, fs=fs, nperseg=seg)
+            n_win = 1 + (run_len - seg) // step
+            if accumulated_psd is None:
+                accumulated_psd = p * n_win
+                freqs = f
+            else:
+                accumulated_psd += p * n_win
+            total_windows += n_win
+            n_samples_used += run_len
+            usable_runs += 1
+
+        if total_windows == 0 or accumulated_psd is None:
+            return {"error": f"No continuous run reached segment length {seg}"}
+
+        psd = accumulated_psd / total_windows
 
         peak_idx = int(np.argmax(psd[1:])) + 1
         peak_freq = float(freqs[peak_idx])
@@ -276,10 +330,13 @@ async def power_spectrum(
             "peak_frequency_Hz": round(peak_freq, 6),
             "peak_period_s": round(1.0 / peak_freq, 3) if peak_freq > 0 else None,
             "peak_power": round(peak_power, 8),
-            "n_points": len(arr),
+            "n_points": n_valid,
             "n_original": n_original,
             "n_dropped": n_dropped,
             "gap_fraction": round(n_dropped / max(n_original, 1), 4),
+            "n_segments": usable_runs,
+            "longest_gap_samples": longest_gap_samples,
+            "n_samples_used": n_samples_used,
             "fs_Hz": round(fs, 6),
             "freq_resolution_Hz": round(freqs[1] - freqs[0], 8) if len(freqs) > 1 else None,
         }

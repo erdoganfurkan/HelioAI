@@ -27,6 +27,10 @@ call, with each quantity on its own time base (B is typically 3 s, plasma moment
     T_u, T_d = upstream_downstream(t_t, t_ev, shock_time)
     V_shock, r = rh_jump(n_u=n_u, n_d=n_d, V_u=V_u, V_d=V_d, B_u=B_u, B_d=B_d, T_u=T_u, T_d=T_d)
 
+Recommended pipeline when the shock normal is known:
+
+    theta_bn or mvab -> n_hat -> upstream_downstream(t_v, v, shock_time, normal=n_hat)
+
 V_shock comes back FIRST — this example used to read `r, V_shock`, which silently
 swapped a 579 km/s speed with a compression ratio of 2.59.
 
@@ -74,6 +78,11 @@ GAMMA = 5.0 / 3.0
 # For a slower or weaker shock, or a coarser instrument, sweep them again on your own
 # event and score on the r_n vs r_B agreement, which needs no published answer. They are
 # arguments for a reason — pass your own rather than trusting these.
+#
+# VELOCITY NORMAL PROJECTION: with normal=None, `upstream_downstream` averages |V|. That is
+# a good approximation while the shock normal is nearly aligned with the flow (the usual case
+# for a fast forward shock at L1) and degrades as 1/cos(theta_Vn) — about +40% on V_shock at
+# 45 deg. Pass normal=n_hat from theta_bn or mvab to project V·n̂ instead.
 GUARD_MIN = 5.0
 SPAN_MIN = 20.0
 
@@ -91,16 +100,34 @@ def shock_windows(shock_time, guard_min: float = GUARD_MIN, span_min: float = SP
     return (t0 - guard - span, t0 - guard, t0 + guard, t0 + guard + span)
 
 
-def window_mean(t, values, t0, t1, min_samples: int = 3) -> float:
+def window_mean(t, values, t0, t1, min_samples: int = 3, normal=None) -> float:
     """NaN-aware mean of `values` over [t0, t1]. NaN when too few samples land inside.
 
     Returning NaN rather than a mean of one or two points is deliberate: a window that
     caught almost nothing gives a number that looks like a measurement and is not one.
+
+    On an (n, 3) series, `normal` projects V·n̂ (n̂ renormalised here); without it the
+    Euclidean norm |v| is averaged, exact for a magnitude such as |B| and an approximation
+    for a bulk speed. Passing `normal` for anything but an (n, 3) series raises: Wind SWE
+    Proton_V_moment is a scalar speed stored as (n, 1) and has no components to project,
+    where `v @ n_hat` used to fail with a matmul dimension error that says nothing.
     """
     t = np.asarray(t)
     v = np.asarray(values, dtype=float)
     if v.ndim > 1:
-        v = np.linalg.norm(v, axis=1)
+        if normal is None:
+            v = np.linalg.norm(v, axis=1)
+        else:
+            if v.shape[1] != 3:
+                raise ValueError(
+                    f"normal= projects a vector series (n, 3), got {v.shape}. A scalar speed "
+                    "such as Wind SWE Proton_V_moment has no components to project — drop "
+                    "normal= to average |V|, or read a vector velocity instead.")
+            n_hat = np.asarray(normal, dtype=float)
+            n_norm = np.linalg.norm(n_hat)
+            if n_norm > 0:
+                n_hat = n_hat / n_norm
+            v = v @ n_hat
     # `isfinite` alone is not enough: the ~1e31 fill convention is a perfectly finite
     # float, and one of them in a window returns a compression ratio of 1e30. Data from
     # load_data() is already blanked; data fetched directly is not, and this recipe gets
@@ -114,22 +141,31 @@ def window_mean(t, values, t0, t1, min_samples: int = 3) -> float:
 
 
 def upstream_downstream(t, values, shock_time,
-                        guard_min: float = GUARD_MIN, span_min: float = SPAN_MIN):
+                        guard_min: float = GUARD_MIN, span_min: float = SPAN_MIN,
+                        normal=None):
     """Upstream and downstream means over windows derived from `shock_time`.
 
     Accepts a vector series (n, 3) and averages its magnitude, so |B| needs no
-    pre-computation.
+    pre-computation. Pass `normal` (from theta_bn or mvab) to project V·n̂ instead,
+    which is what the jump conditions actually want.
 
     Returns
     -------
     (mean_upstream, mean_downstream)
     """
     u0, u1, d0, d1 = shock_windows(shock_time, guard_min, span_min)
-    return window_mean(t, values, u0, u1), window_mean(t, values, d0, d1)
+    return (window_mean(t, values, u0, u1, normal=normal),
+            window_mean(t, values, d0, d1, normal=normal))
 
 
 def _rh_core(n_u, n_d, V_u, V_d, B_u, B_d, T_u=0.0, T_d=0.0) -> dict:
     """Pure computation — no printing, no exports. Everything below is derived here."""
+    # The coplanarity normal has an arbitrary sign — theta_bn takes |cos| for exactly that
+    # reason — so V·n̂ comes back negative half the time. Everything below is invariant under
+    # a global velocity sign flip, so fix the convention here: left signed, V_shock printed
+    # as -725 km/s and M_ms came out negative, which silently skipped the compression check.
+    if V_u < 0:
+        V_u, V_d = -V_u, -V_d
     V_shock = 0.0 if abs(n_d - n_u) < 1e-12 else (n_d * V_d - n_u * V_u) / (n_d - n_u)
     r = n_d / n_u
 
@@ -238,3 +274,31 @@ assert _bad["r_mismatch"] > 0.25, f"a 1.89 compression must be flagged: {_bad}"
 _w = shock_windows(np.datetime64("2015-03-17T04:00:59"))
 assert str(_w[0]) == "2015-03-17T03:35:59" and str(_w[1]) == "2015-03-17T03:55:59", _w
 assert str(_w[2]) == "2015-03-17T04:05:59" and str(_w[3]) == "2015-03-17T04:25:59", _w
+
+# Projection against magnitude on an oblique flow: 45 deg between V and the normal.
+_t_synth = np.array(["2015-03-17T03:40:00", "2015-03-17T03:45:00", "2015-03-17T03:50:00",
+                     "2015-03-17T04:10:00", "2015-03-17T04:15:00", "2015-03-17T04:20:00"],
+                    dtype="datetime64[s]")
+_v_synth = np.array([[282.8427, 282.8427, 0.0]] * 3 + [[353.5534, 353.5534, 0.0]] * 3)
+_shock = np.datetime64("2015-03-17T04:00:59")
+assert abs(upstream_downstream(_t_synth, _v_synth, _shock)[0] - 400.0) < 0.1
+assert abs(upstream_downstream(_t_synth, _v_synth, _shock, normal=np.array([1.0, 0.0, 0.0]))[0]
+           - 282.84) < 0.1
+
+# A scalar speed has nothing to project — say so instead of failing inside matmul.
+try:
+    window_mean(_t_synth, np.full((6, 1), 400.0), _t_synth[0], _t_synth[-1],
+                normal=np.array([1.0, 0.0, 0.0]))
+except ValueError as _e:
+    assert "no components to project" in str(_e), _e
+else:
+    raise AssertionError("a scalar speed must be refused, not projected")
+
+# Flipping the normal must not change a single number: the sign coplanarity hands back is
+# arbitrary, and a negative V·n̂ used to report V_shock = -725 km/s with M_ms < 1, which
+# skipped the compression check entirely.
+_pos = _rh_core(n_u=5.0, n_d=13.0, V_u=400.0, V_d=600.0, B_u=5.0, B_d=15.0, T_u=10.0, T_d=40.0)
+_neg = _rh_core(n_u=5.0, n_d=13.0, V_u=-400.0, V_d=-600.0, B_u=5.0, B_d=15.0, T_u=10.0, T_d=40.0)
+assert _pos == _neg, "a flipped shock normal must not change the result"
+assert _neg["V_shock"] > 0 and _neg["M_ms"] > 1, _neg
+assert np.isfinite(_neg["r_mismatch"]), "the compression check must survive a flipped normal"

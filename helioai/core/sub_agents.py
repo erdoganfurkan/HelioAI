@@ -49,6 +49,7 @@ class SubAgentRole:
     allowed_tools: tuple[str, ...]
     max_turns: int = 5
     auto_load_skills: tuple[str, ...] = ()
+    sandbox_no_network: bool = False
 
 
 SUB_SYSTEM_PROMPT_BASE = """You are a focused sub-agent inside HelioAI. The lead agent delegated a narrow task to you.
@@ -121,6 +122,7 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
         # ponytail: raising the cap, not indexing time coverage — see tasks/todo.md.
         max_turns=12,
         auto_load_skills=("data_analyst",),
+        sandbox_no_network=True,
     ),
     "librarian": SubAgentRole(
         name="librarian",
@@ -164,6 +166,7 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
         allowed_tools=("run_python", "search_parameters", "list_recipes", "load_recipe"),
         max_turns=4,
         auto_load_skills=("plasma_physicist",),
+        sandbox_no_network=True,
     ),
 }
 
@@ -424,9 +427,10 @@ async def stream_subagent(
                         }
                     )
                 else:
-                    result = await registry.call_tool(
-                        tc.name, tc.arguments, trusted=inject_run_python_args(tc.name)
+                    trusted = inject_run_python_args(
+                        tc.name, no_network=role_cfg.sandbox_no_network
                     )
+                    result = await registry.call_tool(tc.name, tc.arguments, trusted=trusted)
 
                 result, figure_verdict = await maybe_review(tc.name, result)
                 if figure_verdict:

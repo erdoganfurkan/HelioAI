@@ -366,3 +366,86 @@ def test_shock_timing_refuses_to_invent_a_normal_from_the_timing():
 
     # The degenerate case must read as degenerate, not as a measurement.
     assert timing(t1, t2, wind, ace, ace - wind)["transverse_separation_km"] < 1.0
+
+
+def test_rankine_hugoniot_normal_projection_differs_from_norm_on_oblique_flow():
+    """When a normal is provided, upstream_downstream projects V·n̂ instead of |V|."""
+    from pathlib import Path
+
+    import numpy as np
+
+    from helioai.config import settings
+
+    ns: dict = {}
+    exec(
+        (Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(encoding="utf-8"), ns
+    )
+
+    t = np.array(
+        [
+            "2015-03-17T03:40:00",
+            "2015-03-17T03:45:00",
+            "2015-03-17T03:50:00",
+            "2015-03-17T04:10:00",
+            "2015-03-17T04:15:00",
+            "2015-03-17T04:20:00",
+        ],
+        dtype="datetime64[s]",
+    )
+    # 45 deg flow: |V| = 500 km/s, Vx = Vy = 353.55 km/s
+    v = np.array(
+        [
+            [353.5534, 353.5534, 0.0],
+            [353.5534, 353.5534, 0.0],
+            [353.5534, 353.5534, 0.0],
+            [450.0, 450.0, 0.0],
+            [450.0, 450.0, 0.0],
+            [450.0, 450.0, 0.0],
+        ]
+    )
+    shock_time = np.datetime64("2015-03-17T04:00:59")
+    normal_x = np.array([1.0, 0.0, 0.0])
+
+    # Default normal=None averages Euclidean norm |V|
+    vu_norm, vd_norm = ns["upstream_downstream"](t, v, shock_time)
+    assert vu_norm == pytest.approx(500.0, abs=0.1)
+
+    # Passing normal projects V·n̂
+    vu_proj, vd_proj = ns["upstream_downstream"](t, v, shock_time, normal=normal_x)
+    assert vu_proj == pytest.approx(353.55, abs=0.1)
+    assert vu_proj < vu_norm
+
+
+def test_rankine_hugoniot_refuses_to_project_a_scalar_speed():
+    """A scalar speed stored as (n, 1) must be refused by name, not by matmul.
+
+    The benchmark fixture for the 17 March 2015 shock stores Wind SWE Proton_V_moment
+    as (1361, 1) — `v.ndim > 1` is true, so the projection branch used to be entered and
+    `v @ n_hat` raised "matmul: Input operand 1 has a mismatch in its core dimension 0".
+    The recipe's own docstring recommends the `normal=` pipeline, so an agent following
+    it hit that on the only dataset the task offers.
+    """
+    from pathlib import Path
+
+    import numpy as np
+
+    from helioai.config import settings
+
+    ns: dict = {}
+    exec(
+        (Path(settings.recipes.recipes_dir) / "rankine_hugoniot.py").read_text(encoding="utf-8"), ns
+    )
+
+    t = np.arange(
+        np.datetime64("2015-03-17T03:40:00"),
+        np.datetime64("2015-03-17T03:56:00"),
+        np.timedelta64(1, "m"),
+    )
+    speed = np.full((len(t), 1), 410.0)
+    window = (t[0], t[-1])
+
+    # Without a normal the scalar speed still averages, which is what the references use.
+    assert ns["window_mean"](t, speed, *window) == pytest.approx(410.0)
+
+    with pytest.raises(ValueError, match="scalar speed"):
+        ns["window_mean"](t, speed, *window, normal=np.array([-0.9, 0.3, 0.1]))

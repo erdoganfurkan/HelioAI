@@ -19,10 +19,6 @@ import matplotlib.pyplot
 import scipy, scipy.signal, scipy.stats, scipy.fft
 import astropy, astropy.units
 try:
-    import speasy
-except Exception:
-    pass
-try:
     import plasmapy, plasmapy.formulary
 except Exception:
     pass
@@ -37,18 +33,24 @@ def _warm_sandbox_imports():
     subprocess calls find pre-compiled bytecode instead of compiling from scratch.
     Without this, cold-start CI runners time out on trivial sandbox tests.
 
-    Best-effort only: a slow/hanging warmup (e.g. speasy doing a network
-    inventory refresh) must not fail the whole test session over a perf
-    optimization — fall through and let tests cold-start instead.
+    Best-effort only: a slow/hanging warmup must not fail the whole test session
+    over a perf optimization — fall through and let tests cold-start instead.
 
-    Runs under _sandbox_env() so the speasy inventory lands in the exact cache
-    (HOME=/tmp) that sandbox subprocesses will read — warming the runner's real
-    HOME leaves the sandbox cold and every spawn re-downloads the inventory.
+    speasy is deliberately NOT warmed here. Its import builds the provider
+    inventory, which goes to the network whenever the sandbox HOME is cold —
+    and while the SciQLop inventory cache is down (HTTP 502) that costs the full
+    timeout on EVERY pytest invocation, whatever the selection: 180 s of setup
+    for a suite whose tests are all under a second. The rest of the stack warms
+    in 2 s. The sandbox imports speasy lazily anyway, so nothing else pays for it.
+
+    Runs under _sandbox_env() so the caches land in the exact HOME (/tmp) that
+    sandbox subprocesses will read — warming the runner's real HOME leaves the
+    sandbox cold.
     """
     try:
         subprocess.run(
             [sys.executable, "-c", _SANDBOX_WARMUP],
-            timeout=180,
+            timeout=60,
             capture_output=True,
             env=_sandbox_env(),
         )

@@ -4,6 +4,7 @@ Security model:
   - Runs in a fresh subprocess (separate memory, no shared globals)
   - Hard timeout (default 30s) — kills the process if exceeded
   - stdout/stderr captured and returned
+  - Host credentials (~/.ssh, ~/.gnupg, ~/.config/gh, etc.) and .env masked under bubblewrap
   - No network isolation (speasy needs network access) — trust LLM-generated code
 
 Pre-imports available in sandbox: speasy, plasmapy, numpy, scipy, matplotlib, astropy
@@ -75,6 +76,36 @@ _ENV_KEEP = frozenset(
 )
 _ENV_KEEP_PREFIXES = ("XDG_", "LC_", "SPEASY_", "SPEDAS_", "PYTHON")
 
+# Sensitive host credential stores relative to Path.home().
+# Masked in the bubblewrap sandbox (tmpfs for dirs, /dev/null for files) so
+# LLM-generated code running as the operator's UID cannot read host credentials.
+_SENSITIVE_HOME_PATHS = frozenset(
+    {
+        ".ssh",
+        ".config/gh",
+        ".gnupg",
+        ".git-credentials",
+        ".docker",
+        ".config/gcloud",
+        ".aws",
+        ".kube",
+        ".netrc",
+        ".pypirc",
+        ".npmrc",
+    }
+)
+
+# Subtrees of speasy's data directory NOT worth copying into every sandbox home.
+# `cda_inventory/masters_cdf` is a read-only download cache of CDAWeb master CDFs
+# (548 MB on the host that surfaced this) which only `spz.get_data()` inside the
+# sandbox would touch — and every prompt tells the model to use `load_data()` instead.
+# A run that really needs a master re-fetches it, or fails loudly under --unshare-net.
+#
+# ponytail: a skip-list, so a future speasy layout can grow a new heavy directory
+# unnoticed; seeding only the writable index explicitly would need speasy's own
+# layout contract, which it does not publish.
+_SEED_SKIP = ("cda_inventory", "*.backup")
+
 # ponytail: fork-bomb cap, generous so numpy/scipy thread pools still spawn.
 _MAX_PROCS = 4096
 
@@ -127,6 +158,14 @@ def _seed_speasy_inventory(home: str) -> None:
     bwrap only the session's own directory is really on disk (`data_dir` is masked by
     a tmpfs). A copy needs no new bind mount and no cross-session locking.
 
+    Only what the sandbox must be able to WRITE is copied — see `_SEED_SKIP`. Copying
+    the whole tree cost 706 MB per spawn on a host where speasy's data directory had
+    grown, against 95 MB for the index alone, and nothing deletes those homes: fourteen
+    of them filled a 149 GB disk in fifty minutes. The size was invisible from the code
+    because `XDG_DATA_HOME` decides which tree is read — under the VS Code snap it
+    points at `~/snap/code/<rev>/.local/share`, not `~/.local/share`, and that copy held
+    548 MB of CDAWeb master CDFs accumulated over months.
+
     Best-effort by construction — no host inventory, no permission, no space, and the
     session simply pays the rebuild as before. It must never be the reason a run fails.
     """
@@ -136,7 +175,7 @@ def _seed_speasy_inventory(home: str) -> None:
         return
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, dst)
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*_SEED_SKIP))
     except (OSError, shutil.Error) as e:
         from helioai.logging_config import get_logger
 
@@ -176,7 +215,7 @@ def _bwrap_works() -> bool:
         return False
 
 
-def _build_sandbox_cmd(plot_dir: str, full_code: str) -> list[str]:
+def _build_sandbox_cmd(plot_dir: str, full_code: str, no_net: bool = False) -> list[str]:
     """Build the sandbox execution command.
 
     Prefers bubblewrap (bwrap) for PID-namespace isolation — prevents the
@@ -192,6 +231,10 @@ def _build_sandbox_cmd(plot_dir: str, full_code: str) -> list[str]:
             _BWARP,
             "--unshare-pid",
             "--unshare-ipc",
+        ]
+        if no_net:
+            cmd.append("--unshare-net")
+        cmd += [
             "--ro-bind",
             "/",
             "/",
@@ -211,6 +254,17 @@ def _build_sandbox_cmd(plot_dir: str, full_code: str) -> list[str]:
         env_file = _ROOT / ".env"
         if env_file.exists():
             cmd += ["--ro-bind", "/dev/null", str(env_file)]
+        # Mask host credential stores before mounting plot_dir writable.
+        # ponytail: this is a denylist for known host stores; a dedicated UID or container
+        # remains the true boundary for multi-tenant isolation.
+        home = Path.home()
+        for rel in sorted(_SENSITIVE_HOME_PATHS):
+            target = home / rel
+            if target.exists():
+                if target.is_dir():
+                    cmd += ["--tmpfs", str(target)]
+                else:
+                    cmd += ["--ro-bind", "/dev/null", str(target)]
         # Re-bind THIS session's workspace writable LAST, so no earlier tmpfs
         # (/tmp or data/) can mask it — plot_dir may live under either.
         cmd += ["--bind", plot_dir, plot_dir]
@@ -221,6 +275,14 @@ def _build_sandbox_cmd(plot_dir: str, full_code: str) -> list[str]:
         cmd += ["--chdir", plot_dir]
         cmd += [sys.executable, "-c", full_code]
         return cmd
+
+    if no_net:
+        from helioai.logging_config import get_logger
+
+        get_logger(__name__).warning(
+            "sandbox_net_isolation_unavailable",
+            detail="network isolation requested but bwrap is unavailable",
+        )
     return [sys.executable, "-c", full_code]
 
 
@@ -688,7 +750,11 @@ def _error_summary(stderr: str, returncode: int) -> str:
 
 
 async def run_python(
-    code: str, timeout: float = 60.0, _plot_dir: str | None = None, _run_idx: int | None = None
+    code: str,
+    timeout: float = 60.0,
+    _plot_dir: str | None = None,
+    _run_idx: int | None = None,
+    _no_net: bool = False,
 ) -> dict:
     """Execute Python code in an isolated subprocess.
 
@@ -737,7 +803,7 @@ async def run_python(
         plot_dir_line + _SANDBOX_PREAMBLE + textwrap.dedent(code) + "\n" + _SANDBOX_POSTAMBLE
     )
 
-    cmd = _build_sandbox_cmd(plot_dir, full_code)
+    cmd = _build_sandbox_cmd(plot_dir, full_code, no_net=_no_net)
     using_bwrap = cmd[0].endswith("bwrap") if cmd else False
 
     try:

@@ -44,6 +44,10 @@ read the logs there as well rather than assuming the image settles it.
 
 * API keys are not readable by generated code — the subprocess receives an
   explicit environment allowlist, not `os.environ`.
+* On Linux with bubblewrap, common host credential stores (`~/.ssh`, `~/.gnupg`,
+  `~/.config/gh`, `~/.config/gcloud`, `~/.aws`, `~/.kube`, `~/.docker`,
+  `~/.git-credentials`, `~/.netrc`, `~/.pypirc`, `~/.npmrc`) and `.env` are
+  masked with empty files or `tmpfs` mounts.
 * Tool arguments beginning with `_` are rejected, so generated code cannot inject
   internal parameters into tool calls.
 * Runaway code is killed at the timeout, along with its whole process group.

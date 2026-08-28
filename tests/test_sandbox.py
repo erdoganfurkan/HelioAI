@@ -760,3 +760,134 @@ def test_the_fallback_warns_even_when_privileges_do_drop(monkeypatch):
     event, kw = said[0]
     assert event == "sandbox_not_isolated"
     assert "filesystem isolation" in kw["detail"]
+
+
+def test_sensitive_home_paths_masked_before_workspace_bind(tmp_path, monkeypatch):
+    import helioai.tools.sandbox as sb
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    fake_ssh = fake_home / ".ssh"
+    fake_ssh.mkdir()
+    fake_netrc = fake_home / ".netrc"
+    fake_netrc.write_text("machine example.com login test password test")
+
+    monkeypatch.setattr(sb.Path, "home", lambda: fake_home)
+    monkeypatch.setattr(sb, "_bwrap_works", lambda: True)
+
+    plot_dir = str(tmp_path / "plot")
+    cmd = sb._build_sandbox_cmd(plot_dir, "print('test')")
+
+    assert "--tmpfs" in cmd
+    ssh_idx = cmd.index(str(fake_ssh))
+    assert cmd[ssh_idx - 1] == "--tmpfs"
+
+    assert "--ro-bind" in cmd
+    netrc_idx = cmd.index(str(fake_netrc))
+    assert cmd[netrc_idx - 1] == "/dev/null"
+    assert cmd[netrc_idx - 2] == "--ro-bind"
+
+    bind_idx = cmd.index("--bind")
+    assert ssh_idx < bind_idx
+    assert netrc_idx < bind_idx
+
+
+@pytest.mark.asyncio
+async def test_ssh_dir_empty_inside_bwrap_e2e():
+    import helioai.tools.sandbox as sb
+
+    if not sb._bwrap_works():
+        pytest.skip("bubblewrap not functional on this host")
+
+    ssh_dir = Path.home() / ".ssh"
+    if not ssh_dir.exists():
+        pytest.skip("~/.ssh does not exist on this host")
+
+    code = f"""
+import os
+ssh_path = {repr(str(ssh_dir))}
+if os.path.exists(ssh_path):
+    print(f"SSH_ITEMS:{{os.listdir(ssh_path)}}")
+else:
+    print("SSH_ABSENT")
+"""
+    result = await sb.run_python(code)
+    assert result.get("error") is None
+    assert "SSH_ITEMS:[]" in result["stdout"]
+
+
+def test_build_sandbox_cmd_unshare_net(monkeypatch, tmp_path):
+    import helioai.tools.sandbox as sb
+
+    monkeypatch.setattr(sb, "_bwrap_works", lambda: True)
+    plot_dir = str(tmp_path / "plot")
+
+    cmd_net = sb._build_sandbox_cmd(plot_dir, "print(1)", no_net=False)
+    assert "--unshare-net" not in cmd_net
+
+    cmd_no_net = sb._build_sandbox_cmd(plot_dir, "print(1)", no_net=True)
+    assert "--unshare-net" in cmd_no_net
+
+
+@pytest.mark.asyncio
+async def test_unshare_net_blocks_outbound_network_e2e():
+    import helioai.tools.sandbox as sb
+
+    if not sb._bwrap_works():
+        pytest.skip("bubblewrap not functional on this host")
+
+    code = """
+import socket
+try:
+    s = socket.create_connection(("1.1.1.1", 53), timeout=0.5)
+    s.close()
+    print("NET_SUCCESS")
+except OSError as e:
+    print(f"NET_BLOCKED:{type(e).__name__}")
+"""
+    result = await sb.run_python(code, _no_net=True)
+    assert result.get("error") is None
+    assert "NET_BLOCKED:" in result["stdout"]
+
+
+def test_seed_skips_the_read_only_download_caches(tmp_path, monkeypatch):
+    """The seed copies what the sandbox must write, not speasy's whole data tree.
+
+    Copying everything cost 706 MB per spawn against 95 MB for the index, and the
+    homes are never deleted — fourteen of them filled a 149 GB disk in fifty minutes.
+    """
+    import helioai.tools.sandbox as sb
+
+    src = tmp_path / "xdg" / "speasy"
+    (src / "index" / "9b").mkdir(parents=True)
+    (src / "index" / "9b" / "cache.val").write_bytes(b"x" * 2048)
+    (src / "cda_inventory" / "masters_cdf").mkdir(parents=True)
+    (src / "cda_inventory" / "masters_cdf" / "aim_cips.cdf").write_bytes(b"y" * 4096)
+    (src / "index.diskcache.backup").mkdir()
+    (src / "index.diskcache.backup" / "old.val").write_bytes(b"z" * 4096)
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    home = tmp_path / "sandbox_home"
+    sb._seed_speasy_inventory(str(home))
+
+    seeded = home / ".local" / "share" / "speasy"
+    assert (seeded / "index" / "9b" / "cache.val").read_bytes() == b"x" * 2048
+    assert not (seeded / "cda_inventory").exists()
+    assert not (seeded / "index.diskcache.backup").exists()
+
+
+def test_build_sandbox_cmd_warns_when_no_net_and_no_bwrap(monkeypatch):
+    from structlog.testing import capture_logs
+
+    from helioai.tools.sandbox import _build_sandbox_cmd
+
+    monkeypatch.setattr("helioai.tools.sandbox._bwrap_works", lambda: False)
+
+    with capture_logs() as cap_logs:
+        _build_sandbox_cmd("/tmp/fake", "print(1)", no_net=True)
+
+    assert any(
+        log.get("event") == "sandbox_net_isolation_unavailable"
+        and log.get("log_level") == "warning"
+        for log in cap_logs
+    )

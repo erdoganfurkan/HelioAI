@@ -240,8 +240,8 @@ def _code_path(result_text: str) -> str:
         return ""
 
 
-def inject_run_python_args(name: str) -> dict:
-    """Trusted per-run sandbox args (_plot_dir/_run_idx) for run_python.
+def inject_run_python_args(name: str, *, no_network: bool = False) -> dict:
+    """Trusted per-run sandbox args (_plot_dir/_run_idx/_no_net) for run_python.
 
     Passed via `call_tool(..., trusted=...)` so they bypass the private-arg
     guard that rejects LLM/MCP-supplied `_*` overrides. Empty for any other tool.
@@ -252,7 +252,10 @@ def inject_run_python_args(name: str) -> dict:
 
     sdir = _ws.get_session_dir()
     ridx = _ws.get_next_run_idx(sdir)
-    return {"_plot_dir": str(sdir), "_run_idx": ridx}
+    args = {"_plot_dir": str(sdir), "_run_idx": ridx}
+    if no_network:
+        args["_no_net"] = True
+    return args
 
 
 def emit_post_tool_events(

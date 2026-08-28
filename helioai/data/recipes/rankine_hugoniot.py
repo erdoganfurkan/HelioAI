@@ -107,11 +107,22 @@ def window_mean(t, values, t0, t1, min_samples: int = 3, normal=None) -> float:
     (with normal normalized to unit length). If `normal` is None, averages the Euclidean norm |v|,
     which is exact for scalar quantities (|B|) and a good approximation for bulk speed when the
     shock normal is nearly aligned with the solar wind flow direction.
+
+    Raises ValueError when `normal` is given for anything but an (n, 3) series. Wind SWE
+    Proton_V_moment is a scalar speed stored as (n, 1), so the projection has nothing to
+    act on; `v @ n_hat` used to fail there with a matmul dimension error that says nothing
+    about what went wrong.
     """
     t = np.asarray(t)
     v = np.asarray(values, dtype=float)
     if v.ndim > 1:
         if normal is not None:
+            if v.shape[1] != 3:
+                raise ValueError(
+                    f"normal= projects a vector series (n, 3), got {v.shape}. A scalar speed "
+                    "such as Wind SWE Proton_V_moment has no components to project — drop "
+                    "normal= to average |V|, or read a vector velocity instead."
+                )
             n_hat = np.asarray(normal, dtype=float)
             n_norm = np.linalg.norm(n_hat)
             if n_norm > 0:

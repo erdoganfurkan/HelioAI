@@ -671,8 +671,23 @@ async def test_speasy_is_not_imported_until_it_is_used() -> None:
 
 
 async def test_spz_still_resolves_when_actually_touched() -> None:
-    """Laziness must not break the escape hatch: spz.<attr> still reaches speasy."""
-    result = await run_python("print(type(spz.get_data).__name__)")
+    """Laziness must not break the escape hatch: spz.<attr> still reaches speasy.
+
+    The stub in sys.modules is what keeps this offline. What the preamble owns is the
+    forwarding, and a stub exercises it exactly; the real import refreshes an inventory
+    over the network, which is unbounded and not ours. On 2026-08-27 speasy's cache
+    server answered HTTP 500 and this one test failed on all five CI jobs — with the
+    proxy up it retried with backoff, with the proxy disabled it fell back to
+    downloading the CDAWeb master archive. Both blow past the 60 s sandbox cap, and
+    neither says anything about the code under test.
+    """
+    result = await run_python(
+        "import sys, types\n"
+        "_stub = types.ModuleType('speasy')\n"
+        "_stub.get_data = lambda *a, **k: None\n"
+        "sys.modules['speasy'] = _stub\n"
+        "print(type(spz.get_data).__name__)"
+    )
     assert result.get("error") is None
     assert result["stdout"] in {"function", "method"}
 

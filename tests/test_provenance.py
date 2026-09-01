@@ -354,3 +354,38 @@ def test_a_day_of_the_month_is_not_a_contradicted_measurement():
 
     assert report.contradicted == 0, [d["text"] for d in report.details]
     assert report.matched >= 1
+
+
+# ── decimal commas ─────────────────────────────────────────────────────────────
+
+
+def _claims(text):
+    from helioai.core.provenance_check import extract_claims
+
+    return {(c.value, c.units) for c in extract_claims(text)}
+
+
+def test_a_decimal_comma_is_one_number_not_two():
+    """A reply in French writes 9,79 nT. The old pattern started a token after the
+    comma, so the ledger held 9.79, the reply appeared to claim 79, and every real
+    measurement came back `unsourced` — which is how a demo ends up 0 traced / 6
+    unsourced while the physics was right."""
+    got = _claims("|B| avant le choc ≈ 9,79 nT et après ≈ 24,92 nT")
+    assert (9.79, "nT") in got
+    assert (24.92, "nT") in got
+    assert (79.0, "nT") not in got
+    assert (92.0, "nT") not in got
+
+
+def test_a_thousands_comma_is_still_a_thousands_comma():
+    """English prose says "1,800 points"; reading that as 1.8 would be worse."""
+    assert (1800.0, "") in _claims("downloaded 1,800 points over the interval")
+
+
+def test_a_decimal_point_still_works():
+    assert (2.59, "") in _claims("compression ratio 2.59 measured")
+
+
+def test_a_decimal_comma_number_is_treated_as_a_measurement_not_a_count():
+    """9,79 is written with a fraction, so the bare-integer floor must not drop it."""
+    assert (9.79, "") in _claims("le rapport vaut 9,79 selon le calcul")

@@ -26,7 +26,11 @@ _UNITS = (
     r"RE|R_E|Re|deg|°|%|s|min|h"
 )
 
-_TOKEN = re.compile(rf"(?<![\w.])(-?\d+(?:\.\d+)?)(?:\s*({_UNITS})(?![\w/^]))?")
+# The decimal separator may be a comma: a model asked in French answers "9,79 nT".
+# Accepting only "." did not merely miss those — it started a token *after* the comma,
+# so the ledger held 9.79 while the reply seemed to claim 79, and every real measurement
+# came back `unsourced`.
+_TOKEN = re.compile(rf"(?<![\w.,])(-?\d+(?:[.,]\d+)?)(?:\s*({_UNITS})(?![\w/^]))?")
 
 # A bare integer under this is almost always "3 panels", "2 spacecraft" or a day of the
 # month; matching them floods the report with noise that hides the one number that matters.
@@ -90,6 +94,19 @@ class Report:
         }
 
 
+def _normalise_decimal(raw: str) -> str:
+    """Return `raw` with a decimal comma turned into a point.
+
+    Exactly three digits after the comma is a thousands separator — "1,800 points" —
+    and reading that as 1.8 would be a worse error than the one being fixed. Anything
+    else is a decimal comma.
+    """
+    if "," not in raw:
+        return raw
+    head, _, tail = raw.rpartition(",")
+    return head + tail if len(tail) == 3 else head + "." + tail
+
+
 def extract_claims(text: str) -> list[Claim]:
     """Numbers a reply states as facts, with their unit and surrounding wording.
 
@@ -107,6 +124,7 @@ def extract_claims(text: str) -> list[Claim]:
         after = norm[m.end() : m.end() + 1]
         if before in ("-", ":", "/", ".") or after in (":", "/", "-"):
             continue
+        raw = _normalise_decimal(raw)
         try:
             value = float(raw)
         except ValueError:

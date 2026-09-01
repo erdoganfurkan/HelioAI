@@ -169,11 +169,17 @@ function renderEvent(ev) {
 
   if (event === 'tool_call') {
     _dockTools++;
-    const args = argsStr(data.arguments);
-    appendTlEvent('→', `${data.name}(${args})`, 'tl-tool-call' + nestCls);
+    // `display` is built server-side by core/event_display.py so this timeline, the CLI
+    // and the Jupyter magic word things identically. The argsStr fallback keeps replays
+    // of sessions recorded before that field existed readable.
+    const detail = data.display !== undefined && data.display !== null
+      ? data.display
+      : argsStr(data.arguments);
+    appendTlEvent('→', detail ? `${data.name} ${detail}` : data.name, 'tl-tool-call' + nestCls);
 
   } else if (event === 'tool_result') {
-    appendTlEvent('←', `${data.name}: ${data.summary || ''}`, 'tl-tool-result' + nestCls);
+    appendTlEvent('←', `${data.name}: ${data.display || data.summary || ''}`,
+                  'tl-tool-result' + nestCls);
 
   } else if (event === 'sub_agent_start') {
     _dockSubagents++;

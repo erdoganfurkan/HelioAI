@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import helioai.core.tool_exec as te
 from helioai.core.llm.base import Message
 from helioai.core.tool_exec import (
     _extract_artifact,
@@ -216,3 +217,43 @@ def test_inject_run_python_args_no_network() -> None:
     assert args_no_net.get("_no_net") is True
 
     assert inject_run_python_args("other_tool", no_network=True) == {}
+
+
+# ── host paths must not reach the model ────────────────────────────────────────
+
+
+def test_history_result_hides_the_home_directory(monkeypatch, tmp_path):
+    """The model cannot open a host path, so handing it one only teaches it to quote it.
+
+    It surfaced on a published screen recording: the answer read
+    "saved to /home/<user>/HelioAI/data/users/web/workspace/...".
+    """
+    monkeypatch.setattr(te.Path, "home", classmethod(lambda cls: tmp_path))
+    result = json.dumps(
+        {
+            "figure_paths": [f"{tmp_path}/HelioAI/data/users/web/workspace/s1/fig_0_0.png"],
+            "code_path": f"{tmp_path}/HelioAI/data/users/web/workspace/s1/code_0.py",
+            "n_lines": 32,
+        }
+    )
+    out = te._history_tool_result("run_python", result)
+    assert str(tmp_path) not in out
+    # Still identifiable: the model must be able to name the file it just made.
+    assert "fig_0_0.png" in out
+    assert "code_0.py" in out
+    assert "32" in out
+
+
+def test_redaction_leaves_paths_outside_home_alone(monkeypatch, tmp_path):
+    """In a container the data dir is not under a home; nothing to hide there."""
+    monkeypatch.setattr(te.Path, "home", classmethod(lambda cls: tmp_path))
+    result = json.dumps({"figure_paths": ["/app/data/workspace/s1/fig.png"]})
+    assert "/app/data/workspace/s1/fig.png" in te._history_tool_result("run_python", result)
+
+
+def test_redaction_does_not_touch_science_text(monkeypatch, tmp_path):
+    monkeypatch.setattr(te.Path, "home", classmethod(lambda cls: tmp_path))
+    result = json.dumps({"stdout": "compression ratio 2.59, theta_Bn 47.3 deg"})
+    out = te._history_tool_result("run_python", result)
+    assert "2.59" in out
+    assert "47.3" in out

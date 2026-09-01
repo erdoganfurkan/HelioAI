@@ -124,3 +124,30 @@ def test_level_filters_lower_severity(monkeypatch, capsys):
 def test_get_logger_with_and_without_a_name():
     assert get_logger("helioai.tools") is not None
     assert get_logger() is not None
+
+
+# ── level override from the environment ────────────────────────────────────────
+
+
+def test_env_overrides_the_caller_level(monkeypatch):
+    """Entry points hardcode their level; HELIOAI_LOG_LEVEL is the escape hatch.
+
+    Needed because a third party logging at WARNING (speasy's inventory probes)
+    cannot otherwise be silenced without editing the CLI.
+    """
+    monkeypatch.setenv("HELIOAI_LOG_LEVEL", "ERROR")
+    setup_logging("WARNING")
+    assert logging.getLogger().level == logging.ERROR
+
+
+def test_caller_level_is_used_when_env_is_unset(monkeypatch):
+    monkeypatch.delenv("HELIOAI_LOG_LEVEL", raising=False)
+    setup_logging("WARNING")
+    assert logging.getLogger().level == logging.WARNING
+
+
+def test_unknown_env_level_falls_back_to_the_caller_level(monkeypatch):
+    """A typo must not silently turn logging up to INFO and flood a demo."""
+    monkeypatch.setenv("HELIOAI_LOG_LEVEL", "LOUD")
+    setup_logging("WARNING")
+    assert logging.getLogger().level == logging.WARNING

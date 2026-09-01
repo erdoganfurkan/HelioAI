@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 import structlog
 
+from helioai.core.event_display import describe_tool_call
 from helioai.core.llm.base import LLMClient, Message, ToolDef
 from helioai.core.skills_loader import SkillError
 from helioai.core.skills_loader import load_skill as load_skill_body
@@ -415,6 +416,7 @@ async def stream_subagent(
                         "turn": n_iters,
                         "name": tc.name,
                         "arguments": tc.arguments,
+                        "display": describe_tool_call(tc.name, tc.arguments),
                         "sub_agent_ctx": ctx,
                     },
                 }

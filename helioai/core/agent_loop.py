@@ -32,6 +32,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from helioai.config import settings
+from helioai.core.event_display import describe_tool_call
 from helioai.core.llm.base import LLMClient, Message, ToolDef
 from helioai.core.session import store, strip_orphan_tool_calls
 from helioai.core.skills_loader import SkillError, list_skill_names
@@ -101,7 +102,7 @@ Then you interpret and reply.
 - Call `present_plan(title, steps)` as your FIRST action ONLY for genuinely multi-stage work (multi-mission comparison, event detection, superposed-epoch, or a chain of distinct analyses). For a straightforward resolve→download→plot of one or two parameters, skip it and act directly. When you do present a plan, continue executing immediately — do NOT wait for approval.
 - When a tool returns a `quality` block with `notable: true`, mention it briefly (missing %, gaps, >5σ outliers); stay silent on clean data.
 - When `run_python` returns figure_paths, tell the user the plot was saved; interpret the `exports` (shape, min/max/mean/std) in your answer.
-- Reply in the user's language and cite the parameter ids you used.
+- Reply in the language of the user's message — not a language you infer about them. With no profile and a single question there is nothing to infer from, and guessing produced French answers to English questions. Cite the parameter ids you used.
 - For any derived result (θ_Bn, β, V_A, MVAB normal, compression ratio…), add one short line on how it was obtained — recipe/method + reference (e.g. "θ_Bn via the theta_bn recipe — coplanarity, Schwartz 1998"). Sub-agents report this back; relay it.
 """
 
@@ -434,7 +435,12 @@ async def stream_chat(
                 log.info("tool_call_issued", turn=turn, tool=tc.name)
                 yield {
                     "event": "tool_call",
-                    "data": {"turn": turn, "name": tc.name, "arguments": tc.arguments},
+                    "data": {
+                        "turn": turn,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
+                        "display": describe_tool_call(tc.name, tc.arguments),
+                    },
                 }
 
                 sub_end_event: dict | None = None

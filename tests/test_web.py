@@ -670,3 +670,30 @@ def test_chat_stream_rejects_a_traversal_session_id(web_client):
         json={"message": "hello", "session_id": "../../../etc"},
     )
     assert r.status_code == 422
+
+
+# ── the provider selector must reflect the server ──────────────────────────────
+
+
+def test_config_endpoint_reports_the_configured_provider(web_client, monkeypatch):
+    """The browser had no way to know what the server is set to.
+
+    `<option value="azure">` is first in the markup and nothing selected it, so the UI
+    silently sent `azure` on every message whatever `HELIOAI_LLM_PROVIDER` said — a user
+    on opencode was talking to Azure, or to a 'missing key' error.
+    """
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.llm, "provider", "opencode")
+    r = web_client.get("/api/config")
+    assert r.status_code == 200
+    assert r.json()["provider"] == "opencode"
+
+
+def test_the_selector_is_not_hardcoded_to_the_first_option():
+    """Guards the markup half: app.js must ask the server rather than trust option order."""
+    # encoding pinned: app.js holds arrows and emoji, and Windows defaults to cp1252.
+    js = (Path(__file__).resolve().parents[1] / "helioai/interfaces/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+    assert "/api/config" in js

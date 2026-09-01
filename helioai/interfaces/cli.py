@@ -6,6 +6,7 @@ Usage:
     helioai index            # rebuild speasy catalog index
     helioai index --rebuild  # force full reindex
     helioai export [id]      # export a session as a reproducible .ipynb
+    helioai mcp-install      # print MCP client config pointing at this install
 """
 
 from __future__ import annotations
@@ -113,6 +114,34 @@ def _open_file(path: str) -> None:
         pass
 
 
+def _tilde(path) -> str:
+    """Shorten a path under the user's home to `~/...`.
+
+    Purely cosmetic, and the reason is not tidiness: these lines end up in screenshots,
+    screen recordings and pasted bug reports, where a full home directory is somebody's
+    username on display for no benefit. `~` is just as clickable in a terminal.
+    """
+    from pathlib import Path as _Path
+
+    text = str(path)
+    home = str(_Path.home()).rstrip("/")
+    return text.replace(home, "~") if home and home != "/" else text
+
+
+def _capped_output(text: str, pad: str, max_lines: int = 6) -> str:
+    """Keep the head of a tool's stdout and say how much was left out.
+
+    A run that prints one line per sample pushes the answer off the screen; the full
+    text is still in the workspace script and the exported notebook.
+    """
+    lines = str(text).rstrip().splitlines()
+    body = "\n".join(f"{pad}{line}" for line in lines[:max_lines])
+    hidden = len(lines) - max_lines
+    if hidden > 0:
+        body += f"\n{pad}\033[90m… +{hidden} more lines\033[0m"
+    return body
+
+
 def _render_event(ev: dict) -> None:
     name, data = ev["event"], ev["data"]
     nested = "sub_agent_ctx" in data
@@ -123,13 +152,15 @@ def _render_event(ev: dict) -> None:
 
     elif name == "tool_call":
         tool = data["name"]
-        args = data.get("arguments") or {}
-        args_str = ", ".join(f"{k}={repr(v)[:60]}" for k, v in args.items())
-        print(f"{pad}\033[90m→ {tool}({args_str})\033[0m")
+        detail = data.get("display")
+        if detail is None:
+            args = data.get("arguments") or {}
+            detail = ", ".join(f"{k}={repr(v)[:60]}" for k, v in args.items())
+        print(f"{pad}\033[90m→ {tool}{' ' + detail if detail else ''}\033[0m")
 
     elif name == "tool_result":
-        summary = data.get("summary", "")
-        print(f"{pad}\033[90m← {data['name']}: {summary}\033[0m")
+        detail = data.get("display") or data.get("summary", "")
+        print(f"{pad}\033[90m← {data['name']}: {detail}\033[0m")
 
     elif name == "sub_agent_start":
         print(f"  \033[94m⚡ spawning {data['role']}...\033[0m")
@@ -149,9 +180,12 @@ def _render_event(ev: dict) -> None:
             paths = data.get("figure_paths", [])
             print(f"{pad}\033[93m📊 {len(paths)} figure(s)\033[0m")
             if data.get("stdout"):
-                print(f"{pad}\033[90m{data['stdout']}\033[0m")
+                # Printed in the default colour, not the dim grey used for tool traffic:
+                # this is the science the reader came for, and it was previously as faint
+                # as the plumbing around it.
+                print(_capped_output(data["stdout"], pad))
             for path in paths:
-                print(f"{pad}\033[93m  → {path}\033[0m")
+                print(f"{pad}\033[93m  → {_tilde(path)}\033[0m")
                 _open_file(path)
         elif kind == "data_preview":
             param = data.get("param_id", "")
@@ -222,7 +256,7 @@ async def _run_query(query: str, *, restricted: bool = True) -> None:
             if ev["event"] == "done":
                 from helioai.workspace import get_session_dir
 
-                print(f"  \033[90m📂 workspace: {get_session_dir()}\033[0m")
+                print(f"  \033[90m📂 workspace: {_tilde(get_session_dir())}\033[0m")
     finally:
         # The interactive loop runs one asyncio.run per query, so the pool must be
         # released here rather than left for the garbage collector.
@@ -343,6 +377,150 @@ def _run_migrate_storage() -> None:
     print(f"migrate-storage: moved {moved} file(s) into data/users/")
 
 
+_MCP_CLIENTS = ("claude-code", "claude-code-project", "claude-desktop", "codex")
+
+
+def _mcp_server_command() -> str:
+    """Absolute path to this install's `helioai-mcp` executable.
+
+    An MCP client launches the server from its own working directory, so a bare
+    name only works if the install happens to be on the client's PATH — which it
+    is not for a venv, and not reliably for pipx. `sysconfig` is asked before
+    `which` because a pyenv shim resolves to the shim, not to the script the
+    running interpreter would actually use.
+    """
+    import shutil
+    import sys as _sys
+    import sysconfig
+    from pathlib import Path
+
+    scripts = Path(sysconfig.get_path("scripts"))
+    # Windows names the console script helioai-mcp.exe. Without the suffix the probe
+    # never matched there, so every Windows install silently fell through to `which` —
+    # the very lookup this function exists to avoid, since it can resolve to a different
+    # install than the running interpreter's.
+    names = ("helioai-mcp.exe", "helioai-mcp") if _sys.platform == "win32" else ("helioai-mcp",)
+    for name in names:
+        candidate = scripts / name
+        if candidate.exists():
+            return str(candidate)
+    return shutil.which("helioai-mcp") or "helioai-mcp"
+
+
+def _mcp_config_path(client: str):
+    """Where `client` keeps its MCP config, or None when it has no config file.
+
+    Claude Code is the None case on purpose: it ships `claude mcp add`, and
+    writing its user config behind its back would be a worse version of a command
+    the user already has.
+    """
+    import sys as _sys
+    from pathlib import Path
+
+    if client == "claude-code":
+        return None
+    if client == "claude-code-project":
+        return Path(".mcp.json")
+    if client == "codex":
+        return Path.home() / ".codex" / "config.toml"
+    if client == "claude-desktop":
+        if _sys.platform == "darwin":
+            return (
+                Path.home()
+                / "Library"
+                / "Application Support"
+                / "Claude"
+                / ("claude_desktop_config.json")
+            )
+        if _sys.platform == "win32":
+            import os
+
+            base = os.environ.get("APPDATA", str(Path.home()))
+            return Path(base) / "Claude" / "claude_desktop_config.json"
+        return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+    raise ValueError(f"unknown MCP client: {client!r}")
+
+
+def _mcp_payload() -> dict:
+    return {"mcpServers": {"helioai": {"command": _mcp_server_command()}}}
+
+
+def _mcp_snippet(client: str) -> str:
+    """The config or command to give `client` so it can reach this install."""
+    import json as _json
+
+    command = _mcp_server_command()
+    if client == "claude-code":
+        return f"claude mcp add helioai -- {command}"
+    if client == "codex":
+        return f'[mcp_servers.helioai]\ncommand = "{command}"\nargs = []'
+    if client in ("claude-desktop", "claude-code-project"):
+        return _json.dumps(_mcp_payload(), indent=2)
+    raise ValueError(f"unknown MCP client: {client!r}")
+
+
+def _write_json_config(path) -> None:
+    """Merge the helioai entry into a JSON MCP config, creating it if absent.
+
+    Raises:
+        ValueError: If the file exists but does not parse. These files hold the
+            user's other servers; overwriting one we failed to read would delete
+            working configuration to fix nothing.
+    """
+    import json as _json
+
+    existing: dict = {}
+    if path.exists():
+        try:
+            existing = _json.loads(path.read_text() or "{}")
+        except _json.JSONDecodeError as e:
+            raise ValueError(f"{path} could not be parsed as JSON ({e}); left untouched") from e
+        if not isinstance(existing, dict):
+            raise ValueError(f"{path} could not be parsed as an object; left untouched")
+
+    servers = existing.setdefault("mcpServers", {})
+    servers["helioai"] = {"command": _mcp_server_command()}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_json.dumps(existing, indent=2) + "\n")
+
+
+def _run_mcp_install(args: list[str]) -> None:
+    """Print (or write) the config that points an MCP client at this install."""
+    client = None
+    if "--client" in args:
+        idx = args.index("--client")
+        if idx + 1 < len(args):
+            client = args[idx + 1]
+    write = "--write" in args
+
+    if client is not None and client not in _MCP_CLIENTS:
+        print(f"Unknown client {client!r}. Valid clients: {', '.join(_MCP_CLIENTS)}")
+        return
+
+    targets = [client] if client else list(_MCP_CLIENTS)
+    for name in targets:
+        path = _mcp_config_path(name)
+        print(f"\n=== {name} ===")
+        if path is not None:
+            print(f"config: {path}")
+        print(_mcp_snippet(name))
+
+        if not write:
+            continue
+        if name == "codex":
+            print("\n(cannot write TOML safely — paste the block above into that file)")
+            continue
+        if path is None:
+            print("\n(run the command above; Claude Code owns its own config)")
+            continue
+        try:
+            _write_json_config(path)
+        except ValueError as e:
+            print(f"\nNOT written: {e}")
+        else:
+            print(f"\nwritten to {path}")
+
+
 def main() -> None:
     """Entry point for the `helioai` command.
 
@@ -394,6 +572,10 @@ def main() -> None:
 
     if args[0] == "migrate-storage":
         _run_migrate_storage()
+        return
+
+    if args[0] == "mcp-install":
+        _run_mcp_install(args[1:])
         return
 
     if args[0] == "serve":

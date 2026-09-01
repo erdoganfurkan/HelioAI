@@ -97,6 +97,17 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/config")
+async def api_config():
+    """Server-side settings the UI cannot know on its own.
+
+    The provider selector used to default to whichever option came first in the markup
+    — `azure` — and sent it on every message, so a server configured for another
+    provider was quietly overridden by the browser.
+    """
+    return {"provider": settings.llm.provider}
+
+
 @app.post("/chat/stream")
 async def chat_stream(
     req: _ChatRequest,

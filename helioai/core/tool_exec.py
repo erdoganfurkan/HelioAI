@@ -19,11 +19,29 @@ from dataclasses import replace
 from pathlib import Path
 
 from helioai import provenance
+from helioai.core.event_display import describe_tool_result
 
 # Tools whose results contain large lists (per_event_stats, sample rows) that would
 # flood the LLM context. All other tools pass through untouched so the LLM can reason
 # on their content (search results, mission lists, catalog ids, etc.).
 _HEAVY_TOOLS: frozenset[str] = frozenset({"get_events_timeseries", "get_catalog"})
+
+
+def _redact_host_paths(text: str) -> str:
+    """Replace the operator's home directory with `~` in a tool result.
+
+    The model cannot open a host path, so showing it one buys nothing and costs
+    something: it quotes the path back in its answer, which then appears in the CLI,
+    the web UI, an exported notebook and any screen recording of them. Only the home
+    prefix goes — the file names stay, because "I saved fig_0_0.png" is a useful thing
+    for the model to be able to say.
+
+    Paths outside a home directory (a container's `/app/data`) are left alone.
+    """
+    home = str(Path.home()).rstrip("/")
+    if not home or home == "/":
+        return text
+    return text.replace(home, "~")
 
 
 def _history_tool_result(tool_name: str, result_text: str) -> str:
@@ -32,10 +50,14 @@ def _history_tool_result(tool_name: str, result_text: str) -> str:
     Heavy tools (SEA, catalog preview) are summarized to avoid flooding the context.
     All other tools — especially search_parameters — are passed through verbatim so
     the LLM can see the actual candidates and make an informed choice.
+
+    Either way the operator's home directory is redacted: this is the only place a
+    tool result crosses into the model's context, so it is the one place the fix
+    belongs. The events keep real paths — the CLI has to open the figure.
     """
     if tool_name in _HEAVY_TOOLS:
-        return _summarize_tool_result(result_text, max_chars=600)
-    return result_text
+        return _redact_host_paths(_summarize_tool_result(result_text, max_chars=600))
+    return _redact_host_paths(result_text)
 
 
 def _finding_str(entry) -> str:
@@ -282,6 +304,10 @@ def emit_post_tool_events(
         "data": {
             "name": name,
             "summary": _summarize_tool_result(result),
+            # `summary` is written for the model and stays untouched. `display` is the
+            # same event told to a person, computed here so the CLI, the Jupyter magic
+            # and the browser show identical words without three copies of the logic.
+            "display": describe_tool_result(name, result),
             **tool_result_extra,
         },
     }

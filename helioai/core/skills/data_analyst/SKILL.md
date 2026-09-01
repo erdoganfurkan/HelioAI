@@ -46,7 +46,7 @@ When you write custom code for a computation with no recipe, call
 method is recorded with its source.
 
 ## Sandbox helpers (provided, no import needed)
-- `load_data("name")` → `ns(time, values, unit)` for a dataset from get_timeseries.
+- `load_data("name")` → `ns(time, values, columns, units, param_id, missing_pct)` for a dataset from get_timeseries. `units` is plural — there is no `.unit`. `time` is a numpy datetime64 array, so it has no `.isoformat()`: use `str(t[i])`.
 - `param_card(var, param_id)` → metadata card in the UI. Call once per downloaded parameter.
 - `clean(var.values)` → masks CDF fill values (`-1e31`, `9.96e36`) to NaN. Always wrap `.values`.
 - `magnitude(vectors)` → |B| or |V| of an N×3 array. Use it. `np.sqrt(np.nansum(v**2, axis=1))`
@@ -75,17 +75,17 @@ var = load_data("BGSEc")                  # dataset key from get_timeseries
 param_card(var, "cda/AC_H0_MFI/BGSEc")
 t, data = var.time, clean(var.values)     # data is (N,) or (N, components)
 export("n_points", len(t))
-export("units", str(var.unit))
+export("units", str(var.units))
 
 if data.ndim > 1:                         # vectors: one component per row, sharex
     labels = ["Bx", "By", "Bz"] if data.shape[1] == 3 else [f"C{i}" for i in range(data.shape[1])]
     fig, axes = plt.subplots(data.shape[1], 1, figsize=(12, 2.5 * data.shape[1]), sharex=True)
     for ax, i, lbl in zip(axes, range(data.shape[1]), labels):
-        ax.plot(t, data[:, i], linewidth=0.8); ax.set_ylabel(f"{lbl} ({var.unit})")
+        ax.plot(t, data[:, i], linewidth=0.8); ax.set_ylabel(f"{lbl} ({var.units})")
     axes[-1].set_xlabel("Time")
 else:
     fig, ax = plt.subplots(figsize=(12, 4))
-    ax.plot(t, data, linewidth=0.8); ax.set_ylabel(str(var.unit)); ax.set_xlabel("Time")
+    ax.plot(t, data, linewidth=0.8); ax.set_ylabel(str(var.units)); ax.set_xlabel("Time")
 plt.tight_layout()
 plt.show()
 ```

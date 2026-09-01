@@ -119,11 +119,15 @@ def _render_jupyter_event(ev: dict) -> None:
     pad = "    " if nested else ""
 
     if name == "tool_call":
-        args = ", ".join(f"{k}={repr(v)[:40]}" for k, v in (data.get("arguments") or {}).items())
-        print(f"{pad}  → {data['name']}({args})")
+        detail = data.get("display")
+        if detail is None:
+            detail = ", ".join(
+                f"{k}={repr(v)[:40]}" for k, v in (data.get("arguments") or {}).items()
+            )
+        print(f"{pad}  → {data['name']}{' ' + detail if detail else ''}")
 
     elif name == "tool_result":
-        print(f"{pad}  ← {data['name']}: {data.get('summary', '')}")
+        print(f"{pad}  ← {data['name']}: {data.get('display') or data.get('summary', '')}")
 
     elif name == "sub_agent_start":
         role = data.get("role", "")

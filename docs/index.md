@@ -17,6 +17,13 @@ HelioAI:  → resolves parameter IDs for B, Vp, Np across 83k speasy products
 
 No API key is needed for data access, and no manual parameter hunting.
 
+![Wind observations of the 17 March 2015 shock and storm: magnetic field magnitude with the
+northward/southward Bz turning, proton density, bulk speed and
+temperature](assets/shock-analysis.png)
+
+<sub>A HelioAI answer: Wind data for the St Patrick's Day 2015 storm, shock arrival marked,
+exported as a runnable notebook.</sub>
+
 ## Why it exists
 
 Finding the right parameter is often harder than the analysis itself. A researcher who

@@ -195,3 +195,41 @@ def test_delete_session_removes_history_and_workspace(store, tmp_path, monkeypat
     assert "deleted" in capsys.readouterr().out
     assert store.get_or_create(cli._USER_ID, "abc12345") == []
     assert not (ws_root / "run_1").exists()
+
+
+# ── shared display layer ───────────────────────────────────────────────────────
+
+
+def test_tool_call_prefers_the_shared_display_string(capsys):
+    """Emitted once for all three interfaces; the renderer must not re-derive it."""
+    out = render(
+        capsys,
+        "tool_call",
+        {"name": "run_python", "arguments": {"code": "x=1\ny=2"}, "display": "108 lines of Python"},
+    )
+    assert "108 lines of Python" in out
+    assert "x=1" not in out
+
+
+def test_tool_result_prefers_display_over_the_model_summary(capsys):
+    out = render(
+        capsys,
+        "tool_result",
+        {
+            "name": "get_timeseries",
+            "summary": '{"param_id": "cda/A/B", "dataset_note": "use load_data"}',
+            "display": "cda/A/B · WI · 3 s · 1800 points",
+        },
+    )
+    assert "1800 points" in out
+    assert "dataset_note" not in out
+
+
+def test_long_stdout_is_capped_and_says_how_much_was_hidden(capsys, monkeypatch):
+    """A run that prints 40 samples must not push the answer off the screen."""
+    monkeypatch.setattr(cli, "_open_file", lambda _: None)
+    stdout = "\n".join(f"03:58:{i:02d}  |B| = 10.0 nT" for i in range(40))
+    out = render(capsys, "artifact", {"kind": "image", "figure_paths": [], "stdout": stdout})
+    assert "03:58:00" in out
+    assert "03:58:39" not in out
+    assert "more lines" in out

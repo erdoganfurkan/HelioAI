@@ -584,10 +584,18 @@ def _resolve_dataset_name(name, datasets):
 def load_data(name):
     \"\"\"Load a dataset saved by get_timeseries or get_events_timeseries.
 
+    Attributes of a timeseries, and there are no others:
+        .time         numpy datetime64 array. NOT a datetime — it has no
+                      .isoformat(); use str(t[i]), or .astype('datetime64[s]').
+        .values       (n,) or (n, k) float array
+        .columns      component names, e.g. ['Bx', 'By', 'Bz']
+        .units        string. Note the plural — there is no .unit
+        .param_id     the speasy id this came from
+        .missing_pct  percentage of samples with no measurement
+
     Fill values are ALREADY NaN — do not call clean() on .values, and do not
     filter on magnitude. Use np.isnan() to mask, or the nan-aware reductions
-    (np.nanmean, np.nanmax, ...). Timeseries carry .missing_pct, the percentage
-    of samples with no measurement.
+    (np.nanmean, np.nanmax, ...).
     \"\"\"
     import json as _json, types as _types
     _ddir = os.path.join(__sandbox_plot_dir, "data")

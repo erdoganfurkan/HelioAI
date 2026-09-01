@@ -27,9 +27,19 @@ def setup_logging(level: str | int = "INFO") -> None:
     Safe to call more than once — every entry point calls it, and repeated calls
     replace the handler rather than stacking duplicates.
 
+    `HELIOAI_LOG_LEVEL` overrides `level`. Every entry point hardcodes its own,
+    so without this there is no way to quiet a third party that logs at the same
+    level — speasy's inventory probes warn loudly on a provider it then disables,
+    which is noise in a recorded session or a demo. An unrecognised value is
+    ignored rather than obeyed: a typo must not silently turn logging up.
+
     Args:
         level: Log level name or numeric value. Unknown names fall back to INFO.
     """
+    override = os.environ.get("HELIOAI_LOG_LEVEL", "").strip().upper()
+    if override and isinstance(getattr(logging, override, None), int):
+        level = getattr(logging, override)
+
     if isinstance(level, str):
         level = getattr(logging, level.upper(), logging.INFO)
 

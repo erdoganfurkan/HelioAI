@@ -169,11 +169,17 @@ function renderEvent(ev) {
 
   if (event === 'tool_call') {
     _dockTools++;
-    const args = argsStr(data.arguments);
-    appendTlEvent('→', `${data.name}(${args})`, 'tl-tool-call' + nestCls);
+    // `display` is built server-side by core/event_display.py so this timeline, the CLI
+    // and the Jupyter magic word things identically. The argsStr fallback keeps replays
+    // of sessions recorded before that field existed readable.
+    const detail = data.display !== undefined && data.display !== null
+      ? data.display
+      : argsStr(data.arguments);
+    appendTlEvent('→', detail ? `${data.name} ${detail}` : data.name, 'tl-tool-call' + nestCls);
 
   } else if (event === 'tool_result') {
-    appendTlEvent('←', `${data.name}: ${data.summary || ''}`, 'tl-tool-result' + nestCls);
+    appendTlEvent('←', `${data.name}: ${data.display || data.summary || ''}`,
+                  'tl-tool-result' + nestCls);
 
   } else if (event === 'sub_agent_start') {
     _dockSubagents++;
@@ -693,5 +699,19 @@ input.addEventListener('input', () => {
 });
 
 // Init
+// The <select> lists providers in markup order, so without this the browser sent
+// whichever came first — azure — and silently overrode the server's own setting.
+async function syncProvider() {
+  try {
+    const r = await fetch('/api/config');
+    if (!r.ok) return;
+    const { provider } = await r.json();
+    if (provider && [...provSel.options].some(o => o.value === provider)) {
+      provSel.value = provider;
+    }
+  } catch { /* leave the markup default; a failed probe must not block the UI */ }
+}
+
+syncProvider();
 loadHistory();
 renderWelcome();

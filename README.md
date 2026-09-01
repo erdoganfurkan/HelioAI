@@ -2,8 +2,8 @@
 
 **AI agent for heliophysics and space plasma data analysis.**
 
-Ask a question in plain English — HelioAI finds the right parameter across 70+ missions,
-downloads it, runs the analysis, and hands you a reproducible notebook.
+Ask questions in natural language — HelioAI finds the right parameter across 70+ missions, 
+downloads it, runs the analysis, and produces reproducible plots and notebooks.
 
 [![CI](https://github.com/erdoganfurkan/HelioAI/actions/workflows/ci.yml/badge.svg)](https://github.com/erdoganfurkan/HelioAI/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/erdoganfurkan/HelioAI/branch/main/graph/badge.svg)](https://codecov.io/gh/erdoganfurkan/HelioAI)

@@ -69,6 +69,12 @@ lightbox, parameter cards, catalog previews), and a code panel showing the scrip
 agent generated. An activity dock streams tool calls, sub-agent spawns and figure reviews
 live over SSE.
 
+![One question answered end to end in the web UI: the plan, the parameter card, the
+activity dock filling with tool calls, the figure, and the generated script opened in the
+code panel](../assets/web-demo.gif)
+
+<sub>A real session. The sidebar is cropped out; nothing else is edited.</sub>
+
 !!! danger "Do not expose this without authentication"
     `run_python` executes model-written code. The open-source build binds to localhost and
     ships no authentication. Read
@@ -78,25 +84,51 @@ live over SSE.
 ## MCP server
 
 HelioAI exposes its tools over the [Model Context Protocol](https://modelcontextprotocol.io),
-so any MCP client can drive the heliophysics tooling with its own model.
+so any MCP client can drive the heliophysics tooling with its own model. In this mode the
+client supplies the model, so **HelioAI needs no LLM key of its own**.
+
+`helioai mcp-install` prints the configuration for each supported client, with the absolute
+path to `helioai-mcp` resolved for your install — a bare command name fails from a venv,
+because the client launches the server from its own working directory.
+
+=== "Claude Code"
+
+    ```bash
+    helioai mcp-install --client claude-code
+    # → claude mcp add helioai -- /path/to/.venv/bin/helioai-mcp
+    ```
 
 === "Claude Desktop"
 
-    ```json
-    {
-      "mcpServers": {
-        "helioai": {
-          "command": "helioai-mcp"
-        }
-      }
-    }
+    ```bash
+    helioai mcp-install --client claude-desktop --write
     ```
+
+    `--write` merges the entry into the existing config, keeping any other servers.
+    Without it the JSON is printed for you to paste.
+
+=== "Codex"
+
+    ```bash
+    helioai mcp-install --client codex
+    ```
+
+    Codex reads TOML, which has no writer in the standard library, so the block is
+    printed rather than merged — overwriting a config we could not parse would delete
+    working servers.
 
 === "HTTP"
 
     ```bash
     helioai-mcp --http --port 8080
     ```
+
+!!! warning "What MCP does not carry"
+
+    Tools called over MCP go straight to the registry, bypassing the agent loop — so the
+    provenance ledger, the recipe-bypass detector and the fabricated-id guard do not run.
+    The answers are the same; the audit trail is not. Reach for the CLI, web UI or Jupyter
+    magic when reproducibility is the point.
 
 ### Mounting other MCP servers
 

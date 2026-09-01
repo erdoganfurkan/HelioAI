@@ -87,7 +87,7 @@ one tool that is not in the registry — the agent loop intercepts it directly.
 | Role | Purpose | Tools | Max turns |
 |---|---|---|---|
 | `parameter_hunter` | vague description → speasy IDs | search only | 4 |
-| `data_analyst` | download, analyse, plot, detect | data + sandbox | 8 |
+| `data_analyst` | download, analyse, plot, detect | data + sandbox | 12 |
 | `plasma_physicist` | PlasmaPy calculations, sanity checks | sandbox | 4 |
 | `librarian` | multi-round ADS literature search | `find_papers` | 4 |
 

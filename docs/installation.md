@@ -55,7 +55,7 @@
 HelioAI needs one LLM provider. Copy `.env.example` to `.env` and set **one** of:
 
 ```ini
-HELIOAI_LLM_PROVIDER=groq        # groq | gemini | azure | ollama
+HELIOAI_LLM_PROVIDER=groq        # groq | gemini | azure | opencode | ollama
 GROQ_API_KEY=your_key_here
 ```
 

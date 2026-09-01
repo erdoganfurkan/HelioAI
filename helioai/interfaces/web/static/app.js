@@ -693,5 +693,19 @@ input.addEventListener('input', () => {
 });
 
 // Init
+// The <select> lists providers in markup order, so without this the browser sent
+// whichever came first — azure — and silently overrode the server's own setting.
+async function syncProvider() {
+  try {
+    const r = await fetch('/api/config');
+    if (!r.ok) return;
+    const { provider } = await r.json();
+    if (provider && [...provSel.options].some(o => o.value === provider)) {
+      provSel.value = provider;
+    }
+  } catch { /* leave the markup default; a failed probe must not block the UI */ }
+}
+
+syncProvider();
 loadHistory();
 renderWelcome();

@@ -109,3 +109,18 @@ def test_plasma_physicist_takes_a_fraction_over_finite_samples_only():
     assert 'export("beta_gt_1_fraction", float(np.nanmean(' not in body
     assert 'export("beta_gt_1_fraction", float(np.mean(finite_beta > 1.0)))' in body
     assert "finite_beta = beta_ts[np.isfinite(beta_ts)]" in body
+
+
+def test_data_analyst_templates_use_the_real_attribute_name():
+    """`load_data()` returns `.units`; the skill used to document and use `.unit`.
+
+    The model was not inventing it — it was obeying the skill, and every session lost a
+    turn to `AttributeError: no attribute 'unit'`. Asserted on the executable lines only:
+    the prose deliberately names the trap, so scanning the whole file cannot tell a
+    warning from a usage.
+    """
+    body = skill("data_analyst")
+    code_lines = [ln for ln in body.splitlines() if "var." in ln and "there is no" not in ln]
+    assert code_lines, "no template lines found — did the skill move?"
+    offenders = [ln for ln in code_lines if ".unit)" in ln or ".unit}" in ln]
+    assert not offenders, f"templates call the non-existent .unit: {offenders}"

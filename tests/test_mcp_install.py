@@ -8,6 +8,7 @@ mocked open() proves nothing about that.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -24,7 +25,8 @@ from helioai.interfaces.cli import (
 def test_server_command_is_absolute_and_named_helioai_mcp():
     """A relative command is useless: the client launches it from its own cwd."""
     cmd = _mcp_server_command()
-    assert cmd.endswith("helioai-mcp")
+    # Not endswith: Windows names it helioai-mcp.exe.
+    assert Path(cmd).stem == "helioai-mcp"
     assert cmd.startswith("/") or ":" in cmd
 
 
@@ -48,7 +50,7 @@ def test_json_clients_emit_parseable_json():
         text = _mcp_snippet(client)
         start = text.index("{")
         payload = json.loads(text[start:])
-        assert payload["mcpServers"]["helioai"]["command"].endswith("helioai-mcp")
+        assert Path(payload["mcpServers"]["helioai"]["command"]).stem == "helioai-mcp"
 
 
 def test_codex_snippet_is_toml_and_is_never_written():
@@ -67,7 +69,7 @@ def test_write_creates_the_file_with_a_loadable_config(tmp_path):
     target = tmp_path / "nested" / "claude_desktop_config.json"
     _write_json_config(target)
     payload = json.loads(target.read_text())
-    assert payload["mcpServers"]["helioai"]["command"].endswith("helioai-mcp")
+    assert Path(payload["mcpServers"]["helioai"]["command"]).stem == "helioai-mcp"
 
 
 def test_write_preserves_other_servers_and_unrelated_keys(tmp_path):

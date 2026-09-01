@@ -692,5 +692,8 @@ def test_config_endpoint_reports_the_configured_provider(web_client, monkeypatch
 
 def test_the_selector_is_not_hardcoded_to_the_first_option():
     """Guards the markup half: app.js must ask the server rather than trust option order."""
-    js = (Path(__file__).resolve().parents[1] / "helioai/interfaces/web/static/app.js").read_text()
+    # encoding pinned: app.js holds arrows and emoji, and Windows defaults to cp1252.
+    js = (Path(__file__).resolve().parents[1] / "helioai/interfaces/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
     assert "/api/config" in js

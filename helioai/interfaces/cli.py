@@ -390,12 +390,20 @@ def _mcp_server_command() -> str:
     running interpreter would actually use.
     """
     import shutil
+    import sys as _sys
     import sysconfig
     from pathlib import Path
 
-    candidate = Path(sysconfig.get_path("scripts")) / "helioai-mcp"
-    if candidate.exists():
-        return str(candidate)
+    scripts = Path(sysconfig.get_path("scripts"))
+    # Windows names the console script helioai-mcp.exe. Without the suffix the probe
+    # never matched there, so every Windows install silently fell through to `which` —
+    # the very lookup this function exists to avoid, since it can resolve to a different
+    # install than the running interpreter's.
+    names = ("helioai-mcp.exe", "helioai-mcp") if _sys.platform == "win32" else ("helioai-mcp",)
+    for name in names:
+        candidate = scripts / name
+        if candidate.exists():
+            return str(candidate)
     return shutil.which("helioai-mcp") or "helioai-mcp"
 
 

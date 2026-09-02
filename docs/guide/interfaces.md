@@ -123,6 +123,25 @@ because the client launches the server from its own working directory.
     helioai-mcp --http --port 8080
     ```
 
+### What the server exposes
+
+**Tools** — the same 17 the agent uses, from the same registry, so the two surfaces cannot
+drift apart. The 15 that change nothing are marked read-only, which is what lets a client
+stop prompting for `list_missions` the way it prompts for `run_python`.
+
+**Prompts** — the six analysis skills, which clients surface as slash commands:
+`/helioai:data_analyst plot IMF Bz for 2015-03-17`. Each takes an optional `task` appended
+after the procedure. They remain readable as `skill://<name>` resources too.
+
+**Resources** — every recipe as `recipe://<name>` and every skill as `skill://<name>`.
+
+**Figures** — plots from `run_python` come back inline as images, downscaled, with the
+server-side paths kept in the text body for a local client that wants full resolution.
+
+Each connection gets its own workspace under `data/users/mcp/`, so a download made in one
+call is what `load_data()` finds in the next, and two clients on the same HTTP server do not
+write over each other.
+
 !!! warning "What MCP does not carry"
 
     Tools called over MCP go straight to the registry, bypassing the agent loop — so the

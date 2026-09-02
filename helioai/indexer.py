@@ -114,6 +114,26 @@ def _get_region(uid: str) -> str:
     return region
 
 
+_AMDA_SPASE_ROOT = "CDPP-AMDA/"
+
+
+def _amda_mission(spase_id: str) -> str:
+    """Spacecraft and instrument out of an AMDA SPASE id.
+
+    The ids run `spase://CNES/NumericalData/CDPP-AMDA/<MISSION>/<INSTRUMENT>/<dataset>`,
+    and all 1075 AMDA datasets carry one. Everything but the trailing dataset segment is
+    kept, which handles the two- and four-segment variants without special-casing them.
+
+    Example:
+        >>> _amda_mission("spase://CNES/NumericalData/CDPP-AMDA/ACE/MFI/ace-imf-all")
+        'ACE MFI'
+    """
+    if _AMDA_SPASE_ROOT not in spase_id:
+        return ""
+    segments = spase_id.split(_AMDA_SPASE_ROOT, 1)[1].strip("/").split("/")
+    return " ".join(segments[:-1])
+
+
 def _extract_dataset_meta(child_vars: dict, provider_prefix: str) -> dict:
     """Extract scientific metadata from a DatasetIndex node for propagation to its parameters."""
     meta: dict = {}
@@ -124,6 +144,12 @@ def _extract_dataset_meta(child_vars: dict, provider_prefix: str) -> dict:
         desc = child_vars.get("desc") or ""
         if desc:
             meta["dataset_description"] = _strip_html(desc)[:200]
+        dataset_id = child_vars.get("xmlid") or ""
+        if dataset_id:
+            meta["dataset_id"] = dataset_id
+        mission = _amda_mission(child_vars.get("spaseId") or "")
+        if mission:
+            meta["mission"] = mission
     elif provider_prefix == "cda":
         desc = child_vars.get("description") or ""
         if desc:
@@ -428,13 +454,28 @@ def _build_text(
         parts.append(f"{entity} {prop}.")
     elif entity:
         parts.append(f"Particle: {entity}.")
-    mtype = (parent_meta or {}).get("measurement_type") or ""
+    meta = parent_meta or {}
+    mtype = meta.get("measurement_type") or ""
     if mtype:
         parts.append(f"Measurement: {mtype}.")
-    category = (parent_meta or {}).get("category") or ""
+    category = meta.get("category") or ""
     if category:
         parts.append(f"Category: {category}.")
-    dataset_desc = (parent_meta or {}).get("dataset_description") or ""
+    # Which spacecraft and instrument this belongs to. Only the parent dataset knows:
+    # `amda/imf` is the definitive ACE 16-second IMF vector and neither its id nor its
+    # description says "ACE", so no query naming the mission could ever reach it. The
+    # dataset was already resolved for its description and its identity thrown away —
+    # 780 AMDA parameters were invisible to their own mission name because of it.
+    for label, key in (
+        ("Dataset", "dataset_id"),
+        ("Mission", "mission"),
+        ("Observatory", "observatory"),
+        ("Instrument", "experiments"),
+    ):
+        value = meta.get(key) or ""
+        if value:
+            parts.append(f"{label}: {value}.")
+    dataset_desc = meta.get("dataset_description") or ""
     if dataset_desc:
         parts.append(f"{dataset_desc}.")
     if units:

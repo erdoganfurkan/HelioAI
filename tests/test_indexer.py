@@ -177,3 +177,64 @@ def test_coverage_is_read_from_the_inventory():
         "2026-10-05 23:49:00",
     )
     assert _coverage({}) == ("", "")
+
+
+# ────────────────────── identity carried into the document ──────────────────────
+
+
+def test_build_text_names_the_mission_that_owns_the_product() -> None:
+    """The indexed text must say which spacecraft a product belongs to.
+
+    AMDA parameter ids are opaque — the definitive ACE 16-second IMF vector is
+    `amda/imf` — and its description never names the spacecraft either. 780 AMDA
+    parameters were unreachable by a query naming their own mission because the
+    only field that carried it, the parent dataset, was resolved and then dropped.
+    """
+    text = _build_text(
+        "b_gse",
+        "Magnetic field vector in GSE Cartesian coordinates (16 sec)",
+        "nT",
+        "imf",
+        parent_meta={"dataset_id": "ace-imf-all", "mission": "ACE MFI"},
+    )
+    assert "ace-imf-all" in text
+    assert "ACE" in text
+    assert "MFI" in text
+
+
+def test_build_text_names_the_csa_observatory() -> None:
+    """Same defect, other provider: _extract_dataset_meta collected these and nothing used them."""
+    text = _build_text(
+        "3d_ions",
+        "HIA 3D ion distribution",
+        "s^3 km^-6",
+        "3d_ions",
+        parent_meta={"observatory": "Cluster-1", "experiments": "CIS-HIA"},
+    )
+    assert "Cluster-1" in text
+    assert "CIS-HIA" in text
+
+
+def test_build_text_without_identity_is_unchanged() -> None:
+    """A product whose dataset carries no identity must not gain empty labels."""
+    text = _build_text("Bx", "X component of B", "nT", "ace_b_x", parent_meta={})
+    assert "Dataset:" not in text
+    assert "Mission:" not in text
+    assert "Instrument:" not in text
+
+
+@pytest.mark.parametrize(
+    "spase_id,expected",
+    [
+        ("spase://CNES/NumericalData/CDPP-AMDA/ACE/MFI/ace-imf-all", "ACE MFI"),
+        ("spase://CNES/NumericalData/CDPP-AMDA/CCE/MEPA/cce-mepa-tof", "CCE MEPA"),
+        ("spase://CNES/NumericalData/CDPP-AMDA/JUNO/FGM/JNO/juno-fgm-orb", "JUNO FGM JNO"),
+        ("spase://CNES/NumericalData/CDPP-AMDA/THEMIS/tha-orb", "THEMIS"),
+        ("spase://SOMEONE/ELSE/whatever", ""),
+        ("", ""),
+    ],
+)
+def test_amda_mission(spase_id: str, expected: str) -> None:
+    from helioai.indexer import _amda_mission
+
+    assert _amda_mission(spase_id) == expected

@@ -87,6 +87,13 @@ def record(
                     "min": stats.get("min"),
                     "max": stats.get("max"),
                     "std": stats.get("std"),
+                    # `shape` and `sample` are what tell a scalar from a summary. Without
+                    # them a 3-component normal can only ever vouch for two of its three
+                    # numbers — the min and the max — and the third was reported as
+                    # contradicting the very export it came from. `sample` holds the first
+                    # eight flattened values, so for a short vector it holds all of them.
+                    "shape": stats.get("shape"),
+                    "sample": stats.get("sample"),
                     "units": stats.get("units", ""),
                     "code_path": str(code),
                     "run_idx": run_idx,

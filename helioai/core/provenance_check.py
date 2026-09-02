@@ -57,6 +57,7 @@ class Claim:
     units: str
     text: str
     context: str
+    pos: int = 0
     status: str = "unsourced"
     name: str | None = None
     code_path: str | None = None
@@ -136,8 +137,17 @@ def extract_claims(text: str) -> list[Claim]:
         # Sliced from the original text, not from `norm`: both replacements are
         # character-for-character, so the offsets hold, and the real minus sign is what
         # tells a subtraction from a hyphen.
-        context = text[max(0, m.start() - _NAME_WINDOW) : m.end() + 10].replace("\n", " ")
-        claims.append(Claim(value=value, units=unit, text=f"{raw} {unit}".strip(), context=context))
+        start = max(0, m.start() - _NAME_WINDOW)
+        context = text[start : m.end() + 10].replace("\n", " ")
+        claims.append(
+            Claim(
+                value=value,
+                units=unit,
+                text=f"{raw} {unit}".strip(),
+                context=context,
+                pos=m.start() - start,
+            )
+        )
     return claims
 
 
@@ -157,7 +167,9 @@ def _same_unit(a: str, b: str) -> bool:
     return _UNIT_ALIASES.get(a, a).lower() == _UNIT_ALIASES.get(b, b).lower()
 
 
-def _named_entry(context: str, claim_units: str, entries: list[dict]) -> dict | None:
+def _named_entry(
+    context: str, claim_units: str, entries: list[dict], pos: int | None = None
+) -> dict | None:
     """Ledger entry whose quantity the wording around a number names, if any.
 
     `compression_ratio_density` is written "density compression ratio" in prose, so the
@@ -179,9 +191,17 @@ def _named_entry(context: str, claim_units: str, entries: list[dict]) -> dict | 
       alone (the length filter drops `bz` and `nt`, the two parts that identify it), and
       "min" occurs in "minimum-variance", "30-min medians" and "Sonnerup & Cahill 1967":
       a citation year was reported as contradicting the minimum Bz.
+
+    When several entries qualify, the one written **closest to the number** wins, `pos`
+    being the number's offset in `context`. The rule used to be the longest name, which is
+    arbitrary about what the sentence is actually saying — and it decides the verdict now
+    that only a scalar entry can support a contradiction: whichever of a vector and a
+    scalar is picked out of the same window is the difference between an accusation and
+    none. Name length only breaks ties, which is what `pos=None` falls back to.
     """
     low = context.lower()
     best = None
+    best_key: tuple[int, int] | None = None
     for entry in entries:
         name = entry.get("name") or ""
         entry_units = entry.get("units") or ""
@@ -190,35 +210,88 @@ def _named_entry(context: str, claim_units: str, entries: list[dict]) -> dict | 
         words = [w for w in re.split(r"[._\s]+", name.lower()) if len(w) > 2]
         if not words or (not entry_units and len(words) < 2):
             continue
-        if all(re.search(rf"\b{re.escape(w)}\b", low) for w in words):
-            if best is None or len(name) > len(best.get("name") or ""):
-                best = entry
+        starts = [[m.start() for m in re.finditer(rf"\b{re.escape(w)}\b", low)] for w in words]
+        if not all(starts):
+            continue
+        distance = 0 if pos is None else min(abs(s - pos) for occ in starts for s in occ)
+        key = (distance, -len(name))
+        if best_key is None or key < best_key:
+            best, best_key = entry, key
     return best
 
 
+def _n_values(entry: dict) -> int | None:
+    """How many numbers an entry summarises, or None if the ledger predates `shape`.
+
+    None means "unknown", and every caller here reads it as "assume the old behaviour":
+    a ledger written before shape was recorded must not be reinterpreted after the fact.
+    """
+    shape = entry.get("shape")
+    if not isinstance(shape, list) or not all(isinstance(d, int) for d in shape):
+        return None
+    n = 1
+    for d in shape:
+        n *= d
+    return n
+
+
+def _is_scalar(entry: dict) -> bool:
+    """Whether the entry holds a single value, so that a different number contradicts it."""
+    n = _n_values(entry)
+    return n is None or n <= 1
+
+
+def _whole_array(entry: dict) -> list:
+    """The entry's values when `sample` holds all of them, else empty.
+
+    `export()` keeps the first eight flattened values, so this is the whole array exactly
+    for the short vectors that matter here — a shock normal, a mean field, a 3-component
+    velocity. Longer arrays fall back to their four statistics.
+    """
+    sample = entry.get("sample")
+    n = _n_values(entry)
+    if not isinstance(sample, list) or n is None:
+        return []
+    return sample if 0 < n <= len(sample) else []
+
+
 def _states(entry: dict, value: float, rtol: float) -> bool:
-    """Whether a ledger entry holds this number, as one of its four statistics.
+    """Whether a ledger entry holds this number: one of its four statistics, or — for a
+    short vector the ledger stores whole — one of its components.
 
     Magnitudes are compared: the ledger keeps the sign of what was computed, while a reply
     quotes the size of it — "a 464.5 s lag" for a recorded -464.5. Reporting that as
     unsourced was wrong, and this module answers where a number came from, not whether its
     sign is right.
+
+    Components count because a reply that prints `n = [-0.661, -0.657, 0.362]` is quoting
+    the export three times over, and min/max alone vouched for two of the three. The rule
+    is deliberately narrow: only when `sample` holds every value of the array, never a
+    truncated one, so a long time series is still judged on its statistics.
     """
+
+    def close(v: float) -> bool:
+        return abs(abs(v) - abs(value)) <= rtol * max(abs(value), abs(v), 1e-12)
+
     for key in ("mean", "min", "max", "std"):
         v = entry.get(key)
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            if abs(abs(v) - abs(value)) <= rtol * max(abs(value), abs(v), 1e-12):
-                return True
-    return False
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and close(v):
+            return True
+    return any(
+        isinstance(v, (int, float)) and not isinstance(v, bool) and close(v)
+        for v in _whole_array(entry)
+    )
 
 
 def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
     """Give every claim a provenance status against the ledger.
 
     - `matched` — a recorded value (mean, min, max or std) equals it within `rtol`.
-    - `contradicted` — the wording names a recorded quantity but the number is not one of
-      its statistics. The strongest signal available here: the value was computed, and
-      what got published is something else.
+    - `contradicted` — the wording names a recorded **scalar** and the number is not it.
+      The strongest signal available here: the value was computed, and what got published
+      is something else. An entry holding several values cannot support the accusation —
+      `B_up = [-2.33, -0.40, 9.38] nT` legitimately states numbers that are neither the
+      mean, the min, the max nor the std of that vector.
     - `derived` — no match, but either a ratio or a percentage, or a number the reply
       spells out the arithmetic for ("U1 = Vs - Vu ~ 176.98 km/s"). Both are computed
       *from* recorded values rather than being one, and a reader can follow them. Counted
@@ -230,13 +303,13 @@ def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
 
     for claim in claims:
         hits = [e for e in entries if _states(e, claim.value, rtol)]
-        named = _named_entry(claim.context, claim.units, entries)
+        named = _named_entry(claim.context, claim.units, entries, claim.pos)
         if hits:
             claim.status = "matched"
             claim.name = hits[0].get("name")
             claim.code_path = hits[0].get("code_path")
             report.matched += 1
-        elif named:
+        elif named and _is_scalar(named):
             claim.status = "contradicted"
             claim.name = named.get("name")
             claim.code_path = named.get("code_path")

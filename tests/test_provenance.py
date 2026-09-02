@@ -389,3 +389,113 @@ def test_a_decimal_point_still_works():
 def test_a_decimal_comma_number_is_treated_as_a_measurement_not_a_count():
     """9,79 is written with a fraction, so the bare-integer floor must not drop it."""
     assert (9.79, "") in _claims("le rapport vaut 9,79 selon le calcul")
+
+
+# ── vectors ────────────────────────────────────────────────────────────────────
+
+_SHOCK_NORMAL_MC = {
+    "units": "",
+    "shape": [3],
+    "dtype": "float64",
+    "min": -0.6609380065362107,
+    "max": 0.36192522480537503,
+    "mean": -0.31880332840923864,
+    "std": 0.4813499466381236,
+    "n_finite": 3,
+    "n_nan": 0,
+    "sample": [-0.6609380065362107, -0.6573972034968802, 0.36192522480537503],
+}
+
+
+def test_a_component_of_an_exported_vector_is_sourced_not_contradicted(tmp_path):
+    """Replayed from HelioBench `n3_theta_bn.2`, whose reply and exports are verbatim here.
+
+    The run was right and agreed with its own ledger, and the checker still reported
+    `contradicted: -0.65739720 | shock_normal_mc` — the middle component of the very
+    vector that entry records. min and max vouched for the two outer components, and a
+    three-component export can only ever cover two of its three numbers that way.
+    """
+    from helioai.core.provenance_check import check_reply
+
+    provenance.record(
+        {"shock_normal_mc": _SHOCK_NORMAL_MC, "theta_Bn_deg": _stats(57.49625747764631, "deg")},
+        code_path=str(tmp_path / "code_2.py"),
+    )
+    reply = (
+        "the resulting unit shock normal is:\n"
+        "- n = [-0.66093801, -0.65739720, 0.36192522]\n"
+        "The shock normal angle relative to the upstream magnetic field is:\n"
+        "- theta_Bn = 57.49625747764631 deg"
+    )
+
+    payload = check_reply(reply, tmp_path)
+    assert payload["contradicted"] == 0, payload["details"]
+    assert payload["matched"] == 4
+
+
+def test_a_ledger_written_before_shape_was_recorded_still_accuses(tmp_path):
+    """Old sessions keep the old verdict: an unknown shape must not be read as a vector."""
+    from helioai.core.provenance_check import check_reply
+
+    provenance.record({"compression_ratio": _stats(2.59)}, code_path=str(tmp_path / "code_0.py"))
+    entries = provenance.read_ledger(tmp_path)["values"]
+    assert entries[0]["shape"] is None
+
+    payload = check_reply("The density compression ratio is 3.80.", tmp_path)
+    assert payload["contradicted"] == 1
+
+
+def test_a_scalar_export_is_still_contradicted_by_a_different_number(tmp_path):
+    """The narrowing must not make the check mute — this is what it exists for."""
+    from helioai.core.provenance_check import check_reply
+
+    scalar = dict(_stats(2.59), shape=[], sample=[2.59])
+    provenance.record({"compression_ratio": scalar}, code_path=str(tmp_path / "code_0.py"))
+
+    payload = check_reply("The density compression ratio is 3.80.", tmp_path)
+    assert payload["contradicted"] == 1
+    assert payload["details"][0]["name"] == "compression_ratio"
+
+
+def test_a_long_series_is_judged_on_its_statistics_not_on_its_first_samples(tmp_path):
+    """`sample` is the first eight values of a flattened array. Trusting it on a 1800-point
+    series would source any number that happened to sit near its start, so the whole-array
+    rule requires the sample to hold every value."""
+    from helioai.core.provenance_check import _whole_array, check_reply
+
+    series = {
+        "units": "nT",
+        "shape": [1800],
+        "min": 8.0,
+        "max": 25.0,
+        "mean": 17.0,
+        "std": 4.0,
+        "sample": [9.11, 9.14, 9.2, 9.3, 9.25, 9.4, 9.35, 9.5],
+    }
+    assert _whole_array(series) == []
+    provenance.record({"b_series": series}, code_path=str(tmp_path / "code_0.py"))
+
+    payload = check_reply("The field starts at 9.14 nT and peaks at 25.0 nT.", tmp_path)
+    assert payload["matched"] == 1
+    assert payload["unsourced"] == 1
+
+
+def test_the_name_nearest_the_number_is_the_one_accused():
+    """Two quantities in one window: the sentence is about the nearer one.
+
+    The rule used to be the longest name, which here blames the shock speed for a number
+    written about the upstream flow. It also decides the verdict now that only a scalar
+    entry can support a contradiction — whichever of a vector and a scalar the window
+    picks is the difference between an accusation and none.
+    """
+    from helioai.core.provenance_check import _named_entry, extract_claims
+
+    entries = [
+        {"name": "shock_speed_km_s", "units": "km/s", "mean": 571.07},
+        {"name": "upstream_flow", "units": "km/s", "mean": 409.99},
+    ]
+    reply = "shock speed 571.07 km/s, upstream flow 421.0 km/s"
+    (claim,) = [c for c in extract_claims(reply) if c.value == 421.0]
+
+    assert _named_entry(claim.context, claim.units, entries, claim.pos)["name"] == "upstream_flow"
+    assert _named_entry(claim.context, claim.units, entries)["name"] == "shock_speed_km_s"

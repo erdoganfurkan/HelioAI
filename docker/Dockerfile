@@ -25,9 +25,14 @@ WORKDIR /app
 # Without HELIOAI_DATA_DIR the runtime stage has no pyproject.toml, so the repo
 # check fails and data_dir lands in /root/.local/share — outside the volume below,
 # which made sessions and the Chroma index vanish on every recreate.
+# XDG_DATA_HOME for the same reason, one library further: speasy keeps its own
+# inventory under $XDG_DATA_HOME/speasy, falling back to $HOME/.local/share/speasy
+# — /root/.local/share/speasy here, outside the volume. That tree is 840 MB
+# (cda_inventory 548 MB + index 228 MB) and was re-downloaded on every recreate.
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    HELIOAI_DATA_DIR=/app/data
+    HELIOAI_DATA_DIR=/app/data \
+    XDG_DATA_HOME=/app/data
 
 # bubblewrap is the sandbox's only real isolation, and SECURITY.md tells people to
 # use this image to get it. preexec_fn drops the sandbox subprocess to the dedicated

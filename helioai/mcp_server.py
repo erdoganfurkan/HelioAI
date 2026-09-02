@@ -19,6 +19,8 @@ import contextlib
 import hmac
 import sys
 from urllib.parse import urlparse
+from uuid import uuid4
+from weakref import WeakKeyDictionary
 
 from mcp import MCPError
 from mcp.server import NotificationOptions, Server, ServerRequestContext
@@ -39,8 +41,10 @@ from mcp.types import (
 )
 
 import helioai.tools.setup  # noqa: F401 — registers all tools at import time
+from helioai import workspace
 from helioai.config import settings
 from helioai.core.skills_loader import SkillError, list_skills, load_skill
+from helioai.core.tool_exec import inject_run_python_args
 from helioai.logging_config import get_logger, setup_logging
 from helioai.tools.recipes import list_recipes, load_recipe
 from helioai.tools.registry import registry
@@ -59,10 +63,46 @@ async def _list_tools(
     )
 
 
+MCP_USER = "mcp"
+
+_sessions: WeakKeyDictionary = WeakKeyDictionary()
+_NO_SESSION = object()
+
+
+def _session_id(ctx: ServerRequestContext | None) -> str:
+    """Stable workspace id for the connection this request arrived on.
+
+    `ctx.session` is the SDK's connection-scoped ServerSession, so one key works for
+    both transports without either one knowing about the other: over stdio there is a
+    single session for the process, over HTTP one per client. Keyed weakly so a closed
+    connection stops pinning its id.
+
+    Without this the workspace contextvars stayed unset and every call fell through to
+    `workspace._no_session_dir()` — one process-wide mkdtemp shared by every client,
+    where `_run_idx` never advanced past 0 and each run overwrote the previous one's
+    code and figures.
+    """
+    key = getattr(ctx, "session", None) or _NO_SESSION
+    try:
+        return _sessions.setdefault(key, f"mcp_{uuid4().hex[:12]}")
+    except TypeError:
+        return "mcp_shared"
+
+
 async def _call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
     # registry.call_tool() never raises — it catches everything into a JSON
     # {"error": ...} string — so is_error stays False unconditionally, same as v1.
-    result = await registry.call_tool(params.name, params.arguments or {})
+    user_token = workspace.set_user(MCP_USER)
+    session_token = workspace.set_session(_session_id(ctx))
+    try:
+        result = await registry.call_tool(
+            params.name,
+            params.arguments or {},
+            trusted=inject_run_python_args(params.name),
+        )
+    finally:
+        workspace.reset_session(session_token)
+        workspace.reset_user(user_token)
     return CallToolResult(content=[TextContent(type="text", text=result)], is_error=False)
 
 

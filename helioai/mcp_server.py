@@ -15,8 +15,10 @@ restart. Recipes re-glob the filesystem on every call and need no restart.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hmac
+import io
 import json
 import sys
 from urllib.parse import urlparse
@@ -32,6 +34,7 @@ from mcp.types import (
     CallToolResult,
     GetPromptRequestParams,
     GetPromptResult,
+    ImageContent,
     ListPromptsResult,
     ListResourcesResult,
     ListResourceTemplatesResult,
@@ -58,6 +61,8 @@ from helioai.core.tool_exec import inject_run_python_args
 from helioai.logging_config import get_logger, setup_logging
 from helioai.tools.recipes import list_recipes, load_recipe
 from helioai.tools.registry import registry
+
+log = get_logger(__name__)
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -120,6 +125,51 @@ def _is_error(result: str) -> bool:
     return isinstance(payload, dict) and "error" in payload
 
 
+FIGURE_MAX_PX = 768
+
+
+def _figure_content(result: str) -> list[ImageContent]:
+    """Attach the figures a tool produced, downscaled, to its result.
+
+    The sandbox returns `figure_paths` — paths on the server's filesystem. That is
+    useless to any client that is not the same machine, and over HTTP it is useless to
+    all of them, which left the plots of a plotting agent stranded on the server. The
+    paths stay in the text body for a local client that wants full resolution.
+
+    Downscaled to FIGURE_MAX_PX because these ride inline in every response: a
+    publication-sized figure is several megabytes of base64 to say what a legible
+    thumbnail says. A figure that cannot be read is skipped rather than failing the
+    call — it already succeeded.
+    """
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+
+    content: list[ImageContent] = []
+    for path in payload.get("figure_paths") or []:
+        try:
+            from PIL import Image
+
+            with Image.open(path) as img:
+                img.thumbnail((FIGURE_MAX_PX, FIGURE_MAX_PX))
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+        except Exception:
+            log.warning("mcp_figure_unreadable", path=str(path))
+            continue
+        content.append(
+            ImageContent(
+                type="image",
+                data=base64.b64encode(buf.getvalue()).decode(),
+                mime_type="image/png",
+            )
+        )
+    return content
+
+
 async def _call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
     user_token = workspace.set_user(MCP_USER)
     session_token = workspace.set_session(_session_id(ctx))
@@ -133,7 +183,8 @@ async def _call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -
         workspace.reset_session(session_token)
         workspace.reset_user(user_token)
     return CallToolResult(
-        content=[TextContent(type="text", text=result)], is_error=_is_error(result)
+        content=[TextContent(type="text", text=result), *_figure_content(result)],
+        is_error=_is_error(result),
     )
 
 

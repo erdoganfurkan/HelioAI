@@ -375,3 +375,53 @@ async def test_resource_templates_declare_both_schemes():
         "recipe://{name}",
         "skill://{name}",
     }
+
+
+async def test_run_python_returns_the_figure_as_image_content(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    result = await ms._call_tool(
+        _ctx(),
+        CallToolRequestParams(
+            name="run_python",
+            arguments={"code": "import matplotlib.pyplot as plt; plt.plot([1, 2, 3]); plt.show()"},
+        ),
+    )
+    images = [c for c in result.content if isinstance(c, types.ImageContent)]
+    assert len(images) == 1
+    assert images[0].mime_type == "image/png"
+    assert result.content[0].type == "text"
+
+
+async def test_returned_figure_is_downscaled(monkeypatch, tmp_path):
+    import base64
+    import io
+
+    from PIL import Image
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    code = (
+        "import matplotlib.pyplot as plt\n"
+        "fig = plt.figure(figsize=(30, 20), dpi=100)\n"
+        "plt.plot([1, 2, 3])\n"
+        "plt.show()\n"
+    )
+    result = await ms._call_tool(
+        _ctx(), CallToolRequestParams(name="run_python", arguments={"code": code})
+    )
+    image = next(c for c in result.content if isinstance(c, types.ImageContent))
+    with Image.open(io.BytesIO(base64.b64decode(image.data))) as img:
+        assert max(img.size) <= ms.FIGURE_MAX_PX
+
+
+async def test_tool_without_a_figure_returns_text_only():
+    result = await ms._call_tool(None, CallToolRequestParams(name="list_missions", arguments={}))
+    assert all(isinstance(c, types.TextContent) for c in result.content)
+
+
+def test_unreadable_figure_is_skipped_not_raised():
+    """A figure that cannot be read must not fail a call that already succeeded."""
+    assert ms._figure_content(json.dumps({"figure_paths": ["/nope/missing.png"]})) == []
+
+
+def test_figure_content_ignores_non_json_results():
+    assert ms._figure_content("not json at all") == []

@@ -30,12 +30,12 @@ HelioAI:  → resolves param IDs for B, Vp, Np across 83k speasy products
 
 Data access needs no API key. Parameter hunting is the agent's job, not yours.
 
-![A recorded HelioAI session: the agent resolves the Wind MFI parameter by search, downloads 1800 points, writes and runs plotting code in the sandbox, reviews its own figure, finds a data gap behind a suspicious line, and ends with a provenance verdict](https://raw.githubusercontent.com/erdoganfurkan/HelioAI/main/docs/assets/demo.gif)
+![The HelioAI web UI running a real session: the question, the resolved parameter card for cda/WI_H0_MFI/B3F1, the plotted magnetic field magnitude with the shock arrival marked, the activity log of every tool call, and the generated Python in the code panel](https://raw.githubusercontent.com/erdoganfurkan/HelioAI/main/docs/assets/web-demo.gif)
 
-<sub>A real session, unedited — only the waiting between turns is compressed. Note the
-figure review: the agent flags its own plot for a straight line across a gap, then goes back
-to the data and finds it. It ends by checking every number it stated against what it
-actually computed.</sub>
+<sub>A real session, unedited — only the waiting between turns is compressed. The activity
+log lists every tool call and ends with a provenance verdict; the code panel holds the exact
+Python that produced the figure, which is also what the session exports as a runnable
+notebook.</sub>
 
 ---
 
@@ -67,12 +67,14 @@ pip install helioai-agent
 helioai index          # one-time, ~10 min — indexes 83k products into a local ChromaDB
 ```
 
-Then set one LLM provider key (`groq`, `gemini`, `azure`, `opencode` or `ollama` — Groq's
-free tier is the quickest start):
+Then set one LLM provider key (`opencode`, `groq`, `gemini`, `azure` or `ollama` — the
+OpenCode Zen gateway serves reasoning models behind a single key, and the model name is
+required since there is no sensible default):
 
 ```bash
-export HELIOAI_LLM_PROVIDER=groq
-export GROQ_API_KEY=...
+export HELIOAI_LLM_PROVIDER=opencode
+export OPENCODE_API_KEY=...
+export HELIOAI_OPENCODE_MODEL=deepseek-v4-pro
 ```
 
 → [Full installation and configuration guide](https://erdoganfurkan.github.io/HelioAI/installation/)

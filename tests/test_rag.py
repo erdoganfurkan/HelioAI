@@ -582,3 +582,31 @@ def test_a_companion_is_kept_when_explicitly_asked_for():
         "description": "1-sigma uncertainty in the proton density.",
     }
     assert _rerank_penalty("Wind density uncertainty", sigma) == 0
+
+
+# ─────────────── published processing level beats the prose sniff ───────────────
+
+
+def test_calibrated_product_is_not_demoted_by_the_word_prelim() -> None:
+    """AMDA's ace-imf-all reads "Level2/PRELIM Data" and is published Calibrated.
+
+    The sniff read PRELIM and called the definitive ACE IMF vector browse quality,
+    which ranked it below amda/imf_real_gse — the NOAA real-time feed, which carries
+    no such word. All 99 AMDA products the sniff caught this way are Calibrated.
+    """
+    text = (
+        "b_gse. Magnetic field vector in GSE Cartesian coordinates (16 sec). "
+        "Processing: Calibrated. Interplanetary Magnetic Field 16-sec Level2/PRELIM Data."
+    )
+    assert rag_module._quality_of("amda/imf", text) == ""
+
+
+def test_key_parameter_product_stays_browse_even_when_calibrated() -> None:
+    """The K0 rule is read off the id and is the one this flag was built for."""
+    text = "Np. Solar wind density. Processing: Calibrated."
+    assert rag_module._quality_of("cda/WI_K0_SWE/Np", text) == "browse"
+
+
+def test_prelim_without_a_published_level_still_flags() -> None:
+    """CDA publishes no processing level here — the sniff stays its own evidence."""
+    assert rag_module._quality_of("cda/AC_H0_MFI/BGSEc", "PRELIM data") == "browse"

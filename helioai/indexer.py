@@ -150,6 +150,9 @@ def _extract_dataset_meta(child_vars: dict, provider_prefix: str) -> dict:
         mission = _amda_mission(child_vars.get("spaseId") or "")
         if mission:
             meta["mission"] = mission
+        level = child_vars.get("processing_level") or ""
+        if level:
+            meta["processing_level"] = level
     elif provider_prefix == "cda":
         desc = child_vars.get("description") or ""
         if desc:
@@ -471,6 +474,7 @@ def _build_text(
         ("Mission", "mission"),
         ("Observatory", "observatory"),
         ("Instrument", "experiments"),
+        ("Processing", "processing_level"),
     ):
         value = meta.get(key) or ""
         if value:

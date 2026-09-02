@@ -228,6 +228,14 @@ def _quality_of(param_id: str, text: str) -> str:
     if "_K0_" in f"_{dataset}_" or "K0" in dataset.split("_")[:2]:
         return "browse"
     lowered = text.lower()
+    # A published processing level outranks the sniff below. AMDA describes ace-imf-all
+    # as "Level2/PRELIM Data" — Level 2 extended with preliminary data at the recent end
+    # — and publishes it as Calibrated. Every one of the 99 AMDA products the sniff
+    # caught on that word is Calibrated, and for the definitive ACE IMF vector the flag
+    # ranked it below amda/imf_real_gse, the NOAA real-time feed, which says no such
+    # word. Providers that publish no level keep the sniff as their only evidence.
+    if "processing: calibrated" in lowered or "processing: valueadded" in lowered:
+        return ""
     if "key parameters" in lowered or "prelim" in lowered:
         return "browse"
     return ""

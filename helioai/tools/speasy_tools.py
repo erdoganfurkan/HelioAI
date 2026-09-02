@@ -429,6 +429,18 @@ async def list_missions() -> dict:
     }
 
 
+def _strip_score(results: list[dict]) -> list[dict]:
+    """Drop the ranking score before a model ever sees it.
+
+    `search` writes `score` at the cross-encoder step, then reorders twice more without
+    rewriting it — by domain penalty, then by coverage — so the number ends up
+    contradicting the rank it is attached to. The list order IS the ranking, and it is
+    right; the score is the stale part. Copies rather than pops: these dicts are the ones
+    `rag._search_cache` holds.
+    """
+    return [{k: v for k, v in r.items() if k != "score"} for r in results]
+
+
 def _apply_window(results: list[dict], window: tuple[str, str] | None) -> list[dict]:
     """Flag and demote products whose published coverage misses the requested window.
 
@@ -481,7 +493,7 @@ async def search_parameters(
          {'id': 'cda/AC_H2_SWE/Np',
           'description': 'Proton No. density. Solar Wind Proton Number Density, scalar. '
                          'ACE/SWEPAM ... 1-Hour Level 2 Data ... Units: #/cc. ...',
-          'coverage': '1998-02-04 → 2024-07-09', 'score': 1.0}, ...]}
+          'coverage': '1998-02-04 → 2024-07-09'}, ...]}
     """
     window = (start, stop) if start and stop else None
     if queries:
@@ -492,7 +504,7 @@ async def search_parameters(
             return {
                 "provider": provider,
                 "groups": [
-                    {"query": q, "results": _apply_window(r, window)}
+                    {"query": q, "results": _apply_window(_strip_score(r), window)}
                     for q, r in zip(queries, batch, strict=False)
                 ],
             }
@@ -517,7 +529,11 @@ async def search_parameters(
         from helioai.tools.rag import search as rag_search
 
         results = rag_search(query, top_k=top_k, provider=provider)
-        return {"query": query, "provider": provider, "results": _apply_window(results, window)}
+        return {
+            "query": query,
+            "provider": provider,
+            "results": _apply_window(_strip_score(results), window),
+        }
     except Exception as e:
         log.warning("RAG search failed (%s), falling back to speasy inventory scan", e)
 
@@ -558,7 +574,6 @@ def _fallback_search(spz, query: str, top_k: int) -> list[dict]:
                         "id": str(uid) or attr,
                         "name": str(name),
                         "description": str(desc)[:120],
-                        "score": 0.5,
                     }
                 )
             if not hasattr(child, "uid") and depth < 6:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hmac
+import json
 import sys
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -38,6 +39,7 @@ from mcp.types import (
     TextContent,
     TextResourceContents,
     Tool,
+    ToolAnnotations,
 )
 
 import helioai.tools.setup  # noqa: F401 — registers all tools at import time
@@ -57,7 +59,12 @@ async def _list_tools(
 ) -> ListToolsResult:
     return ListToolsResult(
         tools=[
-            Tool(name=t.name, description=t.description, input_schema=t.parameters)
+            Tool(
+                name=t.name,
+                description=t.description,
+                input_schema=t.parameters,
+                annotations=ToolAnnotations(read_only_hint=registry.is_read_only(t.name)),
+            )
             for t in registry.list_tool_defs()
         ]
     )
@@ -89,9 +96,23 @@ def _session_id(ctx: ServerRequestContext | None) -> str:
         return "mcp_shared"
 
 
+def _is_error(result: str) -> bool:
+    """Whether a registry result is a failure.
+
+    `registry.call_tool` never raises: an unknown tool, a rejected private argument and
+    any exception all come back as a JSON object carrying `error`, and several tools
+    report their own failures the same way. Reading that back is the only signal there
+    is, and clients drive retries and their own error display off `isError` — returning
+    False unconditionally reported every one of those as a success.
+    """
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(payload, dict) and "error" in payload
+
+
 async def _call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
-    # registry.call_tool() never raises — it catches everything into a JSON
-    # {"error": ...} string — so is_error stays False unconditionally, same as v1.
     user_token = workspace.set_user(MCP_USER)
     session_token = workspace.set_session(_session_id(ctx))
     try:
@@ -103,7 +124,9 @@ async def _call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -
     finally:
         workspace.reset_session(session_token)
         workspace.reset_user(user_token)
-    return CallToolResult(content=[TextContent(type="text", text=result)], is_error=False)
+    return CallToolResult(
+        content=[TextContent(type="text", text=result)], is_error=_is_error(result)
+    )
 
 
 async def _list_resources(

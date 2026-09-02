@@ -53,7 +53,7 @@ async def test_call_tool_unknown_returns_error():
     result = await ms._call_tool(None, CallToolRequestParams(name="does_not_exist", arguments={}))
     assert len(result.content) == 1
     assert isinstance(result.content[0], types.TextContent)
-    assert result.is_error is False
+    assert result.is_error is True
     body = json.loads(result.content[0].text)
     assert "error" in body
 
@@ -298,3 +298,34 @@ def test_build_llm_client_still_reports_the_missing_key(monkeypatch):
     monkeypatch.setattr(settings.llm.azure, "api_key", "")
     with pytest.raises(RuntimeError, match="AZURE_OPENAI_API_KEY is not set in .env"):
         build_llm_client("azure")
+
+
+async def test_call_tool_rejected_private_argument_is_an_error():
+    result = await ms._call_tool(
+        None, CallToolRequestParams(name="run_python", arguments={"_plot_dir": "/etc"})
+    )
+    assert result.is_error is True
+
+
+async def test_call_tool_success_is_not_an_error():
+    result = await ms._call_tool(None, CallToolRequestParams(name="list_missions", arguments={}))
+    assert result.is_error is False
+
+
+async def test_sandbox_failure_is_reported_as_an_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    result = await ms._call_tool(
+        _ctx(), CallToolRequestParams(name="run_python", arguments={"code": "1 / 0"})
+    )
+    assert result.is_error is True
+
+
+async def test_list_tools_marks_the_two_writers_as_not_read_only():
+    result = await ms._list_tools(None, None)
+    writers = {t.name for t in result.tools if not t.annotations.read_only_hint}
+    assert writers == {"run_python", "save_catalog"}
+
+
+async def test_list_tools_annotates_every_tool():
+    result = await ms._list_tools(None, None)
+    assert all(t.annotations is not None for t in result.tools)

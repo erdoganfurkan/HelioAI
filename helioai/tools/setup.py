@@ -147,6 +147,7 @@ registry.register(
         },
         "required": ["code"],
     },
+    read_only=False,
 )(_sb.run_python)
 
 
@@ -437,6 +438,7 @@ registry.register(
         },
         "required": ["name", "events"],
     },
+    read_only=False,
 )(_cat.save_catalog)
 
 

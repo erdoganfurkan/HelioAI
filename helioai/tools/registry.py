@@ -23,6 +23,7 @@ class Tool:
     description: str
     parameters: dict  # JSON Schema object
     func: Callable[..., Coroutine[Any, Any, Any]]
+    read_only: bool = True
 
 
 class ToolRegistry:
@@ -35,8 +36,19 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
 
-    def register(self, name: str, description: str, parameters: dict) -> Callable:
-        """Decorator that registers an async function as a tool."""
+    def register(
+        self, name: str, description: str, parameters: dict, *, read_only: bool = True
+    ) -> Callable:
+        """Decorator that registers an async function as a tool.
+
+        Args:
+            read_only: False for a tool that changes something a user would care about
+                — running arbitrary code, writing a catalogue. MCP clients gate
+                auto-approval on it, so the default is the safe-to-repeat majority and
+                the two exceptions say so at their registration site. Kept here rather
+                than in a table beside the MCP server: the registry is the one place
+                that already describes every tool.
+        """
 
         def decorator(func: Callable) -> Callable:
             self._tools[name] = Tool(
@@ -44,6 +56,7 @@ class ToolRegistry:
                 description=description,
                 parameters=parameters,
                 func=func,
+                read_only=read_only,
             )
             return func
 
@@ -84,6 +97,11 @@ class ToolRegistry:
             return json.dumps(result, ensure_ascii=False, default=str)
         except Exception as e:
             return json.dumps({"error": str(e)})
+
+    def is_read_only(self, name: str) -> bool:
+        """Whether the tool leaves the user's world unchanged. Unknown names count as not."""
+        tool = self._tools.get(name)
+        return bool(tool and tool.read_only)
 
     def __contains__(self, name: str) -> bool:
         return name in self._tools

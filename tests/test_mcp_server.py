@@ -1,8 +1,15 @@
-"""Tests for the MCP server handlers (no subprocess, no network I/O)."""
+"""Tests for the MCP server handlers — no network I/O.
+
+A subprocess is used where the behaviour under test *is* an import-time one, and the
+sandbox tests run the real thing rather than mocking it.
+"""
 
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 
 import pytest
 from mcp import MCPError, types
@@ -11,6 +18,7 @@ from starlette.testclient import TestClient
 
 import helioai.tools.setup  # noqa: F401
 from helioai import mcp_server as ms
+from helioai.config import settings
 
 
 async def test_list_tools_count():
@@ -220,3 +228,30 @@ def test_http_on_public_interface_with_token_starts(monkeypatch):
     ms.main()
 
     assert started == [("0.0.0.0", 8765)]
+
+
+def test_mcp_server_imports_without_any_llm_key():
+    """The MCP server is a pure tool provider — the client brings its own model.
+
+    A subprocess with the keys blanked is the only honest way to test import-time
+    behaviour: by the time this test runs, config is long since imported.
+    """
+    env = {**os.environ, "HELIOAI_LLM_PROVIDER": "azure"}
+    for key in ("AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT", "GROQ_API_KEY", "GEMINI_API_KEY"):
+        env[key] = ""
+    proc = subprocess.run(
+        [sys.executable, "-c", "import helioai.mcp_server"],
+        capture_output=True,
+        env=env,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr.decode()
+
+
+def test_build_llm_client_still_reports_the_missing_key(monkeypatch):
+    """Moving the check must not lose it — the error only had to arrive later."""
+    from helioai.core.llm.factory import build_llm_client
+
+    monkeypatch.setattr(settings.llm.azure, "api_key", "")
+    with pytest.raises(RuntimeError, match="AZURE_OPENAI_API_KEY is not set in .env"):
+        build_llm_client("azure")

@@ -10,6 +10,8 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from mcp import MCPError, types
@@ -228,6 +230,47 @@ def test_http_on_public_interface_with_token_starts(monkeypatch):
     ms.main()
 
     assert started == [("0.0.0.0", 8765)]
+
+
+class _FakeSession:
+    """Stand-in for the SDK's ServerSession — only object identity is used as the key."""
+
+
+def _ctx(session: object | None = None):
+    return SimpleNamespace(session=session or _FakeSession())
+
+
+async def _run(ctx, code: str) -> dict:
+    result = await ms._call_tool(
+        ctx, CallToolRequestParams(name="run_python", arguments={"code": code})
+    )
+    return json.loads(result.content[0].text)
+
+
+async def test_two_mcp_calls_get_distinct_run_indices(monkeypatch, tmp_path):
+    """Two run_python calls on one connection must not write the same code file.
+
+    The whole point: without a session bound, `_run_idx` stays 0 and the second call
+    silently overwrites the first one's code and figures.
+    """
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    ctx = _ctx()
+    first = await _run(ctx, "print('first')")
+    second = await _run(ctx, "print('second')")
+    assert first["code_path"] != second["code_path"]
+
+
+async def test_mcp_call_writes_under_its_own_user(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    out = await _run(_ctx(), "print('hello')")
+    assert str(tmp_path / "users" / "mcp") in out["code_path"]
+
+
+async def test_two_mcp_connections_do_not_share_a_workspace(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    a = await _run(_ctx(), "print('a')")
+    b = await _run(_ctx(), "print('b')")
+    assert Path(a["code_path"]).parent != Path(b["code_path"]).parent
 
 
 def test_mcp_server_imports_without_any_llm_key():

@@ -589,3 +589,63 @@ async def test_ordinary_tool_results_still_reach_the_sub_agent_verbatim(stub_reg
 
     tool_msgs = [m for m in llm.calls[1]["messages"] if m.role == "tool"]
     assert tool_msgs[0].content == payload
+
+
+# ── the lead's data, seen from the sub-agent ───────────────────────────────────
+
+
+async def test_a_sub_agent_run_python_reads_the_dataset_the_lead_downloaded(tmp_path, monkeypatch):
+    """No stub: the real registry, the real sandbox, a real npz written by the lead.
+
+    HelioBench summary_2026-08-25 blamed the delegation regression on the sub-agent's
+    sandbox not seeing the lead's downloads, quoting a reply that said so outright. The
+    reply was the model explaining its own failure, and the failure was a turn cap. This
+    is the measurement that reply stood in for: the sub-agent shares the lead's session
+    directory, so `load_data(name)` resolves. Anything that unbinds the session contextvar
+    on the way into `stream_subagent` breaks it silently, which is why the check runs the
+    whole path instead of asserting on `get_session_dir()`.
+    """
+    from helioai import datastore
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+
+    import helioai.workspace as ws
+
+    ws.set_user("cli")
+    ws.set_session("sess-lead")
+    n = 50
+    t0 = np.datetime64("2015-03-17T03:30:00")
+    assert datastore.save_timeseries(
+        "btest",
+        time=t0 + np.arange(n) * np.timedelta64(1, "s"),
+        values=np.random.default_rng(0).normal(size=(n, 3)),
+        param_id="cda/WI_H0_MFI/BGSM",
+        units="nT",
+        start="2015-03-17T03:30:00",
+        stop="2015-03-17T03:30:50",
+        columns=["Bx", "By", "Bz"],
+        source="test",
+    )
+
+    code = "d = load_data('btest')\nprint('SHAPE', d.values.shape, d.units)"
+    llm = ScriptedLLM(
+        [
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[ToolCall(id="c1", name="run_python", arguments={"code": code})],
+            ),
+            text("done"),
+        ]
+    )
+    events = await drain(
+        **{
+            **base(llm, role="data_analyst", description="load btest and print its shape"),
+            "parent_session_id": "sess-lead",
+        }
+    )
+
+    results = [e for e in events if e["event"] == "tool_result"]
+    assert results, [e["event"] for e in events]
+    assert "SHAPE (50, 3) nT" in results[0]["data"]["summary"]

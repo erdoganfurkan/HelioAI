@@ -329,3 +329,49 @@ async def test_list_tools_marks_the_two_writers_as_not_read_only():
 async def test_list_tools_annotates_every_tool():
     result = await ms._list_tools(None, None)
     assert all(t.annotations is not None for t in result.tools)
+
+
+async def test_list_prompts_offers_every_skill():
+    from helioai.core.skills_loader import list_skills
+
+    result = await ms._list_prompts(None, None)
+    assert {p.name for p in result.prompts} == {m.name for m in list_skills()}
+
+
+async def test_get_prompt_returns_the_skill_body():
+    from mcp.types import GetPromptRequestParams
+
+    result = await ms._get_prompt(None, GetPromptRequestParams(name="plotting", arguments=None))
+    assert result.messages[0].role == "user"
+    assert len(result.messages[0].content.text) > 100
+
+
+async def test_get_prompt_appends_the_task_argument():
+    from mcp.types import GetPromptRequestParams
+
+    result = await ms._get_prompt(
+        None,
+        GetPromptRequestParams(name="plotting", arguments={"task": "plot IMF Bz for 2015-03-17"}),
+    )
+    assert result.messages[0].content.text.endswith("plot IMF Bz for 2015-03-17")
+
+
+async def test_get_prompt_unknown_skill_raises():
+    from mcp.types import GetPromptRequestParams
+
+    with pytest.raises(MCPError):
+        await ms._get_prompt(None, GetPromptRequestParams(name="not-a-skill", arguments=None))
+
+
+async def test_skills_stay_available_as_resources_too():
+    """Prompts are added, not swapped in — an existing client reading skill:// keeps working."""
+    result = await ms._list_resources(None, None)
+    assert any(str(r.uri).startswith("skill://") for r in result.resources)
+
+
+async def test_resource_templates_declare_both_schemes():
+    result = await ms._list_resource_templates(None, None)
+    assert {t.uri_template for t in result.resource_templates} == {
+        "recipe://{name}",
+        "skill://{name}",
+    }

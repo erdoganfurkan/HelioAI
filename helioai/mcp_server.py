@@ -30,12 +30,20 @@ from mcp.types import (
     INVALID_PARAMS,
     CallToolRequestParams,
     CallToolResult,
+    GetPromptRequestParams,
+    GetPromptResult,
+    ListPromptsResult,
     ListResourcesResult,
+    ListResourceTemplatesResult,
     ListToolsResult,
     PaginatedRequestParams,
+    Prompt,
+    PromptArgument,
+    PromptMessage,
     ReadResourceRequestParams,
     ReadResourceResult,
     Resource,
+    ResourceTemplate,
     TextContent,
     TextResourceContents,
     Tool,
@@ -178,12 +186,77 @@ async def _read_resource(
     raise MCPError(INVALID_PARAMS, f"unsupported resource URI scheme: {parsed.scheme!r}")
 
 
+async def _list_resource_templates(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListResourceTemplatesResult:
+    """Declare the two URI shapes the read handler already accepts."""
+    return ListResourceTemplatesResult(
+        resource_templates=[
+            ResourceTemplate(
+                uri_template="recipe://{name}",
+                name="recipe",
+                description="Source of a derived scientific recipe, by name.",
+                mime_type="text/x-python",
+            ),
+            ResourceTemplate(
+                uri_template="skill://{name}",
+                name="skill",
+                description="Body of an analysis skill, by name.",
+                mime_type="text/markdown",
+            ),
+        ]
+    )
+
+
+async def _list_prompts(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListPromptsResult:
+    """Offer the skills as prompts, not only as resources.
+
+    A skill is a procedure meant to be followed, and a resource is something a model has
+    to think to go and read. As prompts they become slash commands in the client, which
+    is what these six were written to be — the resource listing stays as well so nothing
+    that already reads `skill://` breaks.
+    """
+    return ListPromptsResult(
+        prompts=[
+            Prompt(
+                name=m.name,
+                description=f"{m.description} Use when: {m.when_to_use}",
+                arguments=[
+                    PromptArgument(
+                        name="task",
+                        description="What you want done — appended to the procedure.",
+                        required=False,
+                    )
+                ],
+            )
+            for m in list_skills()
+        ]
+    )
+
+
+async def _get_prompt(ctx: ServerRequestContext, params: GetPromptRequestParams) -> GetPromptResult:
+    try:
+        body = load_skill(params.name)
+    except SkillError as e:
+        raise MCPError(INVALID_PARAMS, str(e)) from e
+    task = (params.arguments or {}).get("task", "")
+    text = f"{body}\n\n---\n\n{task}" if task else body
+    return GetPromptResult(
+        messages=[PromptMessage(role="user", content=TextContent(type="text", text=text))]
+    )
+
+
 server = Server(
     "helioai",
     on_list_tools=_list_tools,
     on_call_tool=_call_tool,
     on_list_resources=_list_resources,
     on_read_resource=_read_resource,
+    on_list_resource_templates=_list_resource_templates,
+    on_list_prompts=_list_prompts,
+    on_get_prompt=_get_prompt,
 )
 
 

@@ -86,27 +86,32 @@ async def _list_tools(
 MCP_USER = "mcp"
 
 _sessions: WeakKeyDictionary = WeakKeyDictionary()
-_NO_SESSION = object()
+_PROCESS_SESSION = f"mcp_{uuid4().hex[:12]}"
 
 
 def _session_id(ctx: ServerRequestContext | None) -> str:
     """Stable workspace id for the connection this request arrived on.
 
-    `ctx.session` is the SDK's connection-scoped ServerSession, so one key works for
-    both transports without either one knowing about the other: over stdio there is a
-    single session for the process, over HTTP one per client. Keyed weakly so a closed
-    connection stops pinning its id.
+    Keyed on the connection, **not** on `ctx.session`: `runner._make_context` builds a
+    fresh ServerSession for every inbound message, whatever the docstring on
+    ServerRequestContext says about it being connection-scoped. Keying on the session
+    gave every single call its own directory, so `get_timeseries` wrote its npz in one
+    and the next `run_python` looked for the manifest in another — `load_data` raised
+    "no dataset manifest found" on the call straight after a successful download. Only
+    a live client showed it; the tests were passing two different fake sessions and
+    calling that two connections.
 
-    Without this the workspace contextvars stayed unset and every call fell through to
-    `workspace._no_session_dir()` — one process-wide mkdtemp shared by every client,
-    where `_run_idx` never advanced past 0 and each run overwrote the previous one's
-    code and figures.
+    Held weakly so a closed connection stops pinning its id. When the connection cannot
+    be reached — the attribute is private and may be renamed — the whole process shares
+    one id, which is exactly right for stdio, where the client owns the process.
     """
-    key = getattr(ctx, "session", None) or _NO_SESSION
+    connection = getattr(getattr(ctx, "session", None), "_connection", None)
+    if connection is None:
+        return _PROCESS_SESSION
     try:
-        return _sessions.setdefault(key, f"mcp_{uuid4().hex[:12]}")
+        return _sessions.setdefault(connection, f"mcp_{uuid4().hex[:12]}")
     except TypeError:
-        return "mcp_shared"
+        return _PROCESS_SESSION
 
 
 def _is_error(result: str) -> bool:

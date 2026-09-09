@@ -232,12 +232,24 @@ def test_http_on_public_interface_with_token_starts(monkeypatch):
     assert started == [("0.0.0.0", 8765)]
 
 
+class _FakeConnection:
+    """Stand-in for the SDK's Connection — the only object that lives as long as the link."""
+
+
 class _FakeSession:
-    """Stand-in for the SDK's ServerSession — only object identity is used as the key."""
+    """Stand-in for ServerSession.
+
+    The SDK builds a fresh one for every inbound message (`runner._make_context`),
+    so it is the connection it carries, not the session, that identifies the client.
+    """
+
+    def __init__(self, connection: object):
+        self._connection = connection
 
 
-def _ctx(session: object | None = None):
-    return SimpleNamespace(session=session or _FakeSession())
+def _ctx(connection: object | None = None):
+    """One request's context. A new ServerSession each time, as the SDK does."""
+    return SimpleNamespace(session=_FakeSession(connection or _FakeConnection()))
 
 
 async def _run(ctx, code: str) -> dict:
@@ -271,6 +283,24 @@ async def test_two_mcp_connections_do_not_share_a_workspace(monkeypatch, tmp_pat
     a = await _run(_ctx(), "print('a')")
     b = await _run(_ctx(), "print('b')")
     assert Path(a["code_path"]).parent != Path(b["code_path"]).parent
+
+
+async def test_one_connection_keeps_one_workspace_across_calls(monkeypatch, tmp_path):
+    """Two calls on the same connection must land in the same session directory.
+
+    The SDK mints a new ServerSession per inbound message, so keying the workspace on
+    the session gives every call its own directory — which silently breaks the whole
+    point: get_timeseries writes its npz in one directory and the next run_python
+    looks for the manifest in another. Measured against a live client before this
+    was pinned: load_data raised "no dataset manifest found" on the call right after
+    a successful download.
+    """
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    connection = _FakeConnection()
+    first = await _run(_ctx(connection), "print('first')")
+    second = await _run(_ctx(connection), "print('second')")
+    assert Path(first["code_path"]).parent == Path(second["code_path"]).parent
+    assert first["code_path"] != second["code_path"]
 
 
 def test_mcp_server_imports_without_any_llm_key():

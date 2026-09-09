@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from helioai.indexer import _build_text, _get_region, _walk
+from helioai.indexer import _build_text, _extract_dataset_meta, _get_region, _walk
 
 # ─────────────────────────────── _get_region ────────────────────────────────
 
@@ -238,3 +238,37 @@ def test_amda_mission(spase_id: str, expected: str) -> None:
     from helioai.indexer import _amda_mission
 
     assert _amda_mission(spase_id) == expected
+
+
+# ─────────────────── published region beats the guessed table ───────────────────
+
+
+def test_dataset_meta_carries_the_published_region() -> None:
+    """AMDA publishes the SPASE Region per dataset in `target`.
+
+    _get_region guesses one instead, from a 40-entry table matched as a substring,
+    and its two-letter keys collide: "ac" (ACE) matches inside "cce_mepa_ion_act",
+    so an AMPTE/CCE magnetosheath product was labelled Heliosphere.NearEarth. The
+    table disagrees with the source on 1279 products and is silent on 1813 more.
+    """
+    meta = _extract_dataset_meta({"target": "Earth.Magnetosheath"}, "amda")
+    assert meta["region"] == "Earth.Magnetosheath"
+
+
+def test_dataset_meta_has_no_region_when_the_source_is_silent() -> None:
+    """21% of AMDA datasets publish no target — the table stays their only evidence."""
+    assert "region" not in _extract_dataset_meta({"desc": "something"}, "amda")
+
+
+def test_region_for_prefers_the_source_over_the_table() -> None:
+    from helioai.indexer import _region_for
+
+    assert _region_for("amda/cce_mepa_ion_act", {"region": "Earth.Magnetosheath"}) == (
+        "Earth.Magnetosheath"
+    )
+
+
+def test_region_for_falls_back_to_the_table() -> None:
+    from helioai.indexer import _region_for
+
+    assert _region_for("amda/psp_mag_rtn", {}) == "Heliosphere.Inner"

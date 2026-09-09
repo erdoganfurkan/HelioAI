@@ -114,6 +114,22 @@ def _get_region(uid: str) -> str:
     return region
 
 
+def _region_for(uid: str, parent_meta: dict | None) -> str:
+    """The product's SPASE Region — published if the archive states one, guessed otherwise.
+
+    `_get_region` matches a 40-entry table as a substring, and its two-letter keys
+    collide: "ac" (ACE) matches inside "cce_mepa_ion_act", so AMPTE/CCE particle
+    counts in the magnetosheath were labelled Heliosphere.NearEarth. Measured against
+    AMDA's own `target`, the table disagrees on 1279 products and is silent on 1813
+    more. The region is written into the indexed text, so a wrong one is wrong
+    retrieval vocabulary, not just wrong metadata.
+
+    The table stays for the 21% of AMDA datasets that publish no target, and for CDA
+    and CSA, which publish none at all.
+    """
+    return (parent_meta or {}).get("region") or _get_region(uid)
+
+
 _AMDA_SPASE_ROOT = "CDPP-AMDA/"
 
 
@@ -153,6 +169,9 @@ def _extract_dataset_meta(child_vars: dict, provider_prefix: str) -> dict:
         level = child_vars.get("processing_level") or ""
         if level:
             meta["processing_level"] = level
+        target = child_vars.get("target") or ""
+        if target:
+            meta["region"] = target
     elif provider_prefix == "cda":
         desc = child_vars.get("description") or ""
         if desc:
@@ -376,7 +395,7 @@ def _walk(
             uid = f"{provider_prefix}/{xmlid}"
             if uid not in skip_ids:
                 skip_ids.add(uid)
-                region = _get_region(uid)
+                region = _region_for(uid, parent_meta)
                 text = _build_text(
                     name,
                     description,

@@ -229,9 +229,13 @@ class OpenAICompatClient(LLMClient):
         temperature: float | None = 0.2,
         provider: str = "openai",
         client: Any = None,
+        default_headers: dict[str, str] | None = None,
     ):
         self._client = client or AsyncOpenAI(
-            api_key=api_key or "unused", base_url=base_url, max_retries=0
+            api_key=api_key or "unused",
+            base_url=base_url,
+            max_retries=0,
+            default_headers=default_headers or None,
         )
         self._model = model
         self._system_role = system_role

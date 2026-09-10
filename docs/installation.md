@@ -88,6 +88,13 @@ installed from PyPI. Override with `HELIOAI_DATA_DIR`.
 Rebuild from scratch with `helioai index --rebuild` — worth doing when speasy ships a
 significant catalogue update.
 
+!!! warning "Upgrading HelioAI does not reindex"
+
+    `helioai index` is incremental: it skips every product already in the index, so a
+    release that changes *how* products are described leaves your existing index
+    untouched and the improvement invisible. After upgrading, run `helioai index
+    --rebuild` to pick those up.
+
 ## Check it works
 
 ```bash

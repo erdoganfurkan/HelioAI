@@ -7,8 +7,33 @@ explicit below.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from helioai.config import settings
 from helioai.core.llm.base import LLMClient
+
+_UUID_TOKEN = "{uuid}"
+
+
+def _resolve_headers(headers: dict[str, str] | None) -> dict[str, str]:
+    """Expand `{uuid}` in configured headers, once per client.
+
+    A gateway that wants a per-conversation token needs a fresh value, not the literal
+    string someone put in their .env — so the placeholder is substituted here, where a
+    client is built, rather than at config load, where it would be fixed for the life
+    of the process.
+
+    ponytail: one id per client, not per conversation. CLI and Jupyter build a client
+    per session so the two coincide; the web app builds one per request and splits a
+    conversation into several ids. Threading the real session id through `chat()` as a
+    per-request header is the upgrade if that ever measures.
+    """
+    if not headers:
+        return {}
+    return {
+        name: (uuid4().hex if value == _UUID_TOKEN else value) for name, value in headers.items()
+    }
+
 
 # provider -> (settings attribute, base_url template). `key_required` is False for
 # local endpoints that authenticate no one.
@@ -96,6 +121,7 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
             base_url=base_url,
             max_output_tokens=cfg.max_output_tokens,
             temperature=cfg.temperature,
+            default_headers=_resolve_headers(getattr(cfg, "headers", None)),
         )
 
     known = "|".join(["azure", "gemini", *OPENAI_COMPAT])

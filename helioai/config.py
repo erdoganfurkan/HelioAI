@@ -85,6 +85,7 @@ class GroqConfig:
     max_output_tokens: int = 4096
     temperature: float = 0.2
     api_key: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -118,6 +119,7 @@ class OpenCodeConfig:
     max_output_tokens: int = 16384
     temperature: float = 0.2
     api_key: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -133,6 +135,7 @@ class OllamaConfig:
     max_output_tokens: int = 4096
     temperature: float = 0.2
     api_key: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -317,6 +320,29 @@ def _parse_users(raw: str) -> dict[str, str]:
     return users
 
 
+def _parse_headers(raw: str) -> dict[str, str]:
+    """Parse HELIOAI_<PROVIDER>_HEADERS='x-session={uuid},x-team=plasma' → {name: value}.
+
+    Extra HTTP headers for an OpenAI-compatible endpoint. Corporate proxies, access
+    gateways and metered relays each want their own, and hard-coding one vendor's in
+    the factory both dates the code and ships a policy decision nobody asked for.
+
+    A value of `{uuid}` is replaced with a fresh random id when the client is built, so
+    a gateway that wants a per-conversation token gets a real one instead of the same
+    literal string forever.
+    """
+    headers: dict[str, str] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        name, value = pair.split("=", 1)
+        name, value = name.strip(), value.strip()
+        if name:
+            headers[name] = value
+    return headers
+
+
 def _load() -> Settings:
     provider = os.environ.get("HELIOAI_LLM_PROVIDER", "azure").lower()
     max_iterations = int(os.environ.get("HELIOAI_MAX_ITERATIONS", "10"))
@@ -370,15 +396,18 @@ def _load() -> Settings:
             ),
             groq=GroqConfig(
                 api_key=os.environ.get("GROQ_API_KEY", ""),
+                headers=_parse_headers(os.environ.get("HELIOAI_GROQ_HEADERS", "")),
             ),
             opencode=OpenCodeConfig(
                 base_url=os.environ.get("HELIOAI_OPENCODE_URL", "https://opencode.ai/zen/go"),
                 model=os.environ.get("HELIOAI_OPENCODE_MODEL", ""),
                 api_key=os.environ.get("OPENCODE_API_KEY", ""),
+                headers=_parse_headers(os.environ.get("HELIOAI_OPENCODE_HEADERS", "")),
             ),
             ollama=OllamaConfig(
                 base_url=os.environ.get("HELIOAI_OLLAMA_URL", "http://localhost:11434"),
                 model=os.environ.get("HELIOAI_OLLAMA_MODEL", "qwen2.5:14b-instruct"),
+                headers=_parse_headers(os.environ.get("HELIOAI_OLLAMA_HEADERS", "")),
             ),
         ),
         agent=AgentConfig(max_iterations=max_iterations),

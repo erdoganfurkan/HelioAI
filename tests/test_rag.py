@@ -93,11 +93,62 @@ def test_search_empty_collection_returns_empty(isolated_rag) -> None:
     assert results == []
 
 
-def test_search_scores_are_sorted_descending(isolated_rag) -> None:
-    _seed(isolated_rag, n=10)
-    results = search("solar wind measurement", top_k=5)
+def _seed_a_log_companion(collection) -> None:
+    """Seed a real measurement next to its log-scaled copy.
+
+    `_seed` gives every product the same penalty, which makes `_apply_domain_rerank` a
+    no-op and lets any ordering claim pass. A companion product is the cheapest thing
+    that actually moves in the fourth reordering step.
+    """
+    rng = np.random.default_rng(3)
+    entries = [
+        ("cda/WI_H1_SWE/Proton_Np_nonlin", "Proton number density Np (linear scale)."),
+        ("cda/WI_H1_SWE/Proton_Np_nonlin_log", "Proton number density Np (log scale)."),
+        ("cda/WI_H1_SWE/Proton_V_nonlin", "Proton bulk speed (linear scale)."),
+    ]
+    vecs = rng.random((len(entries), 128)).astype("float32")
+    vecs = vecs / np.maximum(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9)
+    collection.add(
+        ids=[i for i, _ in entries],
+        embeddings=vecs.tolist(),
+        documents=[d for _, d in entries],
+        metadatas=[{"name": i, "provider": "cda", "xmlid": i} for i, _ in entries],
+    )
+
+
+class _LogCopyFirstReranker:
+    """The measured failure: the cross-encoder ranks the demoted product first."""
+
+    def predict(self, pairs):
+        return [10.0 if "log scale" in doc else 1.0 for _q, doc in pairs]
+
+
+def test_search_is_ordered_by_penalty_then_score(isolated_rag, monkeypatch) -> None:
+    """The order is lexicographic — penalty ascending, then score descending.
+
+    `score` is written by the cross-encoder and never rewritten by the domain rerank that
+    runs after it, so a demoted product keeps the high score it was handed. Asserting a
+    plain descending order would say the reranking is wrong; it is not, it is what puts
+    the real density above its log copy. Only the pair is invariant.
+    """
+    from helioai.config import settings
+    from helioai.tools.rag import _rerank_penalty
+
+    monkeypatch.setattr(settings.rag, "rerank_enabled", True)
+    monkeypatch.setattr(rag_module, "_reranker", _LogCopyFirstReranker())
+    monkeypatch.setattr(rag_module, "_reranker_loaded", True)
+    _seed_a_log_companion(isolated_rag)
+
+    query = "Wind proton density"
+    results = search(query, top_k=5)
+
+    assert results[-1]["id"] == "cda/WI_H1_SWE/Proton_Np_nonlin_log"
+    keys = [(_rerank_penalty(query, r), -r["score"]) for r in results]
+    assert keys == sorted(keys)
     scores = [r["score"] for r in results]
-    assert scores == sorted(scores, reverse=True)
+    assert scores != sorted(scores, reverse=True), (
+        "the demoted product keeps its stale score — without that this pins nothing"
+    )
 
 
 def test_search_top_k_respected_when_collection_has_more(isolated_rag) -> None:

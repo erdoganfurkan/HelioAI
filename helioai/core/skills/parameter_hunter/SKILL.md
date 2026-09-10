@@ -38,9 +38,10 @@ answer. An invented id is not.
 3. Call `search_parameters(queries=[...])` **once** with all of them. It returns
    `groups`, one `{query, results}` per input query (same order).
 4. Map each group's top result back to its parameter.
-5. Re-query **only** the parameters whose best result looks weak (low/ambiguous
-   score, wrong mission): a second small `search_parameters(queries=[...])` with
-   rephrased terms or a `provider` filter — never one sub-agent per parameter.
+5. Re-query **only** the parameters whose best result looks weak (wrong mission,
+   wrong quantity, description that does not match): a second small
+   `search_parameters(queries=[...])` with rephrased terms or a `provider` filter —
+   never one sub-agent per parameter.
 
 Seeing all results together lets you keep providers consistent and dedupe shared
 parameters. Use a single `query=` (string) only when there is genuinely one.
@@ -118,13 +119,14 @@ catalog (~68k of 83k params)** and drowns AMDA/CSA in any generic query. Use the
 Providers: **amda** (CDPP/IRAP, European missions, derived products), **cda** (NASA SPDF,
 ~68k params, ACE/Wind/MMS/Cluster/PSP/SolO), **csa** (ESA Cluster Science Archive, C1–C4),
 **ssc** (ephemeris). The filter is more reliable than naming the provider in the query text.
-With no preference, search without a filter and return the best-scoring result.
+With no preference, search without a filter and return the first result.
 
-## 3. Interpret the score
+## 3. Read the ranking
 
-`score` is a **relative** ranking confidence (top ≈ 1.0), not absolute. What matters is
-**agreement**: a parameter ranked high by both the semantic and exact-token channels is a strong
-match. When unsure, re-query or compare the top 3.
+Results come back **best first** — that order is the ranking, and there is no score to weigh
+it against. Judge a match on what the result says: the `description`, the units, the mission
+it belongs to, the `coverage` against the window you need. When unsure, compare the top 3 or
+re-query; never pick a lower result over the first without a reason you can state.
 
 ## 4. Fallbacks when search returns nothing relevant
 

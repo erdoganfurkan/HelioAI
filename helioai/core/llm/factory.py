@@ -42,6 +42,7 @@ OPENAI_COMPAT: dict[str, dict] = {
         "config": "groq",
         "base_url": "https://api.groq.com/openai/v1",
         "key_env": "GROQ_API_KEY",
+        "key_url": " (https://console.groq.com/keys)",
     },
     "opencode": {
         "config": "opencode",
@@ -80,9 +81,9 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
 
         cfg = settings.llm.azure
         if not cfg.api_key:
-            raise RuntimeError("AZURE_OPENAI_API_KEY is not set")
+            raise RuntimeError("AZURE_OPENAI_API_KEY is not set in .env")
         if not cfg.endpoint:
-            raise RuntimeError("AZURE_OPENAI_ENDPOINT is not set")
+            raise RuntimeError("AZURE_OPENAI_ENDPOINT is not set in .env")
         return AzureOpenAIClient(
             api_key=cfg.api_key,
             endpoint=cfg.endpoint,
@@ -97,7 +98,9 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
 
         cfg = settings.llm.gemini
         if not cfg.api_key:
-            raise RuntimeError("GEMINI_API_KEY is not set")
+            raise RuntimeError(
+                "GEMINI_API_KEY is not set in .env (https://aistudio.google.com/apikey)"
+            )
         return GeminiClient(
             api_key=cfg.api_key,
             model=cfg.model,
@@ -112,7 +115,7 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
         cfg = getattr(settings.llm, spec["config"])
         api_key = getattr(cfg, "api_key", "")
         if spec["key_env"] and not api_key:
-            raise RuntimeError(f"{spec['key_env']} is not set")
+            raise RuntimeError(f"{spec['key_env']} is not set in .env{spec.get('key_url', '')}")
         base_url = spec["base_url"] or f"{getattr(cfg, 'base_url', '').rstrip('/')}/v1"
         return OpenAICompatClient(
             provider=p,

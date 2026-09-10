@@ -97,7 +97,13 @@ async def test_search_parameters_calls_rag_search(monkeypatch) -> None:
     result = await search_parameters("ACE magnetic field")
     assert isinstance(result, dict)
     assert result["results"][0]["id"] == "amda/ace_b_gse"
-    assert result["results"][0]["score"] == pytest.approx(0.92)
+    assert all("score" not in r for r in result["results"]), (
+        "score is written before two later reorderings and contradicts the rank it "
+        "sits on — the tool boundary is where it stops"
+    )
+    assert fake_results[0]["score"] == pytest.approx(0.92), (
+        "rag.search keeps its score; stripping must not mutate the cached dicts"
+    )
 
 
 async def test_search_parameters_returns_query_field(monkeypatch) -> None:
@@ -121,6 +127,7 @@ async def test_search_parameters_batch_returns_groups(monkeypatch) -> None:
     assert len(result["groups"]) == 2
     assert result["groups"][0]["query"] == "imf bz ace"
     assert result["groups"][0]["results"][0]["id"] == "amda/p0"
+    assert all("score" not in r for g in result["groups"] for r in g["results"])
 
 
 async def test_search_parameters_requires_query_or_queries() -> None:

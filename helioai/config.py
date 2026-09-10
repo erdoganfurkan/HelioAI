@@ -1,7 +1,12 @@
 """Centralized configuration — loads .env once at startup.
 
 `settings` is a module-level singleton imported everywhere.
-Fails fast at import time if the configured LLM provider is missing an API key.
+
+Importing this module never requires an API key. Credentials are validated where they
+are used, by `llm.factory.build_llm_client`, which already raised the same errors — the
+import-time copy only meant that surfaces needing no LLM at all could not start. The MCP
+server is exactly that: a pure tool provider whose client brings its own model, and it
+died on `AZURE_OPENAI_API_KEY is not set` before serving a single tool.
 """
 
 from __future__ import annotations
@@ -416,16 +421,6 @@ def _load() -> Settings:
     if out_override:
         for name in ("azure", "gemini", "groq", "ollama"):
             getattr(s.llm, name).max_output_tokens = out_override
-
-    if provider == "azure":
-        if not s.llm.azure.api_key:
-            raise RuntimeError("AZURE_OPENAI_API_KEY is not set in .env")
-        if not s.llm.azure.endpoint:
-            raise RuntimeError("AZURE_OPENAI_ENDPOINT is not set in .env")
-    elif provider == "groq" and not s.llm.groq.api_key:
-        raise RuntimeError("GROQ_API_KEY is not set in .env (https://console.groq.com/keys)")
-    elif provider == "gemini" and not s.llm.gemini.api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set in .env (https://aistudio.google.com/apikey)")
 
     return s
 

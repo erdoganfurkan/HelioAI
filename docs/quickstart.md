@@ -13,7 +13,7 @@ HelioAI works in visible steps:
 
 ```
 → search_parameters(queries=['solar wind proton density ACE'])
-← search_parameters: 5 matches, best cda/AC_H0_SWE/Np (score 0.89)
+← search_parameters: 5 matches, best cda/AC_H0_SWE/Np
 → get_timeseries(param_id='cda/AC_H0_SWE/Np', start='2005-01-16', stop='2005-01-18')
 ← get_timeseries: 1440 points, 64 s cadence, units cm^-3
 📊 1 figure(s)

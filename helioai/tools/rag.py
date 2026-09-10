@@ -710,12 +710,16 @@ def search(
 
     With hybrid search enabled (default), a BM25 lexical channel is fused with
     the dense channel via RRF — this recovers exact id/code matches (e.g.
-    `BGSEc`) that dense embeddings miss. When the cross-encoder reranker is off,
-    `score` is a RELATIVE confidence in [0,1] (top≈1.0); with the reranker on it
-    is the absolute sigmoid score.
+    `BGSEc`) that dense embeddings miss.
+
+    The returned ORDER is the ranking. `score` is only the fusion or cross-encoder
+    value, frozen before the domain rerank reorders the list, so it does not decrease
+    monotonically down the results and must not be re-sorted on — reading it as a
+    ranking puts the demoted product back on top. It is kept here to tune the
+    retrieval; `search_parameters` drops it before a model sees it.
 
     For several queries at once use `search_batch` (one embedding pass + one
-    Chroma call). Returns a list of dicts: {id, name, description, score}.
+    Chroma call). Returns a list of dicts: {id, name, description, coverage, score}.
 
     Args:
         query: Free-text English description of ONE parameter.

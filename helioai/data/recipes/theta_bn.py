@@ -31,6 +31,28 @@ def _to_vec(arr):
 
 
 def theta_bn(B_up, B_dn):
+    """Shock normal angle between the upstream field and the coplanarity normal.
+
+    Parameters
+    ----------
+    B_up : (N, 3) or (3,) array of upstream field vectors in nT. An (N, 3)
+           series is averaged over its first axis, so an upstream window can be
+           passed as-is without pre-averaging.
+    B_dn : (N, 3) or (3,) array of downstream field vectors in nT, same handling.
+
+    Returns
+    -------
+    dict with theta_bn_deg (degrees, 0-90), geometry ("quasi-parallel" below
+    45 deg, "quasi-perpendicular" above), shock_normal (unit 3-vector),
+    B_up_mean_nT and B_dn_mean_nT (the vectors actually used).
+    On collinear or identical inputs the normal is undefined, and the dict
+    carries an "error" key instead of an angle rather than a meaningless number.
+
+    The angle is taken through |cos| because the coplanarity normal has an
+    arbitrary sign: n and -n describe the same shock, so theta_Bn is folded into
+    0-90 deg. Anything downstream that needs the normal's direction (a shock
+    speed, a Mach number) must fix the sign itself from the flow.
+    """
     u = _to_vec(B_up)
     d = _to_vec(B_dn)
 

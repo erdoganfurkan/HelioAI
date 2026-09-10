@@ -29,6 +29,21 @@ async def find_papers(
     Requires `ADS_API_TOKEN`; without it the tool returns an error rather than
     raising, so the agent can tell the user what is missing.
 
+    Args:
+        query: Free-text ADS query — event, parameter, method or author.
+        max_results: How many papers to return.
+        year_start: Earliest publication year, inclusive. None leaves it open.
+        year_end: Latest publication year, inclusive. None leaves it open.
+        sort: `relevance`, `citation_count` or `date`, passed to ADS as given.
+        _transport: Test seam for injecting an httpx transport. Not part of the
+            tool schema the model sees.
+
+    Returns:
+        `{"query", "papers", "note"}`, where each paper carries title, authors,
+        year, bibcode, doi, citations and abstract. On a missing token or an ADS
+        failure, an `error` key instead — never an exception, because the agent
+        has to be able to report the cause.
+
     Example:
         >>> await find_papers("interplanetary shock Rankine-Hugoniot multi-spacecraft",
         ...                   max_results=2)

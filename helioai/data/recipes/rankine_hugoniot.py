@@ -90,6 +90,13 @@ SPAN_MIN = 20.0
 def shock_windows(shock_time, guard_min: float = GUARD_MIN, span_min: float = SPAN_MIN):
     """The four window edges, derived from the shock time alone.
 
+    Parameters
+    ----------
+    shock_time : numpy datetime64 crossing time.
+    guard_min  : minutes skipped either side of the crossing, so the ramp itself
+                 never lands in an average.
+    span_min   : length in minutes of each averaging window.
+
     Returns
     -------
     (up_start, up_stop, dn_start, dn_stop) as datetime64, ordered in time.
@@ -111,6 +118,18 @@ def window_mean(t, values, t0, t1, min_samples: int = 3, normal=None) -> float:
     for a bulk speed. Passing `normal` for anything but an (n, 3) series raises: Wind SWE
     Proton_V_moment is a scalar speed stored as (n, 1) and has no components to project,
     where `v @ n_hat` used to fail with a matmul dimension error that says nothing.
+
+    Parameters
+    ----------
+    t           : numpy datetime64 array of sample times.
+    values      : (n,), (n, 1) or (n, 3) array of samples.
+    t0, t1      : window edges as datetime64, inclusive.
+    min_samples : below this count inside the window the result is NaN.
+    normal      : optional unit 3-vector. Projects V.n_hat; (n, 3) only.
+
+    Returns
+    -------
+    float mean over the window, or NaN when too few samples land inside.
     """
     t = np.asarray(t)
     v = np.asarray(values, dtype=float)
@@ -149,9 +168,20 @@ def upstream_downstream(t, values, shock_time,
     pre-computation. Pass `normal` (from theta_bn or mvab) to project V·n̂ instead,
     which is what the jump conditions actually want.
 
+    Parameters
+    ----------
+    t          : numpy datetime64 array of sample times.
+    values     : (n,), (n, 1) or (n, 3) array of samples.
+    shock_time : numpy datetime64 crossing time; the windows are derived from it.
+    guard_min  : minutes skipped either side of the crossing.
+    span_min   : length in minutes of each averaging window.
+    normal     : optional unit 3-vector, projecting V.n_hat instead of averaging
+                 the magnitude. Raises on a series that is not (n, 3).
+
     Returns
     -------
-    (mean_upstream, mean_downstream)
+    (mean_upstream, mean_downstream), either of which may be NaN when its window
+    caught too few samples.
     """
     u0, u1, d0, d1 = shock_windows(shock_time, guard_min, span_min)
     return (window_mean(t, values, u0, u1, normal=normal),

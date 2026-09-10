@@ -49,6 +49,12 @@ def read_ledger(session_dir: Path) -> dict:
 
     Same contract as `datastore.read_manifest`: an absent or corrupt file reads as an
     empty ledger rather than raising, so callers never need a try/except.
+
+    Args:
+        session_dir: Session workspace holding `data/provenance.json`.
+
+    Returns:
+        `{"values": [...]}`, empty when the session has exported nothing.
     """
     return _read_ledger_file(Path(session_dir))
 
@@ -66,6 +72,18 @@ def record(
     `code_path` doubles as the session locator — the sandbox writes `code_<n>.py` at the
     root of the session directory — which keeps this callable from `tool_exec` without
     reaching for the workspace contextvars a second time.
+
+    Args:
+        values: The run's exports, as `export()` produced them. `shape` and
+            `sample` are kept, not just the statistics: without them a vector's
+            middle component has no way to be recognised, and a correct answer
+            quoting it was accused of contradicting the ledger.
+        code_path: Path of the `code_<n>.py` this run wrote; its parent is the
+            session directory.
+        agent: `"lead"` or a sub-agent role, so a claim can be traced to who
+            computed it.
+        task_id: Sub-agent correlation id, when there is one.
+        turn: Agent turn index, for ordering entries within a session.
     """
     if not values or not code_path:
         return
@@ -112,7 +130,16 @@ def record(
 
 
 def find_value(session_dir: Path, name: str) -> dict | None:
-    """Most recent ledger entry exported under `name`, or None."""
+    """Most recent ledger entry exported under `name`, or None.
+
+    Args:
+        session_dir: Session workspace to read.
+        name: Export name, matched exactly.
+
+    Returns:
+        The newest entry with that name — a name re-exported by a later run
+        wins, because the reply is talking about the latest computation.
+    """
     for entry in reversed(read_ledger(session_dir)["values"]):
         if entry.get("name") == name:
             return entry
@@ -124,6 +151,16 @@ def match_number(session_dir: Path, x: float, rtol: float = 1e-3) -> list[dict]:
 
     Any of the four statistics counts: a reply quoting "peaked at 14.5 nT" is sourced by
     the max of an exported array just as much as by its mean.
+
+    Args:
+        session_dir: Session workspace to read.
+        x: The number as the reply states it.
+        rtol: Relative tolerance, loose enough to absorb the rounding a model
+            applies when it writes a value into prose.
+
+    Returns:
+        Every entry that could have produced `x`, possibly several — the caller
+        decides which one the wording points at.
     """
     hits = []
     for entry in read_ledger(session_dir)["values"]:

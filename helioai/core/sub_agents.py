@@ -323,6 +323,21 @@ async def stream_subagent(
     longer report and will be tempted to invent. Callers that display it truncate on
     their own side. Reaching the turn cap is reported as an `error`, not as a result,
     for the same reason — a lead handed a capped run has nothing to summarise.
+
+    Args:
+        role: One of the configured roles. Its tool whitelist and turn cap are
+            enforced, not advisory.
+        description: The task, in the lead's own words.
+        parent_session_id: The lead's session. The sub-agent writes into that
+            same workspace, which is how `load_data()` reaches what the lead
+            already downloaded.
+        user_id: Storage owner, inherited from the lead.
+        llm_client: Provider client, shared with the lead.
+        task_id: Correlation id echoed in every event, so a caller running
+            several sub-agents can tell their streams apart.
+
+    Yields:
+        Progress events, then a final `sub_agent_end`.
     """
     import helioai.workspace as _ws
 

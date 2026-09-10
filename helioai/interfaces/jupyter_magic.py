@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import uuid
+from typing import Any
 
 from IPython.core.magic import Magics, cell_magic, line_magic, magics_class
 from IPython.display import HTML, Image, Markdown, display
@@ -421,6 +422,11 @@ class HelioAIMagics(Magics):
             print(f"Dev mode: {status}. Usage: %helioai_dev on | off")
 
 
-def load_ipython_extension(ipython) -> None:
-    """Register the HelioAI magics. Called by `%load_ext`."""
+def load_ipython_extension(ipython: Any) -> None:
+    """Register the HelioAI magics. Called by `%load_ext`.
+
+    Args:
+        ipython: The active InteractiveShell, supplied by IPython itself. This
+            hook name and signature are IPython's contract, not ours.
+    """
     ipython.register_magics(HelioAIMagics)

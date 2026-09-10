@@ -73,7 +73,15 @@ def shock_time(t, values, search=None):
     gradient is the right answer. Always look at it on the plot before using it; for a
     slow or reverse shock, or a crossing inside a turbulent sheath, pick the time by eye.
 
-    `search` optionally restricts to a (start, stop) datetime64 pair.
+    Parameters
+    ----------
+    t      : numpy datetime64 array of sample times.
+    values : (n,) or (n, 3) array; a vector series is reduced to its magnitude.
+    search : optional (start, stop) datetime64 pair restricting the search.
+
+    Returns
+    -------
+    numpy datetime64 time of the largest positive jump.
     """
     t = np.asarray(t)
     v = magnitude(values) if np.ndim(values) > 1 else clean(values)  # noqa: F821 — sandbox

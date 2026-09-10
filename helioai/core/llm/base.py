@@ -6,8 +6,9 @@ import asyncio
 import logging
 import random
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 log = logging.getLogger(__name__)
 
@@ -41,12 +42,12 @@ def _retry_after(exc: Exception) -> float | None:
 
 
 async def call_with_retry(
-    fn,
+    fn: Callable[[], Awaitable[Any]],
     *,
     attempts: int = 4,
     base_delay: float = 1.0,
     max_delay: float = 60.0,
-):
+) -> Any:
     """Call async fn with backoff on retryable HTTP errors.
 
     A server-supplied Retry-After wins over the exponential backoff: waiting the
@@ -60,6 +61,21 @@ async def call_with_retry(
     and says how long it really is.
 
     Non-retryable errors and exhausted attempts are re-raised immediately.
+
+    Args:
+        fn: Zero-argument coroutine function performing one attempt. Taking a
+            callable rather than a coroutine is what lets it be re-invoked.
+        attempts: Total tries, including the first.
+        base_delay: First backoff, doubled per attempt.
+        max_delay: Backoff ceiling, and the threshold above which a server's
+            own `Retry-After` is refused rather than capped.
+
+    Returns:
+        Whatever `fn` returns on its first success.
+
+    Raises:
+        Exception: The last error, re-raised once attempts run out or when the
+            error is not retryable.
     """
     for attempt in range(attempts):
         try:
@@ -161,12 +177,16 @@ class ToolDef:
     parameters: dict = field(default_factory=dict)
 
 
-async def close_sdk_client(client) -> None:
+async def close_sdk_client(client: Any) -> None:
     """Close an SDK client's connection pool, whether its close() is sync or async.
 
     `openai.AsyncOpenAI.close` is a coroutine; `google.genai.Client.close` is not.
     Failures are swallowed: this only ever runs while tearing down, and a pool
     that will not close is not worth crashing a finished analysis over.
+
+    Args:
+        client: Any SDK client. One exposing neither `close` nor `aclose` is
+            accepted and ignored, so a stub in a test needs no teardown method.
     """
     import inspect
 

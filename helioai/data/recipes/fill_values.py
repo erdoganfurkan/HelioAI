@@ -45,7 +45,18 @@ import numpy as np
 
 
 def fill_mask(values, fillval=None):
-    """Boolean mask of samples that carry no measurement."""
+    """Boolean mask of samples that carry no measurement.
+
+    Parameters
+    ----------
+    values   : array as the provider delivered it.
+    fillval  : sentinel or list of sentinels declared by the archive (FILLVAL).
+               None still catches the non-finite and 1e31 conventions.
+
+    Returns
+    -------
+    Boolean array, True where the sample is fill rather than data.
+    """
     bad = ~np.isfinite(values) | (np.abs(values) >= 1e30)
     if fillval is not None:
         try:
@@ -58,7 +69,18 @@ def fill_mask(values, fillval=None):
 
 
 def blank_fill(values, fillval=None):
-    """Return `values` as float64 with every fill sample replaced by NaN."""
+    """Return `values` as float64 with every fill sample replaced by NaN.
+
+    Parameters
+    ----------
+    values   : array as the provider delivered it.
+    fillval  : sentinel(s) declared by the archive (FILLVAL), or None.
+
+    Returns
+    -------
+    float64 array. NaN propagates through means and plots as a gap, where a
+    sentinel such as 99999.9 would quietly become a plausible-looking reading.
+    """
     numeric = np.array(values, dtype="float64")
     numeric[fill_mask(numeric, fillval)] = np.nan
     return numeric
@@ -70,6 +92,14 @@ def clean_variable(var):
     Reads FILLVAL out of `var.meta` rather than guessing, and tolerates its
     absence — a variable that declares none still gets the non-finite and 1e31
     conventions applied.
+
+    Parameters
+    ----------
+    var : a speasy variable, i.e. an object carrying .time, .values and .meta.
+
+    Returns
+    -------
+    (time, values) with fills already blanked to NaN.
     """
     meta = getattr(var, "meta", None) or {}
     fillval = meta.get("FILLVAL") if isinstance(meta, dict) else None

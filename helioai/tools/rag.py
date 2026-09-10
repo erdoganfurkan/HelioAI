@@ -638,10 +638,18 @@ def search_catalogs(
 ) -> list[dict]:
     """Semantic search over the AMDA catalog/timetable index.
 
-    `product_type` can be 'catalog', 'timetable', or None (both).
-    Returns {id, name, description, score, nb_events, product_type}.
     Requires `helioai index` to have been run at least once.
-    Falls back to an empty list if the catalog collection is absent.
+
+    Args:
+        query: Free text describing the events wanted.
+        top_k: How many products to return.
+        product_type: `'catalog'`, `'timetable'`, or None for both.
+
+    Returns:
+        Dicts of `{id, name, description, score, nb_events, product_type}`, best
+        first. Empty when the catalog collection is absent — a missing index is
+        reported as no results rather than as a crash, because the agent can
+        still answer from parameters.
     """
     if not query or not query.strip():
         return []

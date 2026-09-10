@@ -14,6 +14,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ def fill_mask(values, fillval: float | list | None = None):
     return bad
 
 
-def blank_fill(values, fillval=None):
+def blank_fill(values: Any, fillval: Any = None) -> tuple[Any, Any | None]:
     """Return (values with fill blanked to NaN, mask), or (values, None) if not numeric.
 
     Applied at every point where downloaded data is persisted, so that anything
@@ -68,6 +69,15 @@ def blank_fill(values, fillval=None):
 
     Non-numeric parameters (string labels, epochs) have no fill convention and are
     passed through untouched.
+
+    Args:
+        values: Array as the provider delivered it.
+        fillval: Sentinel(s) the archive declares, read from `FILLVAL` rather
+            than guessed — a hard-coded threshold blanks real measurements.
+
+    Returns:
+        `(values with fill replaced by NaN, boolean mask of what was blanked)`,
+        or `(values, None)` when the array is not numeric.
 
     Example:
         >>> vals, mask = blank_fill(np.array([1.2, -1e31, 3.4]), [-1e31])
@@ -152,6 +162,16 @@ def find_existing(param_id: str, start: str, stop: str) -> str | None:
     real run still re-fetched the same Wind field three times across three turns, with
     the dataset name sitting in plain sight in its own history. Discipline the model
     does not reliably apply belongs in the tool.
+
+    Args:
+        param_id: Full speasy id, e.g. `cda/WI_H0_MFI/BGSM`.
+        start: ISO start of the window, matched exactly.
+        stop: ISO stop of the window, matched exactly.
+
+    Returns:
+        The dataset name to load, or None. The match is exact: an overlapping
+        but different window is a miss, because returning a shorter series than
+        asked for would be silently wrong.
     """
     try:
         data_dir = _session_data_dir()
@@ -272,13 +292,24 @@ def save_timeseries(
 def save_event_collection(
     name_hint: str,
     *,
-    series,
+    series: list[tuple],
     param_id: str,
     units: str,
     source: str,
 ) -> dict | None:
-    """Persist a batch of per-event timeseries. series = [(ev_start, ev_stop, ts|None), ...].
-    Returns {"dataset": name} or None on failure.
+    """Persist a batch of per-event timeseries under one dataset name.
+
+    Args:
+        name_hint: Preferred dataset name; a suffix is added if it is taken.
+        series: `[(event_start, event_stop, timeseries_or_None), ...]`. A None
+            entry records an event with no data rather than dropping it, so the
+            count of events surveyed stays honest.
+        param_id: The parameter every event was sampled from.
+        units: Units as the provider reports them.
+        source: Provenance string carried into the manifest.
+
+    Returns:
+        `{"dataset": name}`, or None when nothing could be written.
     """
     try:
         import time as _time

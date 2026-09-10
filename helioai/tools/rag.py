@@ -22,6 +22,8 @@ _reranker_loaded = False
 _collection = None
 _lock = threading.Lock()
 
+_dataset_prefixes: set[str] | None = None
+
 _bm25 = None
 _bm25_ids: list[str] = []
 _bm25_meta: list[dict] = []
@@ -759,12 +761,34 @@ def extract_ids(text: str) -> list[str]:
     return list(seen)
 
 
+def _known_dataset_prefixes() -> set[str]:
+    """Dataset ids that own at least one indexed parameter.
+
+    The index holds parameters only: `cda/WI_H2_MFI/BGSM` is a key, `cda/WI_H2_MFI`
+    never is. A dataset id therefore has to be recognised by the company it keeps.
+
+    Built once and cached. Measured on the production index (81 930 products,
+    2026-09-10): 0.29 s to read every id, 3 768 prefixes, 131 kB — cheap because
+    `unknown_ids` only ever asks after a key lookup has already missed.
+    """
+    global _dataset_prefixes
+    if _dataset_prefixes is None:
+        ids = _collection_only().get(include=[]).get("ids") or []
+        _dataset_prefixes = {i.rsplit("/", 1)[0] for i in ids if i.count("/") >= 2}
+    return _dataset_prefixes
+
+
 def unknown_ids(ids: list[str]) -> list[str]:
     """Return the ids that are absent from the index.
 
     A direct key lookup — no embedding, no ranking — so this is cheap enough to
     run on every sub-agent answer. Returns an empty list if the index cannot be
     reached, because a verification outage must not manufacture false alarms.
+
+    An id that is not a key may still be a real *dataset* rather than a
+    fabrication, so a miss falls back to `_known_dataset_prefixes`. Skipping that
+    check told the model that `cda/MVN_MAG_L2-SUNSTATE-1SEC` — a real MAVEN
+    dataset — was not in the catalogue, and spent one of its turns on the denial.
 
     Args:
         ids: Candidate parameter ids.
@@ -777,7 +801,11 @@ def unknown_ids(ids: list[str]) -> list[str]:
     try:
         collection = _collection_only()
         known = set(collection.get(ids=list(ids)).get("ids") or [])
+        missing = [i for i in ids if i not in known]
+        if not missing:
+            return []
+        prefixes = _known_dataset_prefixes()
     except Exception as e:  # index missing, corrupt, or not yet built
         log.warning("id_verification_unavailable: %s", e)
         return []
-    return [i for i in ids if i not in known]
+    return [i for i in missing if i not in prefixes]

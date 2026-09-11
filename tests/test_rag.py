@@ -30,6 +30,7 @@ def isolated_rag(monkeypatch, fake_embed_model, tmp_path):
     # Reset search & catalog caches so tests are independent
     monkeypatch.setattr(rag_module, "_search_cache", {})
     monkeypatch.setattr(rag_module, "_catalog_collection", None)
+    monkeypatch.setattr(rag_module, "_dataset_prefixes", None)
 
     yield collection
 
@@ -661,3 +662,52 @@ def test_key_parameter_product_stays_browse_even_when_calibrated() -> None:
 def test_prelim_without_a_published_level_still_flags() -> None:
     """CDA publishes no processing level here — the sniff stays its own evidence."""
     assert rag_module._quality_of("cda/AC_H0_MFI/BGSEc", "PRELIM data") == "browse"
+
+
+# ── dataset ids are not fabrications ──────────────────────────────────────────
+
+
+def _seed_dataset_with_params(collection) -> None:
+    """Index parameters under a dataset without indexing the dataset node itself.
+
+    This is the real shape of the CDA and CSA trees: `cda/WI_H2_MFI/BGSM` is a key,
+    `cda/WI_H2_MFI` never is. Seeding the dataset node too would make the test pass
+    for the wrong reason.
+    """
+    rng = np.random.default_rng(7)
+    ids = ["cda/FAKE_DS/BGSE", "cda/FAKE_DS/BGSM"]
+    vecs = rng.random((len(ids), 128)).astype("float32")
+    vecs = vecs / np.maximum(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9)
+    collection.add(
+        ids=ids,
+        embeddings=vecs.tolist(),
+        documents=["Magnetic field GSE. Units: nT.", "Magnetic field GSM. Units: nT."],
+        metadatas=[{"provider": "cda", "xmlid": i.split("/", 1)[1]} for i in ids],
+    )
+
+
+def test_a_real_dataset_id_is_not_reported_as_invented(isolated_rag):
+    """A dataset id owns indexed parameters, so it exists — even without its own key.
+
+    Measured against the production index on 2026-09-10:
+    `unknown_ids(["cda/MVN_MAG_L2-SUNSTATE-1SEC"])` returned that id, a real MAVEN
+    dataset. The detector then told the model "these ids are NOT in the catalogue",
+    which is false and costs it a turn, in the CLI and on the web.
+    """
+    from helioai.tools.rag import unknown_ids
+
+    _seed_dataset_with_params(isolated_rag)
+
+    assert unknown_ids(["cda/FAKE_DS"]) == []
+
+
+def test_a_fabricated_id_is_still_reported(isolated_rag):
+    """The guardrail must not go mute while being taught about datasets."""
+    from helioai.tools.rag import unknown_ids
+
+    _seed_dataset_with_params(isolated_rag)
+
+    assert unknown_ids(["cda/NOT_A_REAL_DS/XX"]) == ["cda/NOT_A_REAL_DS/XX"]
+    assert unknown_ids(["cda/FAKE_DS/NOPE"]) == ["cda/FAKE_DS/NOPE"], (
+        "a bogus parameter under a real dataset is still bogus"
+    )

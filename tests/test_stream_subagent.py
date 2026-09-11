@@ -295,12 +295,18 @@ def fake_index(monkeypatch):
     real = "csa/C3_CP_CIS-HIA_ONBOARD_MOMENTS/density__C3_CP_CIS-HIA_ONBOARD_MOMENTS"
 
     class _Collection:
-        def get(self, ids):
+        def get(self, ids=None, include=None):
+            # `include=` is the whole-index read `unknown_ids` falls back on to tell a
+            # real dataset from a fabrication; a stub that only knows `ids=` would
+            # raise, be swallowed as an outage, and quietly mute the guardrail.
+            if ids is None:
+                return {"ids": [real]}
             return {"ids": [i for i in ids if i == real]}
 
     from helioai.tools import rag
 
     monkeypatch.setattr(rag, "_collection_only", lambda: _Collection())
+    monkeypatch.setattr(rag, "_dataset_prefixes", None)
     return real
 
 

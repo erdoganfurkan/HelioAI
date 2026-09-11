@@ -655,3 +655,35 @@ async def test_a_sub_agent_run_python_reads_the_dataset_the_lead_downloaded(tmp_
     results = [e for e in events if e["event"] == "tool_result"]
     assert results, [e["event"] for e in events]
     assert "SHAPE (50, 3) nT" in results[0]["data"]["summary"]
+
+
+async def test_a_coplanarity_run_exporting_a_field_ratio_is_not_a_rankine_hugoniot_bypass(
+    stub_registry,
+):
+    """Live run, 2026-09-11: the theta_bn recipe was loaded and called, its script also
+    exported |B_dn|/|B_up| as `compression_ratio_B`, and the check flagged
+    `rankine_hugoniot (never loaded)`. A field compression ratio is an ordinary output of
+    the coplanarity analysis, not a reimplementation of the jump conditions — the
+    signature that names it alone was the only thing accusing here.
+    """
+    invoked, results = stub_registry
+    results["load_recipe"] = _load_recipe_result(
+        "theta_bn",
+        outputs="theta_bn_deg — angle in degrees between the upstream B and the shock normal",
+    )
+    results["run_python"] = _run_python_exports(theta_Bn_deg=62.68, compression_ratio_B=2.51)
+    llm = ScriptedLLM(
+        [
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[ToolCall(id="c0", name="load_recipe", arguments={"name": "theta_bn"})],
+            ),
+            calls("run_python"),
+            text("theta_Bn = 62.68 deg"),
+        ]
+    )
+
+    events = await drain(**base(llm, role="data_analyst"))
+
+    assert [e for e in events if e["event"] == "recipe_bypassed"] == []

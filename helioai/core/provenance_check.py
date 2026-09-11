@@ -170,7 +170,17 @@ def extract_claims(text: str) -> list[Claim]:
     return claims
 
 
-_UNIT_ALIASES = {"cm⁻³": "cm-3", "cm^-3": "cm-3", "/cm3": "cm-3", "R_E": "RE", "Re": "RE"}
+_UNIT_ALIASES = {
+    "cm⁻³": "cm-3",
+    "cm^-3": "cm-3",
+    "/cm3": "cm-3",
+    "R_E": "RE",
+    "Re": "RE",
+    # A recipe exports "deg"; a reply writes "62.68°". Same unit — and with unit
+    # agreement now deciding whether a hit counts, missing this alias read the demo's
+    # one number as unsourced.
+    "°": "deg",
+}
 
 
 def _units_conflict(claim_units: str, entry_units: str) -> bool:

@@ -592,3 +592,20 @@ def test_scientific_notation_keeps_its_exponent_and_unit():
     assert (1.2e-3, "Hz") in _claims("the spectral peak sits at 1.2e-3 Hz")
     assert (1.2, "") not in _claims("the spectral peak sits at 1.2e-3 Hz")
     assert (3.5e5, "K") in _claims("temperature 3.5E+05 K")
+
+
+def test_a_degree_sign_in_the_reply_matches_deg_in_the_ledger():
+    """Live run, 2026-09-11: the recipe exported theta_Bn_deg = 62.68 with units="deg";
+    the reply wrote "62.68 °" and the line under the answer read `unsourced` — for the
+    one number the whole demo is about. `°` and `deg` are the same unit.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [
+            {"name": "theta_Bn_deg", "units": "deg", "mean": 62.68, "shape": [], "sample": [62.68]}
+        ]
+    }
+    report = verify(extract_claims("θ_Bn = 62.68° (quasi-perpendicular)"), ledger)
+    assert report.matched == 1, report.details
+    assert report.unsourced == 0

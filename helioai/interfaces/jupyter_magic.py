@@ -8,7 +8,7 @@ Cell magic:
     solar wind density ACE 2005-01-17
 
 Line magics:
-    %helioai_session reset
+    %helioai_session new|reset|delete <id>
     %helioai_provider groq|gemini|azure
     %helioai_history
     %helioai_resume <session_id>
@@ -260,13 +260,21 @@ class HelioAIMagics(Magics):
 
     @line_magic
     def helioai_session(self, line: str) -> None:
-        """`%helioai_session [id]` — show or switch the active session."""
+        """`%helioai_session new|reset|delete <id>` — manage the active session.
+
+        `new` starts a fresh conversation and keeps the previous one; `reset` deletes
+        the current one first. The distinction matters at the end of a demo: the
+        analysis just exported must survive the next question.
+        """
         global _SESSION_ID
         parts = line.strip().split(maxsplit=1)
         cmd = parts[0] if parts else ""
         arg = parts[1] if len(parts) > 1 else ""
 
-        if cmd == "reset":
+        if cmd == "new":
+            _SESSION_ID = str(uuid.uuid4())
+            print(f"New session. Id: {_SESSION_ID[:8]} (previous one kept).")
+        elif cmd == "reset":
             from helioai.core.session import store
 
             store.reset(_USER_ID, _SESSION_ID)
@@ -299,7 +307,7 @@ class HelioAIMagics(Magics):
             else:
                 print(f"Session {sid[:8]} deleted.")
         else:
-            print(f"Unknown command: {cmd!r}. Use 'reset' or 'delete <id>'.")
+            print(f"Unknown command: {cmd!r}. Use 'new', 'reset' or 'delete <id>'.")
 
     @line_magic
     def helioai_provider(self, line: str) -> None:

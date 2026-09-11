@@ -273,3 +273,20 @@ def test_get_llm_is_never_cached_across_cells():
 
     assert first is not second, "a cached client would carry a dead event loop into the next cell"
     assert len(built) == 2
+
+
+def test_session_new_starts_fresh_without_deleting_the_previous_one(monkeypatch, capsys):
+    """`reset` wipes the current session from the store. A demo that has just exported
+    an analysis and wants a clean slate for the next question must not lose it —
+    `new` mints an id and touches nothing.
+    """
+    import helioai.core.session as s
+    import helioai.interfaces.jupyter_magic as magic
+
+    store = _make_store()
+    monkeypatch.setattr(s, "store", store)
+    original_id = magic._SESSION_ID
+    _make_magic().helioai_session("new")
+    assert magic._SESSION_ID != original_id
+    store.reset.assert_not_called()
+    assert "New session" in capsys.readouterr().out

@@ -111,10 +111,15 @@ async def test_lead_retries_once_on_an_invented_id(monkeypatch, tmp_path, fake_l
     bogus = "cda/MMS/MMS1/FGM/SRVY/mms1_fgm_srvy_l2/mms1_fgm_b_gsm_srvy_l2_clean"
 
     class _Collection:
-        def get(self, ids):
+        def get(self, ids=None, include=None):
+            # `include=` is the whole-index read unknown_ids falls back on; a stub that
+            # only knows `ids=` raises, is swallowed as an outage, and mutes the guardrail.
+            if ids is None:
+                return {"ids": [real]}
             return {"ids": [i for i in ids if i == real]}
 
     monkeypatch.setattr(rag, "_collection_only", lambda: _Collection())
+    monkeypatch.setattr(rag, "_dataset_prefixes", None)
 
     llm = fake_llm_factory(
         [
@@ -147,8 +152,11 @@ async def test_lead_gives_up_after_one_retry(monkeypatch, tmp_path, fake_llm_fac
 
     bogus = "cda/MMS1_FGM_SRVY_L2/mms1_fgm_b_gsm_srvy_l2_clean"
     monkeypatch.setattr(
-        rag, "_collection_only", lambda: type("C", (), {"get": lambda s, ids: {"ids": []}})()
+        rag,
+        "_collection_only",
+        lambda: type("C", (), {"get": lambda s, ids=None, include=None: {"ids": []}})(),
     )
+    monkeypatch.setattr(rag, "_dataset_prefixes", None)
 
     llm = fake_llm_factory([Message(role="assistant", content=f"Use {bogus}.")] * 2)
 

@@ -198,3 +198,69 @@ def test_main_resume_sets_session_when_picked(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["helioai", "--resume"])
     cli.main()
     assert cli._SESSION_ID == "picked-session-id"
+
+
+# --- --help ---
+
+
+@pytest.fixture
+def tripwires(monkeypatch):
+    """Fail loudly if `--help` does any of the work a real invocation does."""
+    import asyncio
+
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    def boom(name):
+        def _fail(*a, **kw):
+            raise AssertionError(f"--help must not call {name}")
+
+        return _fail
+
+    monkeypatch.setattr(ws, "set_user", boom("workspace.set_user"))
+    monkeypatch.setattr(ws, "cleanup_old_runs", boom("workspace.cleanup_old_runs"))
+    monkeypatch.setattr(cli, "_run_query", boom("_run_query"))
+    monkeypatch.setattr(cli, "_interactive", boom("_interactive"))
+    monkeypatch.setattr(asyncio, "run", boom("asyncio.run"))
+
+
+@pytest.mark.parametrize("argv", [["--help"], ["-h"], ["serve", "--help"], ["index", "--help"]])
+def test_help_prints_usage_without_running_anything(argv, tripwires, capsys, monkeypatch):
+    """`--help` is a command, not a question.
+
+    Measured on 2026-09-02: it fell through to the default branch, which treats
+    an unrecognised argument as a query — one LLM iteration and a workspace, to
+    be told what `--help` means. The absence of side effects is the real subject
+    here, not the wording of the text.
+    """
+    from helioai.interfaces.cli import main
+
+    monkeypatch.setattr(sys, "argv", ["helioai", *argv])
+    main()
+
+    out = capsys.readouterr().out
+    assert "Usage:" in out
+    assert "helioai index" in out
+
+
+def test_help_text_is_the_module_documentation(capsys, monkeypatch, tripwires):
+    """One string, so the help cannot drift from what the docs render."""
+    import helioai.interfaces.cli as cli
+
+    monkeypatch.setattr(sys, "argv", ["helioai", "--help"])
+    cli.main()
+
+    assert capsys.readouterr().out.strip() == (cli.__doc__ or "").strip()
+
+
+def test_a_query_mentioning_help_is_still_a_query(monkeypatch):
+    """`--help` inside a quoted question is one argument, not the flag."""
+    import helioai.interfaces.cli as cli
+
+    seen = {}
+    monkeypatch.setattr(cli, "_run_query", lambda q, **kw: seen.setdefault("q", q))
+    monkeypatch.setattr(cli.asyncio, "run", lambda coro: coro)
+    monkeypatch.setattr(sys, "argv", ["helioai", "what does the --help flag of speasy do"])
+    cli.main()
+
+    assert seen["q"] == "what does the --help flag of speasy do"

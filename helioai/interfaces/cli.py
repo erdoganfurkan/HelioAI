@@ -1,12 +1,23 @@
 """Interactive CLI for HelioAI.
 
 Usage:
-    helioai                  # interactive readline session
-    helioai "your query"     # one-shot query
-    helioai index            # rebuild speasy catalog index
-    helioai index --rebuild  # force full reindex
-    helioai export [id]      # export a session as a reproducible .ipynb
-    helioai mcp-install      # print MCP client config pointing at this install
+    helioai                       # interactive readline session
+    helioai "your query"          # one-shot query
+    helioai --resume              # pick a past session and continue it
+    helioai history               # list sessions
+    helioai history delete <id>   # delete a session and its workspace
+    helioai index [--rebuild]     # (re)index the speasy catalog
+    helioai export [id]           # export a session as a reproducible .ipynb
+    helioai profile               # edit the user profile
+    helioai mcp-install [--write] # MCP client config pointing at this install
+    helioai serve --web           # web UI on :7890 (--host, --port)
+    helioai serve                 # MCP server on stdio
+    helioai migrate-storage       # move legacy data into the per-user layout
+
+Options:
+    --session <id>                # continue a specific session
+    --dev                         # supply the dev token, lifting the scope guard
+    -h, --help                    # print this and exit
 """
 
 from __future__ import annotations
@@ -524,16 +535,28 @@ def _run_mcp_install(args: list[str]) -> None:
 def main() -> None:
     """Entry point for the `helioai` command.
 
-    Routes subcommands (index, export, history, delete, profile, serve, ...) and
+    Routes subcommands (index, export, history, profile, serve, ...) and
     otherwise runs either a one-shot query or the interactive prompt.
+
+    `--help` is answered before anything else runs. The default branch of this
+    router treats an unrecognised argument as a question, so until it was
+    handled, `helioai --help` created a workspace and billed an LLM call to ask
+    the model what `--help` meant — the first thing anyone types after
+    `pip install`. Printing `__doc__` keeps the help and the module's own
+    documentation as one string.
     """
     global _SESSION_ID
+
+    args = sys.argv[1:]
+    if {"-h", "--help"} & set(args):
+        print(__doc__)
+        return
+
     from helioai.config import dev_unlock, settings
     from helioai.workspace import cleanup_old_runs, set_user
 
     set_user(_USER_ID)
     cleanup_old_runs()
-    args = sys.argv[1:]
 
     # --dev: supply the configured dev token to bypass the scope guardrail
     dev_flag = "--dev" in args

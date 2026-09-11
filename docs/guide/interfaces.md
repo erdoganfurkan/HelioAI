@@ -33,7 +33,7 @@ helioai "IP shock detection in WIND/MFI data, 2005-01-16 to 2005-01-17"
 helioai history              # list past sessions
 helioai --resume             # pick one to continue
 helioai --session <id>       # continue a specific one
-helioai delete <prefix>      # drop a session and its workspace
+helioai history delete <id>  # drop a session and its workspace
 helioai export [prefix]      # export a session as a notebook
 helioai profile              # edit your profile in $EDITOR
 ```

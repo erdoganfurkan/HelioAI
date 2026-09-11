@@ -283,6 +283,122 @@ def test_read_manifest_roundtrip(session_dir):
 # ── sandbox load_data integration ─────────────────────────────────────────────
 
 
+@pytest.fixture(params=["sandbox", "notebook"])
+def load_data_preamble(request, session_dir):
+    """Exercise both shipped loaders against the same persisted datasets."""
+    if request.param == "sandbox":
+        return ""
+
+    from helioai.export import _LOAD_DATA_SHIM
+
+    return (
+        "import json, re, types\n"
+        "from pathlib import Path\n"
+        f"_HELIOAI_DATA_DIR = Path({str(session_dir / DATA_SUBDIR)!r})\n" + _LOAD_DATA_SHIM
+    )
+
+
+@pytest.fixture(params=["different_products", "different_windows"])
+def colliding_series(request, session_dir):
+    """Persist distinguishable measurements whose generated dataset names collide."""
+    records = []
+    for index in range(2):
+        product = f"MISSION_{index}" if request.param == "different_products" else "MISSION_0"
+        day = index + 1 if request.param == "different_windows" else 1
+        param_id = f"cda/{product}/BGSM"
+        start = f"2020-01-{day:02d}T00:00:00"
+        stop = f"2020-01-{day:02d}T00:02:00"
+        times = [start, f"2020-01-{day:02d}T00:01:00"]
+        values = [10.0 + 100.0 * index, 20.0 + 100.0 * index]
+        saved = save_timeseries(
+            param_id,
+            time=np.array(times, dtype="datetime64[s]"),
+            values=np.array(values),
+            param_id=param_id,
+            units="nT",
+            start=start,
+            stop=stop,
+            columns=[],
+            source="get_timeseries",
+        )
+        assert saved is not None
+        records.append(
+            {"dataset": saved["dataset"], "param_id": param_id, "time": times, "values": values}
+        )
+
+    assert records[0]["dataset"] != records[1]["dataset"]
+    assert len(read_manifest(session_dir)["datasets"]) == 2
+    return records
+
+
+@pytest.mark.asyncio
+async def test_load_data_explicit_names_preserve_collisions(
+    session_dir, colliding_series, load_data_preamble
+):
+    """An explicit dataset name must still select its exact product and time window."""
+    from helioai.tools.sandbox import run_python
+
+    code = f"""
+for entry in {colliding_series!r}:
+    data = load_data(entry["dataset"])
+    assert data.param_id == entry["param_id"]
+    assert data.units == "nT"
+    np.testing.assert_array_equal(data.values, entry["values"])
+    np.testing.assert_array_equal(data.time, np.array(entry["time"], dtype="datetime64[s]"))
+"""
+    result = await run_python(load_data_preamble + code, _plot_dir=str(session_dir))
+
+    assert not result.get("error"), result
+
+
+@pytest.mark.asyncio
+async def test_load_data_full_ids_do_not_alias_colliding_datasets(
+    session_dir, colliding_series, load_data_preamble
+):
+    """A full id must select its product, or reject an ambiguous time window explicitly."""
+    from helioai.tools.sandbox import run_python
+
+    if colliding_series[0]["param_id"] == colliding_series[1]["param_id"]:
+        param_id = colliding_series[0]["param_id"]
+        code = f"load_data({param_id!r})"
+        result = await run_python(load_data_preamble + code, _plot_dir=str(session_dir))
+
+        assert result.get("error"), "An id matching two windows must not select one silently"
+        assert param_id in result["error"]
+        for entry in colliding_series:
+            assert entry["dataset"] in result["error"]
+    else:
+        code = f"""
+for entry in {colliding_series!r}:
+    data = load_data(entry["param_id"])
+    assert data.param_id == entry["param_id"], (
+        f"Requested {{entry['param_id']}}, loaded {{data.param_id}}"
+    )
+    assert data.units == "nT"
+    np.testing.assert_array_equal(data.values, entry["values"])
+    np.testing.assert_array_equal(data.time, np.array(entry["time"], dtype="datetime64[s]"))
+"""
+        result = await run_python(load_data_preamble + code, _plot_dir=str(session_dir))
+
+        assert not result.get("error"), result
+
+
+@pytest.mark.asyncio
+async def test_load_data_unknown_product_does_not_reuse_slug(
+    session_dir, colliding_series, load_data_preamble
+):
+    """A matching parameter suffix cannot stand in for a product never downloaded."""
+    from helioai.tools.sandbox import run_python
+
+    missing_id = "cda/MISSION_NOT_DOWNLOADED/BGSM"
+    code = f"load_data({missing_id!r})"
+    result = await run_python(load_data_preamble + code, _plot_dir=str(session_dir))
+
+    assert result.get("error"), "An unknown product must not reuse another product's data"
+    assert "KeyError" in result["error"]
+    assert missing_id in result["error"]
+
+
 @pytest.mark.asyncio
 async def test_sandbox_load_data_roundtrip(session_dir):
     from helioai.tools.sandbox import run_python

@@ -86,9 +86,27 @@ def load_data(name):
     key = name
     if key not in datasets:
         # The manifest keys a dataset by the slug of its id's last component, but the
-        # session (and this notebook's prose) names the full product id.
-        slug = re.sub(r"[^a-z0-9]+", "_", name.rstrip("/").split("/")[-1].lower()).strip("_")
-        key = next((c for c in (slug, slug + "_data") if c in datasets), name)
+        # session (and this notebook's prose) names the full product id. Resolve through
+        # the recorded param_id: matching on the suffix alone would hand back another
+        # mission's data whenever two products share a parameter name.
+        norm = lambda s: re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+        if "/" in name:
+            matches = [k for k, e in datasets.items() if e.get("param_id") == name]
+        else:
+            matches = [
+                k for k, e in datasets.items()
+                if norm(str(e.get("param_id", "")).rstrip("/").split("/")[-1]) == norm(name)
+            ]
+        if len(matches) == 1:
+            key = matches[0]
+        elif matches:
+            windows = ", ".join(
+                f"{k} ({datasets[k].get('start')} -> {datasets[k].get('stop')})"
+                for k in sorted(matches)
+            )
+            raise KeyError(
+                f"ambiguous dataset {name!r}: {windows} -- load one of these names explicitly"
+            )
     entry = datasets.get(key)
     if entry is None:
         available = sorted(datasets.keys())

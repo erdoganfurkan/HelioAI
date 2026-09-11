@@ -10,6 +10,7 @@ module pins the wiring itself.
 from __future__ import annotations
 
 import inspect
+import json
 
 import pytest
 
@@ -121,3 +122,21 @@ def test_task_is_agent_side_and_not_a_registry_tool():
 
     assert TASK_TOOL_NAME == "task"
     assert TASK_TOOL_NAME not in _tools()
+
+
+async def test_an_exception_without_a_message_is_still_reported_as_an_error():
+    """Audit probe: `raise TimeoutError()` became `{"error": ""}`, and the human-facing
+    description read that falsy string as success — "ok" for a tool that never ran.
+    """
+    from helioai.core.event_display import describe_tool_result
+    from helioai.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    @reg.register(name="boom", description="raises silently", parameters={"type": "object"})
+    async def boom() -> dict:
+        raise TimeoutError()
+
+    result = await reg.call_tool("boom", {})
+    assert json.loads(result)["error"] == "TimeoutError"
+    assert describe_tool_result("boom", result).lower().startswith("error")

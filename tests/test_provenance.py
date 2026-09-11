@@ -499,3 +499,96 @@ def test_the_name_nearest_the_number_is_the_one_accused():
 
     assert _named_entry(claim.context, claim.units, entries, claim.pos)["name"] == "upstream_flow"
     assert _named_entry(claim.context, claim.units, entries)["name"] == "shock_speed_km_s"
+
+
+# ── E7: a number is only sourced by the quantity it claims to be ───────────────
+
+
+def test_a_matching_number_of_another_quantity_does_not_source_a_claim():
+    """Audit probe: ledger held B_downstream = 10 nT and density = 25 cm-3; the reply said
+    "B downstream = 25 nT" and came back matched=1, contradicted=0. The bare numeric
+    coincidence with the density disculpated a wrong field value — the mechanism this
+    module exists to expose, defeated by its own lookup order.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [
+            {"name": "B_downstream", "units": "nT", "mean": 10.0, "shape": [], "sample": [10.0]},
+            {"name": "density", "units": "cm-3", "mean": 25.0, "shape": [], "sample": [25.0]},
+        ]
+    }
+    report = verify(extract_claims("B downstream = 25 nT"), ledger)
+
+    assert report.matched == 0
+    assert report.contradicted == 1
+    assert report.details[0]["name"] == "B_downstream"
+
+
+def test_a_unitless_export_still_sources_a_claim_written_with_its_unit():
+    """Most exports carry no unit — the model writes it into the name. Requiring unit
+    agreement would have turned every one of those into `unsourced` and made the check
+    blind again; only a *conflicting* unit disqualifies.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [{"name": "B_up_nT", "units": "", "mean": 9.79, "shape": [], "sample": [9.79]}]
+    }
+    report = verify(extract_claims("upstream field 9.79 nT"), ledger)
+    assert report.matched == 1
+
+
+def test_the_named_scalar_wins_over_a_coincidental_unitless_hit():
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [
+            {"name": "B_downstream", "units": "nT", "mean": 10.0, "shape": [], "sample": [10.0]},
+            {"name": "ratio", "units": "", "mean": 25.0, "shape": [], "sample": [25.0]},
+        ]
+    }
+    report = verify(extract_claims("B downstream = 25 nT"), ledger)
+    assert report.contradicted == 1
+    assert report.matched == 0
+
+
+def test_a_negative_claim_is_not_sourced_by_a_positive_record():
+    """Magnitudes are compared on purpose — "a 464.5 s lag" quotes a recorded -464.5 — but
+    the other way round is not a magnitude: a reply stating Bz = -10 nT for a recorded
+    +10 has the sign wrong, and sign is the physics of Bz.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [{"name": "Bz_min", "units": "nT", "mean": 10.0, "shape": [], "sample": [10.0]}]
+    }
+    report = verify(extract_claims("Bz min reached -10 nT"), ledger)
+    assert report.matched == 0
+    assert report.contradicted == 1
+
+    lag = {
+        "values": [{"name": "lag_s", "units": "s", "mean": -464.5, "shape": [], "sample": [-464.5]}]
+    }
+    assert verify(extract_claims("a lag of 464.5 s"), lag).matched == 1
+
+
+def test_a_three_decimal_comma_in_a_comma_decimal_reply_is_a_decimal():
+    """Audit probe: `Bz = -0,657 nT` was read as -657 nT. Three digits after the comma
+    are a thousands separator in "1,800 points" — and a plain decimal in a French reply.
+    A leading zero settles it on its own; elsewhere the rest of the reply does.
+    """
+    assert (-0.657, "nT") in _claims("Bz = -0,657 nT")
+    assert (657.0, "nT") not in _claims("Bz = -0,657 nT")
+    # the reply already uses a comma as its decimal mark elsewhere → 2,150 is 2.15
+    got = _claims("|B| = 9,79 nT et la vitesse 2,150 km/s")
+    assert (2.15, "km/s") in got
+    assert (2150.0, "km/s") not in got
+    # nothing marks the reply as comma-decimal → English thousands, unchanged behaviour
+    assert (1800.0, "") in _claims("downloaded 1,800 points over the interval")
+
+
+def test_scientific_notation_keeps_its_exponent_and_unit():
+    assert (1.2e-3, "Hz") in _claims("the spectral peak sits at 1.2e-3 Hz")
+    assert (1.2, "") not in _claims("the spectral peak sits at 1.2e-3 Hz")
+    assert (3.5e5, "K") in _claims("temperature 3.5E+05 K")

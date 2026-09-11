@@ -4,6 +4,7 @@ Runnable notebooks. Outputs are stripped on purpose — run them and produce you
 
 | Notebook | What it shows |
 |---|---|
+| [`00_quickstart.ipynb`](00_quickstart.ipynb) | **Start here.** One shock (Wind, 17 March 2015), end to end in ~3 min: find the parameter, download and plot, θ_Bn with the vetted recipe, export — and the result checked against two independent shock databases |
 | [`01_jupyter_tour.ipynb`](01_jupyter_tour.ipynb) | Guided tour: asking questions, inline figures, direct PlasmaPy calls, event catalogs, session history, export |
 | [`02_stpatrick_storm_2015.ipynb`](02_stpatrick_storm_2015.ipynb) | A worked scientific case — the 17 March 2015 storm from parameter discovery to plasma regimes |
 | [`verify_reference_values.py`](verify_reference_values.py) | Re-measures every reference value quoted in notebook 02, straight from the archive. No LLM, no API key |

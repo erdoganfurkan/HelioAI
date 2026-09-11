@@ -20,11 +20,18 @@ export rewrites the boundary:
 
 | Sandbox | Exported |
 |---|---|
-| `load_data('bz')` | `spz.get_data('amda/imf_bz', '2005-01-16', '2005-01-18')` |
-| `load_data('bz_events')` | `spz.get_data(id, [[s1,e1], [s2,e2], ...])` over the OK events |
-| `export('name', arr)` | `print(...)` of the same summary |
-| `clean(arr)` | a real fill-value mask, inlined |
+| `load_data('bz')` | `fetch_series('amda/imf_bz', '2005-01-16', '2005-01-18')` |
+| `load_data('bz_events')` | `fetch_events(id, [[s1,e1], [s2,e2], ...])` over the OK events |
+| `export('name', arr, units=)` | `print(...)` of the same summary, dicts summarised key by key |
+| `clean(arr)`, `magnitude(v)`, `interp_to(...)` | the same helpers, inlined |
 | `param_card(...)`, `document_method(...)` | stripped — agent-only UI helpers |
+
+`fetch_series` and `fetch_events` wrap `spz.get_data` rather than being it. Inside the
+session, `get_timeseries` blanked the dataset's declared `FILLVAL` to NaN *before* the
+sandbox ever saw the array. A bare `spz.get_data()` hands the raw sentinel — `99999.9`
+for Wind/SWE — to the very same arithmetic: the same code gave a mean of 5.0 in the
+session and 50002 exported, with no error either way. The wrappers redo that blanking
+and mirror the attributes `load_data` exposed (`.units`, `.param_id`, `.missing_pct`).
 
 The rewrite is possible because `datastore.py` records the `param_id`, `start` and `stop`
 behind every dataset key in a manifest, so a `load_data` call can be turned back into the
@@ -40,7 +47,11 @@ answer.
 1. **Setup** — imports and any shims still required.
 2. **One cell per analysis step**, in order, as standalone code.
 3. **Methods & data acknowledgements** — every recipe and reference used, assembled by
-   scanning the session's tool calls, plus the data-provider acknowledgements.
+   scanning the session's tool calls and the sub-agents' results, plus the data-provider
+   acknowledgements.
+4. **Attempts that did not run** — scripts the session reported as failed, kept as
+   fenced prose rather than executable cells. `code_N.py` is written before it runs, so
+   a raised attempt exported as a cell used to stop *Run All* before its fix.
 
 ## Verifying it really runs
 

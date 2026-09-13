@@ -609,3 +609,47 @@ def test_a_degree_sign_in_the_reply_matches_deg_in_the_ledger():
     report = verify(extract_claims("θ_Bn = 62.68° (quasi-perpendicular)"), ledger)
     assert report.matched == 1, report.details
     assert report.unsourced == 0
+
+
+def test_a_quantity_exported_several_times_is_sourced_by_any_of_its_runs():
+    """Live run, 2026-09-11: the analyst exported `compression_ratio` in four runs (3.045,
+    2.467, 3.123, 2.538) while it found and worked around a data gap. The reply quoted the
+    last one and the line under the answer read `contradicted` — the name lookup kept the
+    first of the equally named entries and judged the number against run 2.
+
+    Every export under that name was computed in the session, so each of them sources the
+    number it produced: this module certifies provenance, not which run was right. Only a
+    value none of the runs produced is contradicted, and the accusation points at the most
+    recent run, as `provenance.find_value` does.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    def ratio(run, value):
+        return {
+            "name": "compression_ratio",
+            "units": "",
+            "mean": value,
+            "shape": [],
+            "sample": [value],
+            "code_path": f"/s/code_{run}.py",
+        }
+
+    ledger = {"values": [ratio(2, 3.045), ratio(3, 2.467), ratio(4, 3.123), ratio(7, 2.538)]}
+
+    final = verify(extract_claims("Compression ratio: r_B = 2.538"), ledger)
+    assert final.contradicted == 0, final.details
+    assert final.matched == 1
+
+    (claim,) = extract_claims("Compression ratio: r_B = 2.538")
+    verify([claim], ledger)
+    assert claim.code_path == "/s/code_7.py"
+
+    (stale,) = extract_claims("a preliminary compression ratio of 3.045")
+    verify([stale], ledger)
+    assert stale.status == "matched"
+    assert stale.code_path == "/s/code_2.py"
+
+    invented = verify(extract_claims("Compression ratio: r_B = 2.90"), ledger)
+    assert invented.contradicted == 1
+    assert invented.details[0]["name"] == "compression_ratio"
+    assert invented.details[0]["code_path"] == "/s/code_7.py"

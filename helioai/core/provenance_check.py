@@ -240,12 +240,14 @@ def _named_entry(
     arbitrary about what the sentence is actually saying — and it decides the verdict now
     that only a scalar entry can support a contradiction: whichever of a vector and a
     scalar is picked out of the same window is the difference between an accusation and
-    none. Name length only breaks ties, which is what `pos=None` falls back to.
+    none. Name length only breaks ties, which is what `pos=None` falls back to. Entries
+    that tie on both — the same quantity exported again by a later run — resolve to the
+    most recent one, as `provenance.find_value` does.
     """
     low = context.lower()
     best = None
-    best_key: tuple[int, int] | None = None
-    for entry in entries:
+    best_key: tuple[int, int, int] | None = None
+    for idx, entry in enumerate(entries):
         name = entry.get("name") or ""
         entry_units = entry.get("units") or ""
         if not _same_unit(claim_units, entry_units):
@@ -257,7 +259,7 @@ def _named_entry(
         if not all(starts):
             continue
         distance = 0 if pos is None else min(abs(s - pos) for occ in starts for s in occ)
-        key = (distance, -len(name))
+        key = (distance, -len(name), -idx)
         if best_key is None or key < best_key:
             best, best_key = entry, key
     return best
@@ -341,7 +343,10 @@ def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
       The strongest signal available here: the value was computed, and what got published
       is something else. An entry holding several values cannot support the accusation —
       `B_up = [-2.33, -0.40, 9.38] nT` legitimately states numbers that are neither the
-      mean, the min, the max nor the std of that vector.
+      mean, the min, the max nor the std of that vector. Nor can a quantity the session
+      exported more than once accuse a number one of its runs produced: a preliminary
+      `compression_ratio` of 3.045 and the final 2.538 were both computed, and each run
+      sources the value it gave. What the accusation says is that no run produced it.
     - `derived` — no match, but either a ratio or a percentage, or a number the reply
       spells out the arithmetic for ("U1 = Vs - Vu ~ 176.98 km/s"). Both are computed
       *from* recorded values rather than being one, and a reader can follow them. Counted
@@ -364,10 +369,14 @@ def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
     for claim in claims:
         named = _named_entry(claim.context, claim.units, entries, claim.pos)
         # The quantity the sentence names is judged first: when the wording points at a
-        # recorded scalar, that entry alone decides, and a coincidence with some other
+        # recorded scalar, that quantity alone decides, and a coincidence with some other
         # number in the ledger cannot rescue a value the named quantity does not hold.
         if named and _is_scalar(named):
-            hits = [named] if _states(named, claim.value, rtol) else []
+            hits = [
+                e
+                for e in reversed(entries)
+                if e.get("name") == named.get("name") and _states(e, claim.value, rtol)
+            ]
         else:
             hits = [
                 e

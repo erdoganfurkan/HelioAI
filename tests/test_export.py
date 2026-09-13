@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 
 import nbformat
@@ -509,7 +510,9 @@ def test_failed_attempts_are_not_executable_cells(monkeypatch, tmp_path) -> None
         Message(
             role="tool",
             tool_call_id="r0",
-            content=f'{{"error": "ValueError: first attempt", "code_path": "{workspace / "code_0.py"}"}}',
+            content=json.dumps(
+                {"error": "ValueError: first attempt", "code_path": str(workspace / "code_0.py")}
+            ),
         ),
         Message(
             role="assistant",
@@ -519,7 +522,9 @@ def test_failed_attempts_are_not_executable_cells(monkeypatch, tmp_path) -> None
         Message(
             role="tool",
             tool_call_id="r1",
-            content=f'{{"stdout": "", "exports": {{}}, "code_path": "{workspace / "code_1.py"}"}}',
+            content=json.dumps(
+                {"stdout": "", "exports": {}, "code_path": str(workspace / "code_1.py")}
+            ),
         ),
         Message(role="assistant", content="4"),
     ]

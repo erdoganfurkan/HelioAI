@@ -69,7 +69,58 @@ def _finding_str(entry) -> str:
     return out
 
 
+def _export_str(stats) -> str | None:
+    """One line for a sandbox export: `mean units`, plus `[min, max]` for an array.
+
+    None for a failed export (a string handed to `export()`) — there is no number to
+    remember, and the error text is already in stdout.
+    """
+    if not isinstance(stats, dict) or stats.get("error"):
+        return None
+    mean = stats.get("mean")
+    if mean is None:
+        return None
+    out = f"{mean} {stats.get('units') or ''}".strip()
+    if stats.get("shape") and stats.get("min") is not None:
+        out += f" [{stats['min']}, {stats['max']}]"
+    return out
+
+
+# The numbers a result carries are kept whole and outside the cap; the prose is what
+# shrinks to fit. Sizes are per field: a sub-agent's `summary` is the lead's only account
+# of what was done and how, and `stdout` is where the analyst printed its diagnostics.
+# Everything else that is text is a label and 120 characters is plenty for one.
+_NUMBER_TABLES = ("findings", "exports")
+_TEXT_ROOM = {"summary": 1000, "stdout": 400}
+_LABEL_ROOM = 120
+_MIN_TEXT_ROOM = 60
+_STALE_RESULT_CHARS = 1500
+
+
+def _clip(text: str, room: int) -> str:
+    return text if len(text) <= room else text[: max(room - 3, 0)] + "..."
+
+
 def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
+    """Shrink a tool result for the LLM payload once it is no longer the latest.
+
+    What a stale result must still say was learned from four live runs of 00_quickstart:
+
+    - **Every number, always.** `findings` (a sub-agent's measured values) and `exports`
+      (a sandbox run's `export()` calls) are rendered one line each and never cut. At
+      300 characters the analyst's own `run_python` result read `"exports": "{11 keys}"`
+      two turns after computing θ_Bn, and the lead's copy of a 9 kB report was sliced
+      in the middle of its findings dict — invalid JSON, compression ratio gone.
+    - **Enough prose to be a memory.** `summary` is the lead's only account of what a
+      sub-agent did and how; `stdout` is where the analyst printed its diagnostics.
+      Both get their own room, and they are what shrinks when the cap is reached, so
+      the cap cuts on a field boundary and the JSON stays valid.
+    - **Errors keep their traceback** — losing stderr two turns later is why one typo
+      was retried three times in a session.
+
+    `max_chars` bounds everything except the numbers tables; when those alone exceed
+    it, they are returned in full anyway.
+    """
     try:
         data = json.loads(result_text)
     except (ValueError, TypeError):
@@ -77,9 +128,6 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
     if not isinstance(data, dict):
         return str(data)[:max_chars] if not isinstance(data, list) else f"[list, {len(data)} items]"
     if data.get("error"):
-        # The traceback has to survive compaction. Collapsing a failed run_python to its
-        # `error` line alone meant the agent lost the diagnosis two tool calls later and
-        # reproduced the same one-character typo three times in a single session.
         summary = f"error: {str(data['error'])[:max_chars]}"
         stderr = str(data.get("stderr") or "").strip()
         if stderr:
@@ -90,21 +138,43 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
             measured = ", ".join(f"{n}={_finding_str(d)}" for n, d in data["findings"].items())
             summary += f"\nmeasured before failing: {measured}"
         return summary
-    keep = {}
+
+    keep: dict = {}
+    text_fields: list[str] = []
     for k, v in data.items():
         if k == "findings" and isinstance(v, dict):
-            # The one table that must not degrade into "{3 keys}": it holds the only
-            # numbers the lead is allowed to publish as measurements.
             keep[k] = {n: _finding_str(d) for n, d in v.items()}
-        elif k in {"figure_paths"}:
+        elif k == "exports" and isinstance(v, dict):
+            lines = {n: _export_str(s) for n, s in v.items()}
+            keep[k] = {n: s for n, s in lines.items() if s is not None}
+        elif k == "figure_paths":
             keep[k] = [Path(p).name for p in v] if v else []
-        elif isinstance(v, (str, int, float, bool, type(None))):
-            keep[k] = v if not isinstance(v, str) or len(v) <= 120 else v[:117] + "..."
+        elif isinstance(v, str):
+            keep[k] = _clip(v, _TEXT_ROOM.get(k, _LABEL_ROOM))
+            if k in _TEXT_ROOM:
+                text_fields.append(k)
+        elif isinstance(v, (int, float, bool, type(None))):
+            keep[k] = v
         elif isinstance(v, list):
             keep[k] = f"[{len(v)} items]"
         elif isinstance(v, dict):
             keep[k] = f"{{{len(v)} keys}}"
-    return json.dumps(keep, ensure_ascii=False)[:max_chars]
+
+    def render() -> str:
+        return json.dumps(keep, ensure_ascii=False)
+
+    out = render()
+    # The prose gives way first, longest field first, down to a floor that still says
+    # what the field was about; the numbers are never touched.
+    for k in sorted(text_fields, key=lambda f: -len(keep[f])):
+        if len(out) <= max_chars:
+            break
+        room = max(len(keep[k]) - (len(out) - max_chars), _MIN_TEXT_ROOM)
+        keep[k] = _clip(keep[k], room)
+        out = render()
+    if len(out) <= max_chars or any(k in keep for k in _NUMBER_TABLES):
+        return out
+    return out[:max_chars]
 
 
 def _is_recipe_source(result_text: str) -> bool:
@@ -133,6 +203,12 @@ def compact_history(messages: list, keep_full: int = 2) -> list:
     formula from memory rather than call the function it could no longer see. A recipe
     is a few kilobytes; keeping it costs less than the extra turn.
 
+    The cap per stale result is 1 500 characters, up from 300. Measured on the live
+    runs of 00_quickstart: every tool result of a four-turn session together is 14 kB,
+    less than the system prompt and tool schemas re-sent on every call, and the numbers
+    are exempt from the cap anyway. What 300 bought was a lead that could not recall
+    the previous cell's method and an analyst that had lost its own exports.
+
     ponytail: fixed window N=2; widen keep_full if a case regresses on stale results.
 
     Args:
@@ -150,7 +226,7 @@ def compact_history(messages: list, keep_full: int = 2) -> list:
         return messages
     stale = set(tool_idx[:-keep_full])
     return [
-        replace(m, content=_summarize_tool_result(m.content, max_chars=300))
+        replace(m, content=_summarize_tool_result(m.content, max_chars=_STALE_RESULT_CHARS))
         if i in stale and m.content and not _is_recipe_source(m.content)
         else m
         for i, m in enumerate(messages)

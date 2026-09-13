@@ -114,6 +114,14 @@ def extract_claims(text: str) -> list[Claim]:
     Deliberately conservative. Years, clock times, ISO dates, version numbers and small
     bare integers are dropped, because a report where the real problem sits at rank 30
     is a report nobody reads.
+
+    Args:
+        text: The reply, in whatever language the user asked in. Decimal commas
+            are handled: a French answer writing `9,79 nT` once yielded the
+            number 79, which made the whole check blind without failing a test.
+
+    Returns:
+        One claim per number kept, carrying its unit and the words around it.
     """
     if not text:
         return []
@@ -297,6 +305,16 @@ def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
       *from* recorded values rather than being one, and a reader can follow them. Counted
       apart so the noise does not bury the rest.
     - `unsourced` — a physical quantity with a unit that nothing in the session produced.
+
+    Args:
+        claims: Output of `extract_claims`.
+        ledger: Output of `provenance.read_ledger`. A ledger written before
+            `shape` was recorded is treated as it was before, so an old session
+            keeps its previous verdicts.
+        rtol: Relative tolerance for calling a claim equal to a recorded value.
+
+    Returns:
+        A `Report` counting each status and naming the claims behind it.
     """
     entries = ledger.get("values") or []
     report = Report()
@@ -336,6 +354,13 @@ def check_reply(text: str, session_dir) -> dict | None:
     Returns None on an empty ledger: a session that computed nothing (a search, a
     catalogue listing) would otherwise have every number in its answer reported as
     unsourced, which is true and useless.
+
+    Args:
+        text: The finished reply.
+        session_dir: Session workspace whose ledger to check against.
+
+    Returns:
+        The event payload, or None when the ledger is empty.
     """
     ledger = provenance.read_ledger(session_dir)
     if not ledger.get("values"):

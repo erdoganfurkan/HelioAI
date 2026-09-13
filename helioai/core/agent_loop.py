@@ -142,9 +142,13 @@ Do NOT acknowledge the off-topic request, do NOT explain why you refuse, do NOT 
 def build_lead_system_prompt(restricted: bool) -> str:
     """Return the lead agent system prompt.
 
-    restricted=True (default / public): appends the scope guardrail so the LLM
-    auto-refuses off-topic requests.
-    restricted=False (dev token supplied): base prompt only, full access.
+    Args:
+        restricted: True (the public default) appends the scope guardrail, so the
+            model refuses off-topic requests itself. False is reached only with a
+            valid dev token and yields the base prompt.
+
+    Returns:
+        The full system prompt text.
     """
     if restricted:
         return SYSTEM_PROMPT + "\n\n" + SCOPE_GUARDRAIL
@@ -573,6 +577,14 @@ async def chat(
     Non-streaming wrapper over `stream_chat` — same arguments, same session
     semantics — for callers that want the answer, not the progress feed
     (Jupyter magic, scripts, tests).
+
+    Args:
+        llm_client: Provider client from `build_llm_client`.
+        user_id: Storage owner; decides which tree under `data/users/` is used.
+        session_id: Conversation to append to. An unknown id starts a new one.
+        user_text: The question.
+        restricted: Whether the scope guardrail is in force. See
+            `build_lead_system_prompt`.
 
     Returns:
         ChatResult with `reply` (final text), `n_iterations` (LLM turns used),

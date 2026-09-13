@@ -11,6 +11,8 @@ Coordinate transforms wrap geopack (MIT, Tsyganenko models port).
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 
@@ -26,12 +28,21 @@ def _epoch_seconds(time) -> np.ndarray:
     )
 
 
-def transform_coords(time, vectors, frm: str = "gse", to: str = "gsm") -> np.ndarray:
+def transform_coords(time: Any, vectors: Any, frm: str = "gse", to: str = "gsm") -> np.ndarray:
     """Rotate vectors between geocentric frames: gse, gsm, sm, geo, mag, gei.
 
-    time: ISO string(s), datetime(s), numpy datetime64 or epoch seconds (UTC);
-    vectors: shape (3,) or (N, 3). Returns the same shape.
-    Per-point geopack.recalc — fine up to ~1e4 points.
+    Args:
+        time: ISO string(s), datetime(s), numpy datetime64, or epoch seconds,
+            all UTC. One timestamp per vector, or a single one for all.
+        vectors: Shape `(3,)` or `(N, 3)`.
+        frm: Source frame — gse, gsm, sm, geo, mag or gei.
+        to: Target frame, same set.
+
+    Returns:
+        The rotated vectors, same shape as the input.
+
+    The dipole tilt is recomputed per point (`geopack.recalc`), which is exact
+    but linear in N — comfortable to ~1e4 points, not to a full mission.
 
     Example:
         >>> t = np.array(["2015-03-17T04:00:00"], dtype="datetime64[s]")
@@ -78,13 +89,22 @@ def transform_coords(time, vectors, frm: str = "gse", to: str = "gsm") -> np.nda
     return out[0] if single else out
 
 
-def mp_shue1998(pdyn_nPa: float, bz_nT: float, theta_deg=None):
+def mp_shue1998(
+    pdyn_nPa: float, bz_nT: float, theta_deg: Any = None
+) -> tuple[np.ndarray, np.ndarray]:
     """Shue et al. (1998) magnetopause: r = r0 * (2 / (1 + cos(theta)))**alpha.
 
     r0 = (10.22 + 1.29*tanh(0.184*(Bz + 8.14))) * Pdyn**(-1/6.6)
     alpha = (0.58 - 0.007*Bz) * (1 + 0.024*ln(Pdyn))
-    Returns (theta_deg, r_RE); theta defaults to 0..170 deg. theta is the
-    angle from the Earth-Sun line, r in Earth radii (aberrated GSE).
+    Args:
+        pdyn_nPa: Solar wind dynamic pressure, nPa.
+        bz_nT: IMF Bz in GSM, nT. Southward (negative) erodes the standoff.
+        theta_deg: Angles from the Earth-Sun line. Defaults to 0..170 deg;
+            beyond that the model is extrapolated past where it was fitted.
+
+    Returns:
+        `(theta_deg, r_RE)` — the boundary in aberrated GSE, radii in R_E.
+
     Reference: Shue et al. (1998), JGR 103, 17691, doi:10.1029/98JA01103.
 
     Example:
@@ -103,13 +123,19 @@ def mp_shue1998(pdyn_nPa: float, bz_nT: float, theta_deg=None):
     return theta, r
 
 
-def bs_jelinek2012(pdyn_nPa: float, theta_deg=None):
+def bs_jelinek2012(pdyn_nPa: float, theta_deg: Any = None) -> tuple[np.ndarray, np.ndarray]:
     """Jelinek et al. (2012) bow shock: parabola rho^2 = 4*R*(R - x) / lam^2.
 
-    R = 15.02 * Pdyn**(-1/6.55) is the subsolar standoff (RE), lam = 1.17.
-    Solved in polar form r(theta) from the Earth-Sun line; returns
-    (theta_deg, r_RE) with NaN where the parabola has no solution.
-    theta defaults to 0..120 deg.
+    `R = 15.02 * Pdyn**(-1/6.55)` is the subsolar standoff in R_E, `lam = 1.17`.
+
+    Args:
+        pdyn_nPa: Solar wind dynamic pressure, nPa.
+        theta_deg: Angles from the Earth-Sun line. Defaults to 0..120 deg.
+
+    Returns:
+        `(theta_deg, r_RE)`, NaN where the parabola has no solution rather than
+        a clipped value that would plot as a real boundary.
+
     Reference: Jelinek et al. (2012), JGR 117, A05208, doi:10.1029/2011JA017252.
 
     Example:

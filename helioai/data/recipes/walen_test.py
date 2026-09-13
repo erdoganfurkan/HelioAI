@@ -31,7 +31,19 @@ CM3_TO_M3 = 1e6               # 1 cm⁻³ = 1e6 m⁻³
 
 
 def alfven_velocity(B_nT, n_cm3):
-    """Alfvén velocity in km/s. B shape (N,3), n shape (N,)."""
+    """Alfvén velocity vector in km/s.
+
+    Parameters
+    ----------
+    B_nT  : (N, 3) magnetic field vectors in nT.
+    n_cm3 : (N,) proton number density in cm^-3.
+
+    Returns
+    -------
+    (N, 3) array of V_A = B / sqrt(mu0 * n * m_p), in km/s, component by
+    component — the Walen test compares it with the velocity vector, so the
+    magnitude alone would not do.
+    """
     B_T = B_nT * 1e-9                          # nT → T
     n_m3 = n_cm3 * CM3_TO_M3
     rho = n_m3 * MP                            # kg/m³

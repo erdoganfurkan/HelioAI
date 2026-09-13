@@ -24,17 +24,40 @@ DEFAULT_USER = "web"
 
 
 def current_user() -> str:
-    """Return the user owning the current context, or the default user."""
+    """Return the user owning the current context, or the default user.
+
+    Returns:
+        The bound user id, or `DEFAULT_USER` outside any bound context — the CLI
+        and the Jupyter magic never bind one, so unowned callers still get a
+        real storage home rather than an error.
+    """
     return _current_user.get() or DEFAULT_USER
 
 
 def set_user(user_id: str) -> object:
-    """Bind the user contextvar. Returns token for later reset."""
+    """Bind the user that owns storage for the current context.
+
+    A contextvar rather than a global: every task spawned from here inherits the
+    binding, which is what keeps a sub-agent writing into the same user's tree as
+    the lead that spawned it, while a concurrent web request keeps its own.
+
+    Args:
+        user_id: Owner of every path derived until the binding is reset.
+
+    Returns:
+        An opaque token to hand back to `reset_user`. Resetting by token rather
+        than by re-setting a previous value is what makes nesting safe.
+    """
     return _current_user.set(user_id)
 
 
 def reset_user(token: object) -> None:
-    """Restore the user contextvar from a token returned by `set_user`."""
+    """Restore the user binding that was in force before `set_user`.
+
+    Args:
+        token: The value `set_user` returned. A token from another contextvar,
+            or one already reset, raises rather than silently rebinding.
+    """
     _current_user.reset(token)  # type: ignore[arg-type]
 
 
@@ -45,7 +68,17 @@ def _users_root() -> Path:
 
 
 def user_home(user: str) -> Path:
-    """A user's private storage home: <data>/users/<user>/ (not created here).
+    """A user's private storage home: `<data>/users/<user>/`.
+
+    The directory is not created — callers that only need to read must not
+    materialise a home for a user that does not exist.
+
+    Args:
+        user: Owner id. Not sanitised here; callers that accept it from a
+            request pass it through `safe_id` first.
+
+    Returns:
+        The path, whether or not anything exists at it.
 
     Example:
         >>> user_home("cli")
@@ -61,22 +94,47 @@ def _root() -> Path:
 
 
 def set_session(session_id: str) -> object:
-    """Bind the session contextvar. Returns token for later reset."""
+    """Bind the session whose workspace the current context writes into.
+
+    Args:
+        session_id: Session id, used as a directory name when no label is bound.
+
+    Returns:
+        An opaque token for `reset_session`.
+    """
     return _current_session.set(session_id)
 
 
 def reset_session(token: object) -> None:
-    """Restore the session contextvar from a token returned by `set_session`."""
+    """Restore the session binding in force before `set_session`.
+
+    Args:
+        token: The value `set_session` returned.
+    """
     _current_session.reset(token)  # type: ignore[arg-type]
 
 
 def set_label(label: str) -> object:
-    """Bind the workspace label contextvar. Returns token for later reset."""
+    """Bind the human-readable folder name for the current session.
+
+    Takes precedence over the session id in `get_session_dir`, so a workspace is
+    findable by what was asked rather than by a uuid.
+
+    Args:
+        label: Directory name, sanitised on use rather than here.
+
+    Returns:
+        An opaque token for `reset_label`.
+    """
     return _current_label.set(label)
 
 
 def reset_label(token: object) -> None:
-    """Restore the label contextvar from a token returned by `set_label`."""
+    """Restore the label binding in force before `set_label`.
+
+    Args:
+        token: The value `set_label` returned.
+    """
     _current_label.reset(token)  # type: ignore[arg-type]
 
 
@@ -89,6 +147,14 @@ def safe_id(value: str, fallback: str = "session") -> str:
     uuid4, so stripping to `[A-Za-z0-9_-]` is lossless in practice and turns
     `../..` into the fallback rather than a parent directory.
 
+    Args:
+        value: Caller-supplied identifier, trusted for nothing.
+        fallback: Returned when nothing survives the filter, so the result is
+            never the empty string — which would resolve to the parent directory.
+
+    Returns:
+        At most 64 characters of `[A-Za-z0-9_-]`, or `fallback`.
+
     Example:
         >>> safe_id("../../etc/passwd"), safe_id("sess-abc-123456")
         ('etcpasswd', 'sess-abc-123456')
@@ -100,7 +166,19 @@ def safe_id(value: str, fallback: str = "session") -> str:
 def make_session_label(first_message: str, session_id: str) -> str:
     """Build a human-readable slug for the session workspace folder.
 
-    Example: "Plot IMF Bz from ACE" + session abc123... → "plot-imf-bz-from_abc123"
+    The session id suffix is what keeps two identical questions from sharing one
+    directory; the words are only there so a human can find it.
+
+    Args:
+        first_message: The question that opened the session.
+        session_id: Session id, truncated to six characters as a discriminator.
+
+    Returns:
+        A slug of at most four words plus the id suffix.
+
+    Example:
+        >>> make_session_label("Plot IMF Bz from ACE", "abc123def456")
+        'plot-imf-bz-from_abc123'
     """
     words = re.sub(r"[^a-z0-9\s]", "", first_message.lower().strip()).split()
     slug = "-".join(words[:4]) if words else "session"
@@ -110,8 +188,13 @@ def make_session_label(first_message: str, session_id: str) -> str:
 def get_session_dir() -> Path:
     """Return the workspace directory for the current session.
 
-    Uses _current_label if set, falls back to _current_session UUID, then tmpdir.
-    Creates the directory if it does not exist.
+    Prefers the bound label, falls back to the bound session id, and lands in a
+    temporary directory when neither is bound — an unbound caller still gets a
+    writable place rather than an exception, because `run_python` must not fail
+    for want of a session.
+
+    Returns:
+        The directory, created if missing.
     """
     label = _current_label.get()
     if label:
@@ -145,7 +228,14 @@ def _no_session_dir() -> Path:
 def get_next_run_idx(session_dir: Path) -> int:
     """Return the next available run index for a session directory.
 
-    Scans for code_N.py files and returns max(N)+1, or 0 if none exist.
+    Derived from what is on disk rather than from a counter, so the numbering
+    survives a restart and stays right when a session is resumed.
+
+    Args:
+        session_dir: Directory holding the `code_N.py` files of past runs.
+
+    Returns:
+        `max(N) + 1`, or 0 when the session has run nothing yet.
     """
     existing = list(session_dir.glob("code_*.py"))
     if not existing:
@@ -159,7 +249,12 @@ def get_next_run_idx(session_dir: Path) -> int:
 
 
 def get_run_dir_for_sandbox() -> str:
-    """Backward-compat: return session dir path as string (used by sandbox fallback)."""
+    """The current session directory as a string, for the sandbox fallback.
+
+    Returns:
+        `get_session_dir()` as a plain string — the fallback path builds a bwrap
+        argument list, which takes no `Path`.
+    """
     return str(get_session_dir())
 
 
@@ -170,6 +265,14 @@ def is_under_workspace(path: str | Path) -> bool:
     hard-coded the POSIX separator, so on Windows the check never matched and `/figure`
     and `/code` returned 404 for every legitimate path. Fail-closed, so it was a dead
     web UI rather than a hole — but dead all the same.
+
+    Args:
+        path: Candidate path, resolved before comparison so symlinks and `..`
+            cannot point outside from within.
+
+    Returns:
+        True when the resolved path sits under the users root. False on any
+        resolution error, which keeps an unreadable path from being served.
     """
     try:
         p = Path(path).resolve()
@@ -179,7 +282,19 @@ def is_under_workspace(path: str | Path) -> bool:
 
 
 def cleanup_old_runs(ttl_seconds: int | None = None) -> int:
-    """Purge session dirs older than ttl_seconds across all users. Returns count removed."""
+    """Purge session directories older than the TTL, for every user.
+
+    Called on CLI startup, so a machine that runs the agent regularly never
+    accumulates workspaces. Removal failures are ignored rather than raised:
+    housekeeping must not stop a user from asking a question.
+
+    Args:
+        ttl_seconds: Age above which a session directory is deleted, measured on
+            its mtime. Defaults to `settings.workspace.ttl_seconds`.
+
+    Returns:
+        How many directories were removed.
+    """
     from helioai.config import settings
 
     if ttl_seconds is None:

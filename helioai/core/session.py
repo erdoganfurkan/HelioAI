@@ -275,6 +275,13 @@ def strip_orphan_tool_calls(history: list[Message]) -> list[Message]:
       orphaned tool_calls list entry (or clear it entirely if all are orphaned).
     - If the assistant message has no content and all its tool_calls are
       orphaned, drop the message entirely.
+
+    Args:
+        history: Messages in order, as loaded from the session store.
+
+    Returns:
+        A new list; the input is not modified. Messages without tool calls pass
+        through untouched, so a clean history is returned equal to its input.
     """
     answered: set[str] = {m.tool_call_id for m in history if m.tool_call_id}
     cleaned: list[Message] = []

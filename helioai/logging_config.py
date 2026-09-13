@@ -101,5 +101,14 @@ def _quiet_third_party_advisories() -> None:
 
 
 def get_logger(name: str | None = None) -> Any:
-    """Return a structlog logger, optionally bound to a module name."""
+    """Return a structlog logger, optionally bound to a module name.
+
+    Args:
+        name: Usually `__name__`. Omitted, the logger carries no module field.
+
+    Returns:
+        A structlog bound logger. Its output format follows
+        `HELIOAI_LOG_FORMAT` (console or json), decided at configuration time
+        rather than here.
+    """
     return structlog.get_logger(name) if name else structlog.get_logger()

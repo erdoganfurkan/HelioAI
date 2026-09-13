@@ -441,7 +441,19 @@ def _code_files(workspace_dir: Path) -> list[Path]:
 
 
 def build_notebook(user_id: str, session_id: str):
-    """Build an nbformat notebook object for a session (no file I/O)."""
+    """Build an nbformat notebook object for a session, without touching disk.
+
+    Split from `export_session_notebook` so the web download can stream a
+    notebook it never writes.
+
+    Args:
+        user_id: Storage owner.
+        session_id: Session to render.
+
+    Returns:
+        An `nbformat` NotebookNode: provenance header, then one runnable cell
+        per saved sandbox run, rewritten to standalone speasy calls.
+    """
     import nbformat as nbf
 
     from helioai.workspace import user_home
@@ -538,7 +550,14 @@ def build_notebook(user_id: str, session_id: str):
 def export_session_notebook(user_id: str, session_id: str, out_path: Path | None = None) -> Path:
     """Write the session as a .ipynb and return its path.
 
-    Default location: <workspace>/<label>.ipynb (or <workspace>/<session>.ipynb).
+    Args:
+        user_id: Storage owner.
+        session_id: Session to export.
+        out_path: Destination. Defaults to `<workspace>/<label>.ipynb`, falling
+            back to the session id when the workspace has no label.
+
+    Returns:
+        The path written.
 
     Example:
         >>> export_session_notebook("cli", "8f3aa012-...")

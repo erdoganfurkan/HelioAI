@@ -35,6 +35,15 @@ async def require_user(x_helio_token: str | None = Header(default=None)) -> str:
 
     No users configured (local dev) → single shared user, no auth. Once
     HELIOAI_USERS is set (deployment), a valid nominative token is required.
+
+    Args:
+        x_helio_token: The `X-Helio-Token` header, absent in local dev.
+
+    Returns:
+        The user id owning storage for this request.
+
+    Raises:
+        HTTPException: 401 when users are configured and the token is unknown.
     """
     users = settings.web_auth.users
     if not users:
@@ -113,11 +122,19 @@ async def chat_stream(
     req: _ChatRequest,
     x_helio_dev_token: str | None = Header(default=None),
     user_id: str = Depends(require_user),
-):
+) -> StreamingResponse:
     """Stream one agent turn as Server-Sent Events.
 
     Each agent event — tool calls, results, artifacts, sub-agent activity — is
     forwarded as it happens, which is what drives the live activity dock.
+
+    Args:
+        req: Body carrying the question and the session to continue.
+        x_helio_dev_token: Optional dev token lifting the scope guardrail.
+        user_id: Resolved by `require_user`.
+
+    Returns:
+        A `StreamingResponse` of SSE frames, one per agent event.
     """
     # Authenticated nominative users are trusted → unrestricted; the legacy dev
     # token still unlocks scope when no users are configured (local dev).
@@ -148,14 +165,34 @@ async def chat_stream(
 
 
 @app.get("/api/sessions")
-async def list_sessions(user_id: str = Depends(require_user)):
-    """List the calling user's sessions, most recent first."""
+async def list_sessions(user_id: str = Depends(require_user)) -> list:
+    """List the calling user's sessions, most recent first.
+
+    Args:
+        user_id: Resolved by `require_user`; scopes the listing, so no caller
+            can enumerate another's sessions.
+
+    Returns:
+        Session summaries, newest first.
+    """
     return store.list_summaries(user_id)
 
 
 @app.get("/api/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str, user_id: str = Depends(require_user)):
-    """Replay a session: its messages plus any figures and figure reviews."""
+async def get_session_messages(session_id: str, user_id: str = Depends(require_user)) -> dict:
+    """Replay a session: its messages plus any figures and figure reviews.
+
+    Args:
+        session_id: Session to replay.
+        user_id: Resolved by `require_user`; a session belonging to anyone else
+            reads as empty rather than as a 403, which says nothing about
+            whether it exists.
+
+    Returns:
+        `{"messages": [...]}` — the stored messages in order, each assistant
+        entry carrying the figures, cards, catalogs, code and recipes that the
+        tool calls before it produced.
+    """
     history = store.get_or_create(user_id, session_id)
     out: list[dict] = []
     pending_figures: list[str] = []
@@ -274,16 +311,31 @@ async def get_session_messages(session_id: str, user_id: str = Depends(require_u
 
 
 @app.get("/api/profile")
-async def get_profile(user_id: str = Depends(require_user)):
-    """Return the caller's profile markdown."""
+async def get_profile(user_id: str = Depends(require_user)) -> dict:
+    """Return the caller's profile markdown.
+
+    Args:
+        user_id: Resolved by `require_user`.
+
+    Returns:
+        `{"content": markdown}`, empty for a user who has written none.
+    """
     p = _profile_path(user_id)
     content = p.read_text(encoding="utf-8").strip() if p.exists() else ""
     return {"content": content}
 
 
 @app.put("/api/profile")
-async def put_profile(body: _ProfileBody, user_id: str = Depends(require_user)):
-    """Replace the caller's profile markdown."""
+async def put_profile(body: _ProfileBody, user_id: str = Depends(require_user)) -> dict:
+    """Replace the caller's profile markdown.
+
+    Args:
+        body: New profile content, replacing the previous one wholesale.
+        user_id: Resolved by `require_user`.
+
+    Returns:
+        `{"ok": True}` once written.
+    """
     p = _profile_path(user_id)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(body.content, encoding="utf-8")
@@ -291,8 +343,18 @@ async def put_profile(body: _ProfileBody, user_id: str = Depends(require_user)):
 
 
 @app.delete("/api/sessions/{session_id}")
-async def delete_session(session_id: str, user_id: str = Depends(require_user)):
-    """Delete one of the caller's sessions and its workspace."""
+async def delete_session(session_id: str, user_id: str = Depends(require_user)) -> dict:
+    """Delete one of the caller's sessions and its workspace.
+
+    Args:
+        session_id: Session to delete. Sanitised through `safe_id` before it
+            reaches the `rmtree` behind this route.
+        user_id: Resolved by `require_user`; only the owner's tree is touched.
+
+    Returns:
+        `{"deleted": session_id}`, whether or not anything existed — a caller
+        learns nothing about other users' session ids from the answer.
+    """
     wdir = store.get_workspace_dir(user_id, session_id)
     store.reset(user_id, session_id)
     if wdir:
@@ -307,8 +369,17 @@ async def delete_session(session_id: str, user_id: str = Depends(require_user)):
 
 
 @app.get("/api/export")
-async def export_notebook(session_id: str, user_id: str = Depends(require_user)):
-    """Export a session as a standalone `.ipynb` and return it."""
+async def export_notebook(session_id: str, user_id: str = Depends(require_user)) -> FileResponse:
+    """Export a session as a standalone `.ipynb` and return it.
+
+    Args:
+        session_id: Session to export.
+        user_id: Resolved by `require_user`.
+
+    Returns:
+        The notebook as a file download, built in memory rather than written to
+        the workspace.
+    """
     from helioai.export import export_session_notebook
 
     if session_id not in store.all_sessions(user_id):
@@ -322,11 +393,21 @@ async def export_notebook(session_id: str, user_id: str = Depends(require_user))
 
 
 @app.get("/code")
-async def serve_code(path: str, user_id: str = Depends(require_user)):
+async def serve_code(path: str, user_id: str = Depends(require_user)) -> PlainTextResponse:
     """Return a generated script, rewritten to standalone form.
 
     Ownership is checked against the caller before anything is read, so a path
     outside the caller's workspace is a 404 rather than a leak.
+
+    Args:
+        path: Absolute path of the generated script, as the artifact reported it.
+        user_id: Resolved by `require_user`.
+
+    Returns:
+        The script rewritten to standalone speasy calls.
+
+    Raises:
+        HTTPException: 404 for a path outside the caller's workspace or absent.
     """
     path = path.strip()
     if not is_under_workspace(path) or not _owns_path(user_id, path):
@@ -348,8 +429,21 @@ _FIGURE_TYPES = {".png": "image/png", ".pdf": "application/pdf"}
 
 
 @app.get("/figure")
-async def serve_figure(path: str, user_id: str = Depends(require_user)):
-    """Serve a figure (PNG or PDF) from the caller's workspace."""
+async def serve_figure(path: str, user_id: str = Depends(require_user)) -> FileResponse:
+    """Serve a figure (PNG or PDF) from the caller's workspace.
+
+    Args:
+        path: Absolute path of the figure, as the artifact reported it.
+        user_id: Resolved by `require_user`.
+
+    Returns:
+        The file, with a content type derived from its extension. Only PNG and
+        PDF are served, so a traversal that reached another file type still
+        returns nothing.
+
+    Raises:
+        HTTPException: 404 outside the caller's workspace, or absent.
+    """
     path = path.strip()
     if not is_under_workspace(path) or not _owns_path(user_id, path):
         log.warning("figure_rejected", path=path, reason="outside workspace or not owner")
@@ -371,6 +465,11 @@ def serve_web(host: str = "127.0.0.1", port: int = 7890) -> None:
     Binds to localhost by default. The open-source build ships no authentication
     and `run_python` executes model-written code, so do not expose this on a
     network without putting auth in front of it.
+
+    Args:
+        host: Bind address. Anything but loopback exposes an arbitrary code
+            executor; read SECURITY.md before changing it.
+        port: TCP port.
     """
     import uvicorn
     from starlette.middleware.trustedhost import TrustedHostMiddleware

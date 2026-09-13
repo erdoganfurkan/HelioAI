@@ -431,8 +431,15 @@ settings = _load()
 def dev_unlock(supplied: str | None) -> bool:
     """True iff the supplied token matches the configured dev secret.
 
-    Returns False when the server-side token is empty (guards against
-    accidentally unlocking an unconfigured instance).
+    Args:
+        supplied: Token offered by the caller — a `--dev` flag or a request
+            header. Compared with `hmac.compare_digest`, so a wrong token costs
+            the same time as a right one.
+
+    Returns:
+        True only when a dev token is configured and the supplied one matches.
+        An unconfigured instance answers False for every input, including
+        `None` and the empty string, so a blank secret cannot unlock anything.
     """
     return (
         bool(settings.dev.token)

@@ -115,6 +115,16 @@ def compact_history(messages: list, keep_full: int = 2) -> list:
     only the per-call payload shrinks.
 
     ponytail: fixed window N=2; widen keep_full if a case regresses on stale results.
+
+    Args:
+        messages: The per-call payload, newest last.
+        keep_full: How many of the most recent tool results to leave verbatim.
+            Zero summarises every one of them, which is the degraded retry a
+            context-length failure would want.
+
+    Returns:
+        A new list. `messages` is not modified, because it is also what gets
+        persisted.
     """
     tool_idx = [i for i, m in enumerate(messages) if getattr(m, "role", None) == "tool"]
     if len(tool_idx) <= keep_full:
@@ -267,6 +277,13 @@ def inject_run_python_args(name: str, *, no_network: bool = False) -> dict:
 
     Passed via `call_tool(..., trusted=...)` so they bypass the private-arg
     guard that rejects LLM/MCP-supplied `_*` overrides. Empty for any other tool.
+
+    Args:
+        name: Tool about to be called. Anything but `run_python` gets nothing.
+        no_network: Whether to deny the sandbox a network namespace.
+
+    Returns:
+        The trusted argument dict, empty for every other tool.
     """
     if name != "run_python":
         return {}
@@ -292,9 +309,16 @@ def emit_post_tool_events(
     Order is `tool_result` → (`skill_loaded` if load_skill) → `artifact`(s),
     matching what both loops emitted before this was factored out.
 
-    - `tool_result_extra` is merged into the tool_result event data (e.g. {turn}).
-    - `common_extra` is merged into skill_loaded and artifact event data
-      (e.g. {sub_agent_ctx} for sub-agents).
+    Args:
+        name: The tool that just ran.
+        result: Its raw result string, parsed here for artifacts.
+        tool_result_extra: Merged into the `tool_result` event data, e.g. `{turn}`.
+        common_extra: Merged into `skill_loaded` and `artifact` event data, e.g.
+            `{sub_agent_ctx}` when a sub-agent is the caller.
+
+    Yields:
+        The events, in the order both loops emitted them before this was
+        factored out: `tool_result`, then `skill_loaded`, then artifacts.
     """
     tool_result_extra = tool_result_extra or {}
     common_extra = common_extra or {}
@@ -517,6 +541,13 @@ def check_answer(
     `load_recipe` was called zero times all session — was never checked at all. The
     detectors were not silent because the run was clean; they were silent because
     nothing called them.
+
+    Args:
+        text: The finished answer.
+        history: The turn's messages, read for evidence a recipe was loaded and
+            then bypassed.
+        artifacts: What the run exported, used to tell a computed value from a
+            quoted one.
 
     Returns:
         The text (annotated when a check fires), the unknown ids, and the recipe flags.

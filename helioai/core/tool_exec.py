@@ -107,12 +107,31 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
     return json.dumps(keep, ensure_ascii=False)[:max_chars]
 
 
+def _is_recipe_source(result_text: str) -> bool:
+    """Whether a tool result is the payload `load_recipe` returns.
+
+    Tool messages do not carry the tool's name, so the shape identifies it: `name`,
+    `code` and `metadata` together are produced by no other tool.
+    """
+    try:
+        data = json.loads(result_text)
+    except (ValueError, TypeError):
+        return False
+    return isinstance(data, dict) and all(k in data for k in ("name", "code", "metadata"))
+
+
 def compact_history(messages: list, keep_full: int = 2) -> list:
     """Return a copy of `messages` where tool-result messages older than the last
     `keep_full` are summarized. The most recent results stay verbatim (the next LLM
     call usually needs them); older ones — already consumed — are trimmed so context
     does not grow unbounded over a long session. Persisted history is left untouched;
     only the per-call payload shrinks.
+
+    A loaded recipe is never summarized. It is the one result the model keeps writing
+    code against for the rest of the task, and two `run_python` calls later it had been
+    cut to its first line: in two live runs the analyst reloaded it, and once rewrote the
+    formula from memory rather than call the function it could no longer see. A recipe
+    is a few kilobytes; keeping it costs less than the extra turn.
 
     ponytail: fixed window N=2; widen keep_full if a case regresses on stale results.
 
@@ -132,7 +151,7 @@ def compact_history(messages: list, keep_full: int = 2) -> list:
     stale = set(tool_idx[:-keep_full])
     return [
         replace(m, content=_summarize_tool_result(m.content, max_chars=300))
-        if i in stale and m.content
+        if i in stale and m.content and not _is_recipe_source(m.content)
         else m
         for i, m in enumerate(messages)
     ]

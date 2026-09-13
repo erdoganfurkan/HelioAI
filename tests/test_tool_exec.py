@@ -176,6 +176,34 @@ def test_compact_history_noop_when_few_tools() -> None:
     assert compact_history(history, keep_full=2) is history
 
 
+def test_a_loaded_recipe_survives_compaction():
+    """Live runs 3 and 4 of 00_quickstart, same sequence both times: load_recipe, two
+    run_python calls, load_recipe again. After two more tool results the recipe source
+    had been compacted to its first 117 characters, the analyst no longer had the
+    function, reloaded it — and in run 4 rewrote the formula from memory instead of
+    calling it. A recipe is a few kilobytes and is the one tool result the next
+    `run_python` is written against; it must stay verbatim.
+    """
+    recipe = json.dumps(
+        {
+            "name": "theta_bn",
+            "code": "# name: theta_bn\n# description: Compute the shock normal angle\n"
+            + "def theta_bn(B_up, B_dn):\n    ...\n" * 40,
+            "metadata": {"name": "theta_bn", "description": "Compute the shock normal angle"},
+        }
+    )
+    run = json.dumps({"stdout": "n_points 1200", "figure_paths": [], "exports": {}})
+    history = [
+        Message(role="user", content="compute theta_Bn"),
+        Message(role="tool", tool_call_id="1", content=recipe),
+        Message(role="assistant", content="probing the data first"),
+        Message(role="tool", tool_call_id="2", content=run),
+        Message(role="tool", tool_call_id="3", content=run),
+    ]
+    out = compact_history(history, keep_full=2)
+    assert out[1].content == recipe
+
+
 def test_compaction_keeps_the_traceback_of_a_failed_run():
     """Losing stderr two turns later is why one typo was retried three times."""
     payload = json.dumps(

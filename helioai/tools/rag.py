@@ -47,6 +47,22 @@ def _tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.lower())
 
 
+def _quiet_model_loading() -> None:
+    """Turn off the progress bars transformers draws while loading weights.
+
+    Since transformers 5, loading a checkpoint is wrapped in tqdm; in Jupyter that
+    became a "Loading weights 0/103" widget in the middle of the first search of every
+    session. The model is cached and loads in seconds — a bar adds nothing a user can
+    act on. `helioai index` loads its own model and is not affected.
+    """
+    try:
+        from transformers.utils import logging as hf_logging
+
+        hf_logging.disable_progress_bar()
+    except Exception:
+        pass
+
+
 def _load():
     global _model, _collection
     if _model is not None and _collection is not None:
@@ -56,6 +72,7 @@ def _load():
         if _model is None:
             from sentence_transformers import SentenceTransformer
 
+            _quiet_model_loading()
             _model = SentenceTransformer(settings.rag.embed_model)
         if _collection is None:
             import chromadb
@@ -102,6 +119,7 @@ def _load_reranker():
             try:
                 from sentence_transformers import CrossEncoder
 
+                _quiet_model_loading()
                 _reranker = CrossEncoder(settings.rag.rerank_model)
             except Exception as e:
                 log.warning("reranker %s unavailable (%s)", settings.rag.rerank_model, e)

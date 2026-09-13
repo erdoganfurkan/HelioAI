@@ -711,3 +711,41 @@ def test_a_fabricated_id_is_still_reported(isolated_rag):
     assert unknown_ids(["cda/FAKE_DS/NOPE"]) == ["cda/FAKE_DS/NOPE"], (
         "a bogus parameter under a real dataset is still bogus"
     )
+
+
+def test_loading_the_encoder_does_not_draw_a_progress_bar(monkeypatch, tmp_path):
+    """Live run of 00_quickstart: the first search of a session displayed a
+    "Loading weights 0/103" widget in the notebook — transformers 5 wraps its weight
+    loading in tqdm, and Jupyter renders that as a progress bar in the middle of the
+    agent's transcript. Loading a cached 90 MB model is not something the user needs
+    a bar for. The bar must be off by the time the model is constructed.
+    """
+    import sys
+    import types
+
+    import chromadb
+    from transformers.utils import logging as hf_logging
+
+    seen: dict[str, bool] = {}
+
+    class _Encoder:
+        def __init__(self, name):
+            seen["bar_enabled_at_construction"] = hf_logging.is_progress_bar_enabled()
+
+    fake = types.ModuleType("sentence_transformers")
+    fake.SentenceTransformer = _Encoder
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake)
+
+    chromadb.PersistentClient(path=str(tmp_path / "chroma")).get_or_create_collection("params")
+    monkeypatch.setattr(rag_module.settings.rag, "chroma_dir", tmp_path / "chroma")
+    monkeypatch.setattr(rag_module.settings.rag, "collection_name", "params")
+    monkeypatch.setattr(rag_module, "_model", None)
+    monkeypatch.setattr(rag_module, "_collection", None)
+
+    hf_logging.enable_progress_bar()
+    try:
+        rag_module._load()
+    finally:
+        hf_logging.enable_progress_bar()
+
+    assert seen["bar_enabled_at_construction"] is False

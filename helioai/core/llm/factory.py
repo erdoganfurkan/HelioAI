@@ -57,11 +57,14 @@ OPENAI_COMPAT: dict[str, dict] = {
 }
 
 
-def build_llm_client(provider: str | None = None) -> LLMClient:
+def build_llm_client(provider: str | None = None, model: str | None = None) -> LLMClient:
     """Return a client for the requested provider.
 
     Args:
         provider: Provider name. Defaults to `HELIOAI_LLM_PROVIDER`.
+        model: Model (or, on Azure, deployment) to use instead of the provider's
+            configured one — how a delegated role runs on a smaller model than the lead
+            (`HELIOAI_ROLE_MODELS`). None keeps the configured model.
 
     Returns:
         A ready-to-use client.
@@ -88,7 +91,7 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
             api_key=cfg.api_key,
             endpoint=cfg.endpoint,
             api_version=cfg.api_version,
-            deployment=cfg.deployment,
+            deployment=model or cfg.deployment,
             max_output_tokens=cfg.max_output_tokens,
             temperature=cfg.temperature,
         )
@@ -103,7 +106,7 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
             )
         return GeminiClient(
             api_key=cfg.api_key,
-            model=cfg.model,
+            model=model or cfg.model,
             max_output_tokens=cfg.max_output_tokens,
             temperature=cfg.temperature,
         )
@@ -119,7 +122,7 @@ def build_llm_client(provider: str | None = None) -> LLMClient:
         base_url = spec["base_url"] or f"{getattr(cfg, 'base_url', '').rstrip('/')}/v1"
         return OpenAICompatClient(
             provider=p,
-            model=cfg.model,
+            model=model or cfg.model,
             api_key=api_key,
             base_url=base_url,
             max_output_tokens=cfg.max_output_tokens,

@@ -444,6 +444,20 @@ def test_factory_builds_opencode_from_table(monkeypatch):
     assert str(client._client.base_url).startswith("https://opencode.ai/zen/go/v1")
 
 
+def test_factory_model_override_wins_over_the_configured_model(monkeypatch):
+    """`HELIOAI_ROLE_MODELS` runs a role on another model of the same provider; the
+    factory must honour an explicit model over the provider's configured one, and leave
+    the configured one alone when none is given."""
+    from helioai.config import settings
+    from helioai.core.llm.factory import build_llm_client
+
+    monkeypatch.setattr(settings.llm.groq, "api_key", "gsk_test")
+    monkeypatch.setattr(settings.llm.groq, "model", "llama-3.3-70b-versatile")
+    assert build_llm_client("groq", model="llama-3.1-8b-instant")._model == "llama-3.1-8b-instant"
+    assert build_llm_client("groq")._model == "llama-3.3-70b-versatile"
+    assert settings.llm.groq.model == "llama-3.3-70b-versatile"
+
+
 def test_factory_opencode_base_url_is_overridable(monkeypatch):
     """A different OpenCode access path (BYOK proxy, self-hosted gateway...) must
     not require a code change — same override mechanism as Ollama's."""

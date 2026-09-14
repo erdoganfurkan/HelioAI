@@ -567,7 +567,7 @@ async def _run_task(
                 session_id,
                 turn=turn,
                 agent=sub_role or "sub_agent",
-                provider=settings.llm.provider,
+                provider=usage.get("provider") or settings.llm.provider,
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
                 cached_tokens=usage.get("cached_tokens", 0),

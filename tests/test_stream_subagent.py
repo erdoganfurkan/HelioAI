@@ -849,3 +849,55 @@ async def test_a_coplanarity_run_exporting_a_field_ratio_is_not_a_rankine_hugoni
     events = await drain(**base(llm, role="data_analyst"))
 
     assert [e for e in events if e["event"] == "recipe_bypassed"] == []
+
+
+# ── a role may run on its own model ─────────────────────────────────────────────
+
+
+async def test_a_role_configured_in_role_models_runs_on_its_own_client(stub_registry, monkeypatch):
+    """The lead's client is the frontier model; a parameter_hunter resolving ids from
+    search results does not need it. The role's client is built for the run, closed after
+    it, and its usage is billed to its own provider."""
+    from helioai.config import settings
+
+    built: list[tuple] = []
+    closed: list[str] = []
+
+    class RoleLLM(ScriptedLLM):
+        async def aclose(self):
+            closed.append("role client closed")
+
+    role_llm = RoleLLM([text("id resolved: cda/AC_H0_MFI/BGSEc")])
+    lead_llm = ScriptedLLM([text("the lead's client must not be used")])
+
+    def fake_build(provider=None, model=None):
+        built.append((provider, model))
+        return role_llm
+
+    monkeypatch.setattr(sub_agents, "build_llm_client", fake_build)
+    monkeypatch.setattr(
+        settings.agent, "role_models", {"parameter_hunter": ("groq", "llama-3.3-70b-versatile")}
+    )
+
+    events = await drain(**base(lead_llm))
+
+    assert built == [("groq", "llama-3.3-70b-versatile")]
+    assert lead_llm.calls == [] and len(role_llm.calls) == 1
+    assert closed == ["role client closed"]
+    assert final(events)["usage"]["provider"] == "groq"
+    assert final(events)["summary"] == "id resolved: cda/AC_H0_MFI/BGSEc"
+
+
+async def test_a_role_without_a_configured_model_keeps_the_leads_client(stub_registry, monkeypatch):
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.agent, "role_models", {"librarian": ("groq", None)})
+    monkeypatch.setattr(
+        sub_agents, "build_llm_client", lambda *a, **k: pytest.fail("no client to build")
+    )
+    lead_llm = ScriptedLLM([text("done")])
+
+    events = await drain(**base(lead_llm))
+
+    assert len(lead_llm.calls) == 1
+    assert final(events)["usage"]["provider"] == settings.llm.provider

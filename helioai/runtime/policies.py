@@ -40,6 +40,9 @@ class Policy:
             summary.
         bogus_retry: Whether an answer quoting ids absent from the catalogue buys the
             model one more turn, with the correction appended, before it is accepted.
+        provider: The provider this run's client talks to — for the usage rows, which
+            bill per provider. None means the lead's configured one.
+        model: The model, when the run was given one of its own (`HELIOAI_ROLE_MODELS`).
     """
 
     name: str
@@ -53,6 +56,8 @@ class Policy:
     comment_replies: bool = False
     stop_on_empty_reply: bool = False
     bogus_retry: bool = True
+    provider: str | None = None
+    model: str | None = None
 
     @property
     def event_extra(self) -> dict:

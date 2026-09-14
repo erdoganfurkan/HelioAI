@@ -29,6 +29,7 @@ provider's key is checked when a client is built.
 | Variable | Default | Effect |
 |---|---|---|
 | `HELIOAI_MAX_ITERATIONS` | `10` | Tool-calling rounds one question may take before the loop gives up. |
+| `HELIOAI_ROLE_MODELS` | — | `role=provider[:model],…` — run a delegated role (`parameter_hunter`, `data_analyst`, `plasma_physicist`, `librarian`) on its own provider and model instead of the lead's client; a `parameter_hunter` needs no frontier model. Its usage is billed to that provider. |
 | `HELIOAI_RAG_HYBRID` | `1` | `0` for dense-only parameter search instead of BM25 + dense fused by RRF. |
 | `HELIOAI_VISION_ENABLED` | `0` | Review generated figures with a multimodal side-call (text verdict only enters the history). |
 | `HELIOAI_VISION_PROVIDER`, `HELIOAI_VISION_MODEL` | `azure`, — | Provider and model for that review. |

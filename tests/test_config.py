@@ -99,3 +99,20 @@ def test_public_unauthenticated_opt_out_defaults_off(monkeypatch):
     assert config._load().web_auth.allow_unauthenticated_public is False
     monkeypatch.setenv("HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC", "1")
     assert config._load().web_auth.allow_unauthenticated_public is True
+
+
+def test_role_models_parse_provider_and_optional_model(monkeypatch):
+    monkeypatch.setenv(
+        "HELIOAI_ROLE_MODELS",
+        "parameter_hunter=Groq:llama-3.3-70b-versatile, librarian=groq ,broken, =x, data_analyst=",
+    )
+    s = config._load()
+    assert s.agent.role_models == {
+        "parameter_hunter": ("groq", "llama-3.3-70b-versatile"),
+        "librarian": ("groq", None),
+    }
+
+
+def test_role_models_default_to_nothing(monkeypatch):
+    monkeypatch.delenv("HELIOAI_ROLE_MODELS", raising=False)
+    assert config._load().agent.role_models == {}

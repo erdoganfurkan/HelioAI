@@ -19,8 +19,10 @@ from pathlib import Path
 
 import structlog
 
+from helioai.config import settings
 from helioai.core.events import make
 from helioai.core.llm.base import LLMClient, Message, ToolCall, ToolDef
+from helioai.core.llm.factory import build_llm_client
 from helioai.core.skills_loader import SkillError
 from helioai.core.skills_loader import load_skill as load_skill_body
 from helioai.core.tool_exec import (
@@ -378,8 +380,16 @@ async def stream_subagent(
     )
 
     runner: Runner | None = None
+    own_client: LLMClient | None = None
+    provider = settings.llm.provider
     try:
         system_prompt, skills_loaded = _build_system_prompt(role_cfg)
+        role_model = settings.agent.role_models.get(role)
+        if role_model is not None:
+            provider, model_name = role_model
+            own_client = build_llm_client(provider, model=model_name)
+            llm_client = own_client
+            log.info("subagent_own_model", role=role, provider=provider, model=model_name)
         for skill_name in skills_loaded:
             yield make("skill_loaded", name=skill_name, sub_agent_ctx=ctx)
 
@@ -406,6 +416,8 @@ async def stream_subagent(
             allowed=allowed,
             sandbox_no_network=role_cfg.sandbox_no_network,
             sub_agent_ctx=ctx,
+            provider=provider,
+            model=role_model[1] if role_model else None,
         )
         runner = Runner(
             policy,
@@ -458,7 +470,7 @@ async def stream_subagent(
             n_iterations=end.turns,
             error=final_text if capped else None,
             artifacts=end.artifacts,
-            usage=end.usage,
+            usage={**end.usage, "provider": provider},
         )
 
     except Exception as e:
@@ -473,10 +485,12 @@ async def stream_subagent(
             n_iterations=runner.turns if runner is not None else 0,
             error=str(e),
             artifacts=[],
-            usage=runner.usage if runner is not None else _zero_usage(),
+            usage={**(runner.usage if runner is not None else _zero_usage()), "provider": provider},
         )
 
     finally:
+        if own_client is not None:
+            await own_client.aclose()
         structlog.contextvars.unbind_contextvars("parent_session_id", "sub_role", "sub_task_id")
 
 

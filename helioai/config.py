@@ -157,13 +157,21 @@ class LLMConfig:
 
 @dataclass
 class AgentConfig:
-    """Agent loop limits.
+    """Agent loop limits, and which model each delegated role runs on.
 
     `max_iterations` caps how many tool-calling rounds one question may take
     before the loop gives up, bounding both runtime and token spend.
+
+    `role_models` maps a sub-agent role to `(provider, model)`. A `parameter_hunter`
+    resolves ids from search results and needs no frontier model; a `data_analyst`
+    writes the physics and does. Left empty, every role runs on the lead's client, as
+    it always did. Parsed from `HELIOAI_ROLE_MODELS="parameter_hunter=groq:llama-3.3-70b-
+    versatile,data_analyst=opencode"` — the model part is optional and defaults to the
+    provider's configured model.
     """
 
     max_iterations: int = 10
+    role_models: dict[str, tuple[str, str | None]] = field(default_factory=dict)
 
 
 @dataclass
@@ -342,6 +350,27 @@ def _parse_users(raw: str) -> dict[str, str]:
     return users
 
 
+def _parse_role_models(raw: str) -> dict[str, tuple[str, str | None]]:
+    """Parse HELIOAI_ROLE_MODELS='role=provider:model,role=provider' → {role: (provider, model)}.
+
+    Provider names are lowercased like `HELIOAI_LLM_PROVIDER`; a model is taken verbatim
+    since providers are case-sensitive about theirs. Malformed pairs are skipped rather
+    than fatal: a typo in an optimisation must not stop the agent from answering.
+    """
+    out: dict[str, tuple[str, str | None]] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        role, target = pair.split("=", 1)
+        role, target = role.strip(), target.strip()
+        if not role or not target:
+            continue
+        provider, _, model = target.partition(":")
+        out[role] = (provider.strip().lower(), model.strip() or None)
+    return out
+
+
 def _parse_headers(raw: str) -> dict[str, str]:
     """Parse HELIOAI_<PROVIDER>_HEADERS='x-session={uuid},x-team=plasma' → {name: value}.
 
@@ -438,7 +467,10 @@ def _load() -> Settings:
                 headers=_parse_headers(os.environ.get("HELIOAI_OLLAMA_HEADERS", "")),
             ),
         ),
-        agent=AgentConfig(max_iterations=max_iterations),
+        agent=AgentConfig(
+            max_iterations=max_iterations,
+            role_models=_parse_role_models(os.environ.get("HELIOAI_ROLE_MODELS", "")),
+        ),
     )
 
     if out_override:

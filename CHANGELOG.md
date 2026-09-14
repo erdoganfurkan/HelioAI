@@ -126,6 +126,12 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   budget, whether the first turn must call a tool. The two public generators are thin
   wrappers around it and every interface sees exactly the events it saw, in the same
   order — the loop tests and the journal golden did not change.
+- **A delegated role can run on its own model.** `HELIOAI_ROLE_MODELS=parameter_hunter=
+  groq:llama-3.3-70b-versatile,librarian=groq` gives a role a provider and a model of its
+  own; a `parameter_hunter` resolving ids from search results does not need the lead's
+  frontier model, and a `data_analyst` writing the physics does. The role's client is
+  built for the run and closed after it, and its tokens are billed to its own provider in
+  the `usage` table. Roles not listed keep running on the lead's client, as before.
 - **A run knows where it writes.** Who is running, in which session and into which
   directory used to live in three contextvars set by each loop, by the MCP server and by
   nobody in a test, and read back from inside the tools — a sub-agent worked only because

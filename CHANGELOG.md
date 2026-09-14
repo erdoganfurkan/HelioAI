@@ -8,6 +8,199 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-02
+
+Two things changed in this release. **HelioAI is now a complete MCP tool provider**: an
+agent you already use — Claude Code, Claude Desktop, Codex — can call its tools, follow
+its skills as slash commands, read its recipes and receive its figures, with no LLM key of
+HelioAI's own. And **a result now carries the evidence that it is what it says it is**: the
+data a script loaded is the data it named, the exported notebook computes what the sandbox
+computed, and every number in an answer is judged against the quantity it claims to be.
+
+The release was qualified on one scenario, `examples/00_quickstart.ipynb` — the Wind shock
+of 2015-03-17 04:00 UT, θ_Bn by magnetic coplanarity — run live five times against two
+independent databases (Harvard-CfA 58.8 ± 2.7°, IPShocks 63.1 ± 16.8°). The guided
+analysis landed in the band on every run (62.68°); the same analysis asked as a single
+delegated question did on runs 3 and 5 and missed once, on run 4, at 54.85° — a hand-written
+copy of the recipe over a badly chosen averaging window, which is what the new recipe-check
+signal below detects. What that qualification does and does not cover is listed under
+*Known limitations*.
+
+### Added
+
+- **MCP 2.0.** `helioai-mcp` migrates to `mcp>=2` and the `<2` cap is gone (closes #1).
+  The 11 recipes and 6 skills are fetchable as `recipe://<name>` and `skill://<name>`
+  resources, and the six skills are also **MCP prompts** — `/helioai:data_analyst plot
+  IMF Bz for 2015-03-17` arrives as one message. Sandbox **figures come back as inline
+  image content** (768 px), not as paths on the server's disk. Tool failures are reported
+  as `isError`; the 15 tools that change nothing are annotated `readOnlyHint`, so a client
+  need not prompt for `list_missions` as it does for `run_python`.
+- **Each MCP connection gets its own session workspace.** Every call used to fall through
+  to one process-wide temporary directory: two `run_python` calls overwrote each other's
+  `code_0.py` and figure, and one client's `load_data()` saw another client's downloads.
+- **`helioai mcp-install`** prints ready-to-use client configuration for Claude Code,
+  Claude Desktop and Codex, with the server path resolved from *this* interpreter rather
+  than from `PATH` — the reason `"command": "helioai-mcp"` did not work from a venv.
+  `--write` merges into the JSON configs and refuses a file it cannot parse.
+- **`helioai --help`.** It used to be sent to the model as a question.
+- **`examples/00_quickstart.ipynb`** — one shock end to end in about three minutes: find
+  the parameter, download and plot, θ_Bn with the vetted recipe, export; then the same
+  analysis as a single delegated question. The notebook states the expected band and
+  cites both external references, so a run can be judged against a number the agent did
+  not produce. `%helioai_session new` starts a fresh conversation without deleting the
+  previous one, which `reset` does.
+- **Token counts.** `Message` carries the prompt, completion and cached token counts every
+  provider already sends and every client used to drop.
+- **Configurable HTTP headers** for the OpenAI-compatible providers
+  (`HELIOAI_<PROVIDER>_HEADERS=name=value,…`, `{uuid}` expanded per client), for gateways
+  and proxies that require one.
+- **`HELIOAI_LOG_LEVEL`** overrides the level each entry point hardcodes.
+- **A third recipe-check signal.** Loading a recipe and calling its function are now
+  distinguished: a run that loads `theta_bn`, rewrites the formula by hand and exports the
+  result under the recipe's own name is flagged *loaded, never called*. On the live run
+  that motivated it, that hand-written copy gave 54.85° where the recipe gives 62.68°.
+- **`AGENTS.md`** scopes what a coding agent may change in this repository, and what it
+  cannot verify offline.
+
+### Changed
+
+- **The MCP server starts without an LLM key.** Config validation moved from import time to
+  `build_llm_client`, where it already was; a fresh install wired into Claude Desktop used to
+  die on `AZURE_OPENAI_API_KEY is not set` before serving a tool.
+- **`--http` is gated by `HELIOAI_MCP_TOKEN`** and refuses to bind off-loopback without one.
+  It used to expose `run_python` unauthenticated with a warning.
+- **One readable account of a run in all three interfaces.** Tool traffic is described for
+  the reader (`get_timeseries: cda/WI_H0_MFI/B3GSE — WI — 3 s — 1800 points`) instead of
+  showing the model's JSON briefing truncated mid-key. The operator's home directory no
+  longer reaches the model, so it stops quoting `/home/<user>/…` into answers and
+  notebooks. speasy's disabled-provider warning is one line, its traceback at DEBUG; no
+  `Loading weights` progress bar inside a conversation.
+- **The web UI binds a streaming reply to the session that asked.** Each session owns a
+  view; switching sessions while a reply streams no longer lands it in the other session.
+  A turn cut short keeps its figure and script. The provider selector follows the server's
+  configured provider (it used to send `azure` regardless) and offers Ollama.
+- **The index describes products with what the archive publishes** rather than with
+  heuristics: the owning mission (780 AMDA parameters could not be found by naming their
+  own spacecraft), the processing level (the definitive ACE IMF vector was demoted as
+  "browse" for the word *PRELIM* in a Level 2 description), and the SPASE region (1279
+  AMDA parameters carried a wrong one, 0 after). **Takes effect after
+  `helioai index --rebuild`**; `helioai index` is incremental and leaves an existing
+  index as it is.
+- **`search_parameters` no longer returns a `score`.** It was written before two of the
+  four reranking stages and contradicted the order — rank 1 carried 0.09 and rank 2 carried
+  1.0 — which a client model with none of our system prompt read at face value.
+- **A fabricated parameter id costs the model a turn.** Detection used to staple a
+  correction onto an answer already written and end the loop; the model now has to answer
+  again. Once, in both loops. A real *dataset* id (`cda/WI_H2_MFI`) is no longer accused
+  of being a fabrication because only parameters are index keys.
+- **History compaction keeps the numbers.** A stale tool result never loses `findings`
+  or `exports`; `summary` keeps 1 000 characters and `stdout` 400; a loaded recipe is never
+  summarised at all. At the previous cap the analyst reloaded the recipe and once rewrote
+  the formula from memory.
+- **Sub-agent `run_python` runs without a network namespace**, since sub-agents download
+  data; the seed of speasy's inventory into each sandbox home shrank from 708 MB to 96 MB.
+- **`power_spectrum`** segments a gapped series into contiguous runs and averages Welch
+  over them, instead of splicing the gaps shut and corrupting the spectral slope.
+- **`rankine_hugoniot`** projects the velocity on the shock normal when `normal=` is given
+  (the jump conditions want V·n̂, not |V|), refuses a scalar speed by name, and fixes the
+  velocity sign on entry so a flipped coplanarity normal no longer silences the
+  consistency check.
+- **`theta_bn`** returns `{"error"}` and nothing else on NaN, zero or collinear input — a
+  NaN used to come back labelled *quasi-perpendicular*. An `(N, 3)` window is averaged
+  over its finite rows, so a gapped interval can be passed as is.
+- The Docker image keeps speasy's 840 MB inventory inside the data volume instead of
+  re-downloading it on every recreate.
+- Every public object documents its inputs and outputs (PyHC standard 8); the 65 that did
+  not are now zero. The README is a landing page with two real session recordings; the
+  manual lives in `docs/`.
+
+### Fixed
+
+- **`HELIOAI_DATA_DIR` did not move the search index.** Sessions and user homes followed
+  it; the Chroma index, the legacy profile and catalog paths stayed at the default
+  location, so an installed server pointed at a prepared data directory reported
+  `ChromaDB index not found` beside the index. Everything now hangs off `data_dir`. In the
+  Docker image this puts the index at `/app/data/chroma` — the same directory as a clone's
+  `data/chroma`, which the compose file already mounts — instead of
+  `/app/data/helioai/chroma`.
+- **`torch` is a declared dependency (`>=2.6`).** HelioAI never imports it, but transformers
+  5 requires `torch>=2.5` without saying so, and `uv pip install` of the wheel in a fresh
+  environment resolved torch 2.4.1 to escape an unrelated `mpmath` conflict. transformers
+  then disabled torch at import, the dense search failed, and `search_parameters` fell
+  back to a text scan with no error at the tool boundary.
+- **The search fallback note names what failed.** It said `RAG index not built` whatever
+  the dense search had raised — on the install above, it told the user to build an index
+  that existed. The note now carries the exception.
+- `helioai-mcp` answers `initialize` with the package version; it used to send an empty
+  string.
+- **`load_data("<full id>")` returned the wrong spacecraft.** Two products ending in the
+  same parameter name slugged to the same key and the resolver matched on that suffix:
+  asking for `MISSION_B`'s field returned `MISSION_A`'s — right units, plausible numbers,
+  no error. Both loaders (sandbox and exported notebook) now resolve through the recorded
+  `param_id`, and an ambiguous id raises listing the candidates.
+- **The exported notebook computed something else than the session.** `load_data()` was
+  rewritten to a bare `spz.get_data()` that fed the raw fill sentinel to the same arithmetic
+  (mean 5.0 in the session, 50 002 in the notebook); `export(name, data, units=)`,
+  `magnitude()` and `interp_to()` did not exist in the notebook; imports the header did
+  not provide were stripped; a failed attempt exported as an executable cell and stopped
+  *Run All*; recipes loaded by a sub-agent were missing from *Methods*. The exported
+  helpers are held to the sandbox's behaviour by tests on the same inputs.
+- **Provenance vouched for a number with the wrong quantity.** The ledger held
+  `B_downstream = 10 nT` and `density = 25 cm⁻³`; "B downstream = 25 nT" was reported
+  *matched*. The quantity the sentence names is judged first; a hit elsewhere needs a unit
+  that does not contradict the claim; a negative claim against a positive record is the
+  wrong sign, not a magnitude; a quantity exported several times is sourced by any of its
+  runs; `1.2e-3` keeps its exponent; `-0,657 nT` is not −657 nT; a day of the month is
+  not a measurement; `°` is `deg`; and a component of an exported vector is not a
+  contradiction of it.
+- **A decimal comma made every measurement look unsourced.** A French reply with correct
+  physics came back "0 traced, 6 unsourced".
+- `helioai-mcp` was not found on Windows, where it is `helioai-mcp.exe`.
+- The `plasma_physicist` skill's templates could not run as written (`await`-less calls to
+  async tools, `.unit` for `.units`, `np.interp` across gaps, a nan-unaware fraction that
+  reported 0.25 for a true 0.5).
+- A tool raising `TimeoutError()` produced `{"error": ""}` and was described as "ok".
+- The `spz` escape-hatch test and the session fixture no longer depend on speasy's cache
+  server being up; the full suite dropped from 648 s to 353 s.
+
+### Security
+
+- **Host credential stores were readable from the sandbox.** Bubblewrap mounted `/`
+  read-only, which left `~/.ssh`, `~/.gnupg`, `~/.config/gh` and their kind readable to
+  model-written code. They are now masked with empty tmpfs or `/dev/null` before the
+  workspace bind. Linux only, as the whole isolation is; see `SECURITY.md`.
+- The non-bubblewrap fallback warns when `no_net` was requested and cannot be honoured
+  (closes #5).
+
+### Known limitations
+
+Stated here so that the release is not read as more than it is.
+
+- **Scientific validation covers one recipe on one event.** `theta_bn` on the Wind shock
+  of 2015-03-17 was checked against two external databases. The other ten recipes carry
+  their references and self-tests but have not been qualified the same way in this release.
+- **The retention policy runs at start-up.** Session workspaces older than
+  `HELIOAI_WORKSPACE_TTL_S` (7 days) are deleted when the CLI or the web server starts,
+  data, scripts and figures included; consulting or exporting an old session does not
+  protect it. A demo that spans a restart should run under a dedicated `HELIOAI_DATA_DIR`
+  and keep its deliverables outside it.
+- **`list_catalogs` appends local catalogs to the shared in-process cache**, so on a
+  multi-user web or MCP server one user's `local/` catalogs can appear in another's
+  listing until the cache expires.
+- **`%helioai_provider` does not switch the provider.** It sets the environment after the
+  settings have been read; restart the kernel with `HELIOAI_LLM_PROVIDER` set instead.
+- **The recipe check is textual.** It reads the code the model wrote; a run that redefines
+  a function under a recipe's own name passes it. It annotates and never blocks.
+- **Provenance says where a number came from, not whether it is right.** A recorded value
+  that agrees with the prose is *traced*; the physics is checked by the recipe and by the
+  reader.
+- **Over MCP, the client's model is not ours.** The tools run, the ledger records, but the
+  answer checks (provenance, recipe check, fabricated-id guard) live in HelioAI's own agent
+  loop and do not run on a client's reply.
+- **Sub-agents on DeepSeek in thinking mode** refuse `tool_choice="required"` on their first
+  turn; the request is resent as `auto`. No turn is lost; one warning is logged per
+  sub-agent.
+
 ## [0.2.1] — 2026-08-14
 
 Documentation only — no behaviour change. Everything here was already true of the code in
@@ -203,5 +396,7 @@ changed; the import package, the CLI commands and the API are all unchanged.
   functionally before using it and logs `sandbox_not_isolated` when it falls back, so
   the logs answer the question on any host.
 
-[Unreleased]: https://github.com/erdoganfurkan/HelioAI/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/erdoganfurkan/HelioAI/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/erdoganfurkan/HelioAI/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/erdoganfurkan/HelioAI/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/erdoganfurkan/HelioAI/releases/tag/v0.2.0

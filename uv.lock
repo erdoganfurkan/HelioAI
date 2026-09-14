@@ -20,9 +20,6 @@ resolution-markers = [
     "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
-[manifest]
-constraints = [{ name = "torch", specifier = ">=2.6" }]
-
 [[package]]
 name = "aioftp"
 version = "0.27.2"
@@ -1536,6 +1533,7 @@ dependencies = [
     { name = "sentence-transformers" },
     { name = "speasy" },
     { name = "structlog" },
+    { name = "torch" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1586,6 +1584,7 @@ requires-dist = [
     { name = "solarmach", marker = "extra == 'solarmach'", specifier = ">=0.5" },
     { name = "speasy", specifier = ">=1.4" },
     { name = "structlog", specifier = ">=24.0" },
+    { name = "torch", specifier = ">=2.6" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 provides-extras = ["dev", "docs", "solarmach"]

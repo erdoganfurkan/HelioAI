@@ -121,25 +121,6 @@ def test_image_artifact_also_prints_stdout(capsys, monkeypatch):
     assert "beta = 1.7" in out
 
 
-def test_data_preview_artifact_shows_parameter_and_point_count(capsys):
-    out = render(
-        capsys,
-        "artifact",
-        {"kind": "data_preview", "param_id": "amda/imf_bz", "n_points": 1440},
-    )
-    assert "amda/imf_bz" in out
-    assert "1440" in out
-
-
-def test_data_preview_truncates_a_long_preview(capsys):
-    out = render(
-        capsys,
-        "artifact",
-        {"kind": "data_preview", "param_id": "p", "n_points": 1, "preview": "\n".join("l" * 20)},
-    )
-    assert out.count("\n") <= 8
-
-
 def test_unknown_event_is_ignored_silently(capsys):
     """Forward compatibility: a new server-side event must not crash an old CLI."""
     assert render(capsys, "some_future_event", {"whatever": 1}) == ""

@@ -158,12 +158,6 @@ def _render_jupyter_event(ev: dict) -> None:
             display(HTML(_param_card_html(data)))
         elif kind == "catalog_preview":
             display(HTML(_catalog_card_html(data)))
-        elif kind == "data_preview":
-            param = data.get("param_id", "")
-            n = data.get("n_points", 0)
-            print(f"  📈 {param} — {n} points")
-            if data.get("preview"):
-                print(data["preview"])
 
     elif name == "plan":
         steps = data.get("steps") or []

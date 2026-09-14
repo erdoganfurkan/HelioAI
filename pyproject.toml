@@ -34,6 +34,11 @@ dependencies = [
     "httpx>=0.27",
     "uvicorn[standard]>=0.30",
     "mcp>=2.0",
+    # Imported directly by tools/mcp_client.py: the SDK's streamable-HTTP client is
+    # typed on httpx2.AsyncClient, so the plain httpx client cannot be handed to it.
+    # It arrives through mcp anyway; declaring it means a future mcp that drops it
+    # fails at resolution, not at import.
+    "httpx2>=2.0",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "structlog>=24.0",

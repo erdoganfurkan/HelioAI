@@ -11,7 +11,7 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import structlog
 
@@ -170,16 +170,6 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
         sandbox_no_network=True,
     ),
 }
-
-
-@dataclass
-class SubAgentResult:
-    """What a finished sub-agent hands back to the lead agent."""
-
-    summary: str = ""
-    artifacts: list[dict] = field(default_factory=list)
-    n_iterations: int = 0
-    error: str | None = None
 
 
 def task_tool_def() -> ToolDef:
@@ -374,6 +364,8 @@ async def stream_subagent(
         sub_task_id=task_id,
     )
 
+    artifacts: list[dict] = []
+    n_iters = 0
     try:
         system_prompt, skills_loaded = _build_system_prompt(role_cfg)
         for skill_name in skills_loaded:
@@ -391,9 +383,7 @@ async def stream_subagent(
         )
 
         history: list[Message] = [Message(role="user", content=_with_inventory(description))]
-        artifacts: list[dict] = []
         final_text = ""
-        n_iters = 0
         t0 = time.monotonic()
         capped = False
         retried_bogus_ids = False
@@ -527,9 +517,9 @@ async def stream_subagent(
             "data": {
                 "task_id": task_id,
                 "role": role,
-                "findings": _findings(artifacts) if "artifacts" in dir() else {},
+                "findings": _findings(artifacts),
                 "summary": "",
-                "n_iterations": n_iters if "n_iters" in dir() else 0,
+                "n_iterations": n_iters,
                 "error": str(e),
                 "artifacts": [],
             },
@@ -540,48 +530,3 @@ async def stream_subagent(
         if _user_token is not None:
             _ws.reset_user(_user_token)
         structlog.contextvars.unbind_contextvars("parent_session_id", "sub_role", "sub_task_id")
-
-
-async def run_subagent(
-    role: str,
-    description: str,
-    *,
-    parent_session_id: str,
-    user_id: str,
-    llm_client: LLMClient,
-    task_id: str | None = None,
-) -> SubAgentResult:
-    """Run a sub-agent to completion and return only its outcome.
-
-    Non-streaming wrapper over `stream_subagent` — same arguments.
-
-    Args:
-        role: One of the whitelisted roles (parameter_hunter, data_analyst,
-            plasma_physicist, librarian).
-        description: The task handed to the sub-agent, in natural language.
-        parent_session_id: The lead conversation this run belongs to.
-        user_id: Storage namespace of that conversation.
-        llm_client: Provider client shared with the lead.
-        task_id: Optional id echoed in events, for UI correlation.
-
-    Returns:
-        SubAgentResult — `summary` (full final text), `artifacts`,
-        `n_iterations`, and `error` (set when the run failed or hit its cap).
-    """
-    async for ev in stream_subagent(
-        role=role,
-        description=description,
-        parent_session_id=parent_session_id,
-        user_id=user_id,
-        llm_client=llm_client,
-        task_id=task_id,
-    ):
-        if ev["event"] == "sub_agent_end":
-            d = ev["data"]
-            return SubAgentResult(
-                summary=d.get("summary", ""),
-                artifacts=d.get("artifacts", []),
-                n_iterations=d.get("n_iterations", 0),
-                error=d.get("error"),
-            )
-    return SubAgentResult(error="stream_subagent yielded no sub_agent_end")

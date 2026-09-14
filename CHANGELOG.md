@@ -57,6 +57,18 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   ICME of 2015" — but `get_events_timeseries` described its window as "events in this
   window", which reads as overlap, and each tool carried its own copy of the filter.
   One helper, one wording, and tests on the edge events.
+- `import helioai` no longer creates directories: the session store now creates its
+  database and schema on first use rather than at import.
+- `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the
+  MCP SDK's streamable-HTTP client is typed on it) but only received it as a transitive
+  dependency of `mcp`.
+
+### Removed
+
+- The cross-encoder reranking stage of parameter search — measured to degrade results
+  and disabled for a year (`RAGConfig` keeps the measurement in its docstring); the
+  `rerank_*` settings go with it. Also gone: `run_subagent` (no callers) and the
+  `data_preview` artifact renderers in the three interfaces (no emitter).
 
 ### Changed
 

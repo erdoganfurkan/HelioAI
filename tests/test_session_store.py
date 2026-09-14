@@ -320,3 +320,21 @@ def test_strip_orphans_keeps_origin() -> None:
     cleaned = strip_orphan_tool_calls(h)
     assert cleaned[0].tool_calls is None and cleaned[0].content == "text"
     assert cleaned[1].origin == "correction"
+
+
+def test_constructing_a_store_touches_no_disk_until_first_use(tmp_path: Path) -> None:
+    """`store = SessionStore()` runs at import time; creating directories then made
+    `import helioai` itself write to the filesystem."""
+    db = tmp_path / "nested" / "sessions.db"
+    store = SessionStore(db)
+    assert not db.parent.exists()
+    store.get_or_create("u", "s")
+    assert db.exists()
+
+
+def test_save_on_a_fresh_store_does_not_deadlock(tmp_path: Path) -> None:
+    """`save` holds the store lock while it connects, and the first connection has to
+    create the schema — that must not re-take the same lock."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.save("u", "s", [Message(role="user", content="hi")])
+    assert SessionStore(tmp_path / "sessions.db").get_or_create("u", "s")[0].content == "hi"

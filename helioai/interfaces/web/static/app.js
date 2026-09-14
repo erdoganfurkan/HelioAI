@@ -514,12 +514,6 @@ function renderArtifact(view, data) {
 
     view.chat.append(card);
     if (isActive(view)) scrollBottom();
-
-  } else if (data.kind === 'data_preview' && data.preview) {
-    const pre = el('div', 'artifact-preview',
-      `${data.param_id} — ${data.n_points} pts\n${data.preview}`);
-    view.chat.append(pre);
-    if (isActive(view)) scrollBottom();
   }
 }
 

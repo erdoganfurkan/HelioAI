@@ -91,11 +91,18 @@ class SessionStore:
         self._cache: dict[SessionKey, list[Message]] = {}
         self._lock = threading.Lock()
         self._turn_locks: dict[SessionKey, asyncio.Lock] = {}
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_schema()
+        # Nothing touches the disk until the first query: the module-level `store`
+        # is built at import, and creating directories on `import helioai` is the
+        # kind of side effect a packager, a linter run or a docs build trips over.
+        self._schema_ready = False
+        # Its own lock: `save` already holds `_lock` when it connects, and `_lock` is
+        # not re-entrant — taking it again here would deadlock the first save.
+        self._schema_lock = threading.Lock()
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        try:
             conn.executescript(_SCHEMA)
             for statement in _MIGRATIONS:
                 try:
@@ -103,9 +110,16 @@ class SessionStore:
                 except Exception:
                     pass
             conn.commit()
+        finally:
+            conn.close()
+        self._schema_ready = True
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
+        if not self._schema_ready:
+            with self._schema_lock:
+                if not self._schema_ready:
+                    self._init_schema()
         conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")

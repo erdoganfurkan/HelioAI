@@ -8,7 +8,6 @@ Models load lazily and are cached at module scope.
 from __future__ import annotations
 
 import logging
-import math
 import re
 import threading
 
@@ -17,8 +16,6 @@ from helioai.config import settings
 log = logging.getLogger(__name__)
 
 _model = None
-_reranker = None
-_reranker_loaded = False
 _collection = None
 _lock = threading.Lock()
 
@@ -126,26 +123,6 @@ def _collection_only():
             client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
             _collection = client.get_collection(name=settings.rag.collection_name)
     return _collection
-
-
-def _load_reranker():
-    global _reranker, _reranker_loaded
-    if not settings.rag.rerank_enabled:
-        return None
-    if _reranker_loaded:
-        return _reranker
-    with _lock:
-        if not _reranker_loaded:
-            try:
-                from sentence_transformers import CrossEncoder
-
-                _quiet_model_loading()
-                _reranker = CrossEncoder(settings.rag.rerank_model)
-            except Exception as e:
-                log.warning("reranker %s unavailable (%s)", settings.rag.rerank_model, e)
-                _reranker = None
-            _reranker_loaded = True
-    return _reranker
 
 
 def _load_bm25():
@@ -512,15 +489,7 @@ def _fuse_query(
         for pid in ordered_ids
     ]
 
-    reranker = _load_reranker()
-    if reranker is not None and len(candidates) > 1:
-        head = candidates[: max(top_k, settings.rag.rerank_fetch_k)]
-        rerank_scores = reranker.predict([(query, c["_full_text"]) for c in head])
-        for c, s in zip(head, rerank_scores, strict=False):
-            c["score"] = round(1.0 / (1.0 + math.exp(-float(s))), 4)
-        head.sort(key=lambda c: c["score"], reverse=True)
-        candidates = head
-    elif score_mode == "rrf":
+    if score_mode == "rrf":
         raws = [c["_raw"] for c in candidates]
         lo, hi = min(raws), max(raws)
         span = (hi - lo) or 1.0
@@ -591,12 +560,7 @@ def search_batch(
     active = uncached
     model, collection = _load()
     hybrid = settings.rag.hybrid_enabled
-    if hybrid:
-        dense_k = settings.rag.hybrid_fetch_k
-    elif settings.rag.rerank_enabled:
-        dense_k = max(top_k, settings.rag.rerank_fetch_k)
-    else:
-        dense_k = top_k
+    dense_k = settings.rag.hybrid_fetch_k if hybrid else top_k
 
     vecs = model.encode(
         [q for _, q in active],

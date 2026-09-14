@@ -202,13 +202,6 @@ def _render_event(ev: dict) -> None:
             for path in paths:
                 print(f"{pad}\033[93m  → {_tilde(path)}\033[0m")
                 _open_file(path)
-        elif kind == "data_preview":
-            param = data.get("param_id", "")
-            n = data.get("n_points", 0)
-            print(f"{pad}\033[93m📈 {param} — {n} points\033[0m")
-            if data.get("preview"):
-                for line in (data["preview"] or "").split("\n")[:5]:
-                    print(f"{pad}\033[90m  {line}\033[0m")
 
     elif name == "plan":
         print(f"\n{pad}\033[96m📋 {data.get('title', 'Plan')}\033[0m")

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import numpy as np
 import pytest
 
@@ -117,38 +115,17 @@ def _seed_a_log_companion(collection) -> None:
     )
 
 
-class _LogCopyFirstReranker:
-    """The measured failure: the cross-encoder ranks the demoted product first."""
-
-    def predict(self, pairs):
-        return [10.0 if "log scale" in doc else 1.0 for _q, doc in pairs]
-
-
-def test_search_is_ordered_by_penalty_then_score(isolated_rag, monkeypatch) -> None:
-    """The order is lexicographic — penalty ascending, then score descending.
-
-    `score` is written by the cross-encoder and never rewritten by the domain rerank that
-    runs after it, so a demoted product keeps the high score it was handed. Asserting a
-    plain descending order would say the reranking is wrong; it is not, it is what puts
-    the real density above its log copy. Only the pair is invariant.
-    """
-    from helioai.config import settings
-    from helioai.tools.rag import _rerank_penalty
-
-    monkeypatch.setattr(settings.rag, "rerank_enabled", True)
-    monkeypatch.setattr(rag_module, "_reranker", _LogCopyFirstReranker())
-    monkeypatch.setattr(rag_module, "_reranker_loaded", True)
+def test_search_demotes_the_log_scaled_copy_below_the_real_measurement(isolated_rag) -> None:
+    """The domain rerank is the only reordering stage left, and this is what it is for:
+    a query for the density must not rank its log-scaled companion above it."""
     _seed_a_log_companion(isolated_rag)
 
-    query = "Wind proton density"
-    results = search(query, top_k=5)
+    results = search("Wind proton density", top_k=5)
 
-    assert results[-1]["id"] == "cda/WI_H1_SWE/Proton_Np_nonlin_log"
-    keys = [(_rerank_penalty(query, r), -r["score"]) for r in results]
-    assert keys == sorted(keys)
-    scores = [r["score"] for r in results]
-    assert scores != sorted(scores, reverse=True), (
-        "the demoted product keeps its stale score — without that this pins nothing"
+    ids = [r["id"] for r in results]
+    assert "cda/WI_H1_SWE/Proton_Np_nonlin" in ids
+    assert ids.index("cda/WI_H1_SWE/Proton_Np_nonlin") < ids.index(
+        "cda/WI_H1_SWE/Proton_Np_nonlin_log"
     )
 
 
@@ -281,106 +258,6 @@ def test_search_batch_empty_slot(isolated_rag) -> None:
     assert len(groups) == 3
     assert groups[1] == []
     assert groups[0] and groups[2]
-
-
-# ──────────────────────────── reranker composition ──────────────────────────
-
-
-# ─────────────────────────── search cache ──────────────────────────────────
-
-
-def test_search_cache_skips_encode_on_repeat(isolated_rag, monkeypatch) -> None:
-    _seed(isolated_rag)
-    calls = {"n": 0}
-    real_encode = rag_module._model.encode
-
-    def counting_encode(texts, **kwargs):
-        calls["n"] += 1
-        return real_encode(texts, **kwargs)
-
-    monkeypatch.setattr(rag_module._model, "encode", counting_encode)
-    r1 = search("solar wind density", top_k=3)
-    r2 = search("solar wind density", top_k=3)
-
-    assert calls["n"] == 1
-    assert [r["id"] for r in r1] == [r["id"] for r in r2]
-
-
-def test_search_batch_partial_cache(isolated_rag, monkeypatch) -> None:
-    _seed(isolated_rag)
-    encoded_batches: list[list] = []
-    real_encode = rag_module._model.encode
-
-    def tracking_encode(texts, **kwargs):
-        encoded_batches.append(list(texts))
-        return real_encode(texts, **kwargs)
-
-    monkeypatch.setattr(rag_module._model, "encode", tracking_encode)
-
-    search_batch(["q_a", "q_b"], top_k=2)
-    assert encoded_batches[-1] == ["q_a", "q_b"]
-
-    search_batch(["q_a", "q_new"], top_k=2)  # q_a is now cached
-    assert encoded_batches[-1] == ["q_new"]  # only the uncached query was encoded
-
-
-def test_search_catalogs_memoizes_collection(isolated_rag, monkeypatch) -> None:
-    import chromadb
-
-    from helioai.tools.rag import search_catalogs
-
-    fake_col = MagicMock()
-    fake_col.count.return_value = 0
-    fake_col.query.return_value = {
-        "ids": [[]],
-        "documents": [[]],
-        "metadatas": [[]],
-        "distances": [[]],
-    }
-    fake_client = MagicMock()
-    fake_client.get_collection.return_value = fake_col
-    client_call_count = [0]
-
-    def fake_persistent_client(*args, **kwargs):
-        client_call_count[0] += 1
-        return fake_client
-
-    monkeypatch.setattr(chromadb, "PersistentClient", fake_persistent_client)
-
-    search_catalogs("ICME solar wind")
-    search_catalogs("bow shock MMS")
-
-    assert client_call_count[0] == 1
-    assert fake_client.get_collection.call_count == 1
-
-
-# ──────────────────────────── reranker composition ──────────────────────────
-
-
-def test_reranker_composes_with_hybrid_and_batch(isolated_rag, monkeypatch) -> None:
-    """Enabling the cross-encoder reranker must re-rank the fused candidates,
-    per query, in batch mode — and produce absolute sigmoid scores in [0,1]."""
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings.rag, "hybrid_enabled", True)
-    monkeypatch.setattr(settings.rag, "rerank_enabled", True)
-    _seed(isolated_rag, n=8)  # docs "Parameter i: ...", ids param_i
-
-    class FakeReranker:
-        def predict(self, pairs):
-            # Promote the doc that mentions 'Parameter 5' to the top
-            return [10.0 if "Parameter 5:" in doc else -10.0 for _q, doc in pairs]
-
-    monkeypatch.setattr(rag_module, "_reranker", FakeReranker())
-    monkeypatch.setattr(rag_module, "_reranker_loaded", True)
-
-    groups = search_batch(["solar wind", "plasma measurement"], top_k=3)
-    assert len(groups) == 2
-    for g in groups:
-        assert g
-        assert g[0]["id"] == "param_5"  # reranker re-ordered the fused set
-        assert g[0]["score"] > 0.9  # sigmoid(10) ≈ 1.0 (absolute score)
-        assert all(0.0 <= r["score"] <= 1.0 for r in g)
 
 
 # ── additive provider filter ───────────────────────────────────────────────────

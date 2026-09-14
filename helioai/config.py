@@ -173,19 +173,18 @@ class RAGConfig:
     Retrieval is hybrid: dense embeddings for descriptions, BM25 for exact tokens
     like `BGSEc`, fused by Reciprocal Rank Fusion with parameter `rrf_k`.
 
-    `rerank_enabled` stays False on purpose. A generic MS MARCO cross-encoder was
-    measured to *degrade* results here: trained on web prose, it discards the
-    dense+sparse consensus that makes exact-code matching work. Only a
-    domain-tuned reranker would help.
+    There is no cross-encoder reranking stage, and that is a measured decision, not
+    an omission: a generic MS MARCO cross-encoder (`ms-marco-MiniLM-L-6-v2`) was tried
+    over the fused candidates and *degraded* results — trained on web prose, it
+    discards the dense+sparse consensus that makes exact-code matching work. The
+    plumbing sat disabled for a year and was removed; only a domain-tuned reranker
+    would be worth adding back.
     """
 
     chroma_dir: Path = field(default_factory=lambda: _DATA / "chroma")
     collection_name: str = "speasy_catalog"
     catalogs_collection_name: str = "speasy_catalogs"
     embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    rerank_enabled: bool = False
-    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    rerank_fetch_k: int = 20
     hybrid_enabled: bool = True
     hybrid_fetch_k: int = 50
     rrf_k: int = 60

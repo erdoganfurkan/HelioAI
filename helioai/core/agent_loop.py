@@ -475,6 +475,7 @@ async def _stream_turn(
                 }
 
                 sub_end_event: dict | None = None
+                sub_role = ""
 
                 try:
                     if tc.name == TASK_TOOL_NAME:
@@ -537,7 +538,7 @@ async def _stream_turn(
                     if tc.name == TASK_TOOL_NAME:
                         sub_end_event = {
                             "task_id": tc.id,
-                            "role": sub_role if "sub_role" in locals() else "",
+                            "role": sub_role,
                             "summary": "",
                             "n_iterations": 0,
                             "error": str(e),

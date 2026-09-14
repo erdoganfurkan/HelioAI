@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -82,6 +83,7 @@ class SessionStore:
         self._db_path = db_path
         self._cache: dict[SessionKey, list[Message]] = {}
         self._lock = threading.Lock()
+        self._turn_locks: dict[SessionKey, asyncio.Lock] = {}
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
@@ -104,6 +106,44 @@ class SessionStore:
             yield conn
         finally:
             conn.close()
+
+    def turn_lock(self, user_id: str, session_id: str) -> asyncio.Lock:
+        """The lock a caller must hold for the whole of one conversational turn.
+
+        `get_or_create` hands every caller the same list, and a turn is a
+        read-modify-write of it that spans several awaits: without this, two turns on
+        one session — two browser tabs, two MCP calls — interleave their appends and
+        `save` persists the mix. `_lock` only serialises the SQL, never the turn.
+
+        One `asyncio.Lock` per key, created on first use. A lock in Python ≥ 3.10 binds
+        to an event loop only on its first *contended* acquisition, so the CLI and the
+        Jupyter magic — a fresh `asyncio.run` per question, never two turns on one
+        session at once — reuse it across loops safely, while the web and MCP servers
+        run one loop. If that assumption ever breaks, asyncio raises a `RuntimeError`
+        naming the loop mismatch instead of silently corrupting anything.
+
+        Args:
+            user_id: Owner of the session.
+            session_id: Session identifier.
+
+        Returns:
+            The same lock object for the same key, for the life of the store.
+        """
+        key: SessionKey = (user_id, session_id)
+        with self._lock:
+            lock = self._turn_locks.get(key)
+            if lock is None:
+                lock = self._turn_locks[key] = asyncio.Lock()
+            return lock
+
+    def is_busy(self, user_id: str, session_id: str) -> bool:
+        """Whether a turn is currently running for this session.
+
+        Read without taking the lock — this is the web layer's fast refusal (409), not
+        a guarantee; the guarantee is `turn_lock` itself.
+        """
+        lock = self._turn_locks.get((user_id, session_id))
+        return bool(lock and lock.locked())
 
     def get_or_create(self, user_id: str, session_id: str) -> list[Message]:
         """Return the cached history for a session, loading it from disk if needed."""
@@ -176,6 +216,7 @@ class SessionStore:
             )
             conn.commit()
         self._cache.pop((user_id, session_id), None)
+        self._turn_locks.pop((user_id, session_id), None)
 
     def set_workspace_dir(self, user_id: str, session_id: str, workspace_dir: str) -> None:
         """Record which workspace directory a session's artifacts live in."""

@@ -109,6 +109,27 @@ def test_chat_stream_events(web_client):
     assert "done" in event_types
 
 
+def test_chat_stream_refuses_a_session_that_is_already_streaming(web_client, monkeypatch):
+    """A second tab on a busy session gets a 409 at once, not a stream that seems hung
+    while it waits for the first turn's lock."""
+    import helioai.interfaces.web.app as web_app
+
+    monkeypatch.setattr(web_app.store, "is_busy", lambda user_id, session_id: True)
+    resp = web_client.post("/chat/stream", json={"message": "hello", "session_id": "busy-session"})
+    assert resp.status_code == 409
+    assert "already streaming" in resp.json()["detail"]
+
+
+def test_chat_stream_proceeds_when_the_session_is_idle(web_client, monkeypatch):
+    import helioai.interfaces.web.app as web_app
+
+    monkeypatch.setattr(web_app.store, "is_busy", lambda user_id, session_id: False)
+    with web_client.stream(
+        "POST", "/chat/stream", json={"message": "hello", "session_id": "idle-session"}
+    ) as resp:
+        assert resp.status_code == 200
+
+
 def test_chat_stream_reply_content(web_client):
     with web_client.stream(
         "POST",

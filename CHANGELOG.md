@@ -25,6 +25,12 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   printed and the next cell kept the configured provider. The choice is now held by
   the magic and handed to the client factory on every cell; `%helioai_provider` with
   no argument shows the current one, and the accepted names come from the factory.
+- **Two turns on one session could corrupt its transcript.** The session store hands
+  every caller the same in-memory history, and nothing stopped two requests — two
+  browser tabs, two MCP calls — from appending to it at once and persisting the
+  interleaved result. A turn now holds a per-session lock from its first read to its
+  last save; the web UI answers `409 Conflict` to a second request instead of leaving a
+  tab that looks hung while it waits.
 
 ## [0.2.1] — 2026-08-14
 

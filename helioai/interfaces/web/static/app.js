@@ -589,7 +589,9 @@ async function sendMessage() {
     });
 
     if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}`);
+      throw new Error(resp.status === 409
+        ? 'a reply is already streaming for this session — wait for it to finish'
+        : `HTTP ${resp.status}`);
     }
 
     const reader = resp.body.getReader();

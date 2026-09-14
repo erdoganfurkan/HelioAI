@@ -140,6 +140,11 @@ async def chat_stream(
     # token still unlocks scope when no users are configured (local dev).
     restricted = not (bool(settings.web_auth.users) or dev_unlock(x_helio_dev_token))
 
+    # stream_chat serialises turns per session with a lock; answering 409 here is
+    # only so a second tab fails fast instead of looking hung while it queues.
+    if store.is_busy(user_id, req.session_id):
+        raise HTTPException(status_code=409, detail="a reply is already streaming for this session")
+
     async def gen():
         llm = None
         try:

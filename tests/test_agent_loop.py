@@ -478,3 +478,39 @@ async def test_empty_llm_turn_is_reported_not_swallowed(monkeypatch, tmp_path):
     message = next(e["data"]["message"] for e in events if e["event"] == "error")
     assert "HELIOAI_MAX_OUTPUT_TOKENS" in message, "the error must name the knob to raise"
     assert kinds[-1] == "done"
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_turns_on_one_session_do_not_interleave(monkeypatch, tmp_path):
+    """Two turns for the same session must run one after the other.
+
+    `store.get_or_create` hands both of them the same in-memory list; without a lock
+    their appends interleave (`user, user, assistant, assistant`) and the whole-list
+    `save` persists whichever ordering won — two browser tabs on one session were
+    enough to corrupt a transcript.
+    """
+    import asyncio
+
+    from helioai.core import agent_loop
+    from helioai.core.llm.base import Message
+    from helioai.core.session import SessionStore
+
+    db_path = tmp_path / "sessions.db"
+    monkeypatch.setattr(agent_loop, "store", SessionStore(db_path))
+
+    class _SlowLLM:
+        async def chat(self, messages, tools, **k):
+            await asyncio.sleep(0.02)
+            asked = next(m.content for m in reversed(messages) if m.role == "user")
+            return Message(role="assistant", content=f"answer to {asked}")
+
+    async def turn(text: str) -> None:
+        async for _ in agent_loop.stream_chat(_SlowLLM(), "web", "s1", text, restricted=False):
+            pass
+
+    await asyncio.gather(turn("first"), turn("second"))
+
+    reloaded = SessionStore(db_path).get_or_create("web", "s1")
+    assert [m.role for m in reloaded] == ["user", "assistant", "user", "assistant"]
+    for question, answer in zip(reloaded[::2], reloaded[1::2], strict=True):
+        assert answer.content == f"answer to {question.content}"

@@ -236,3 +236,27 @@ def test_strip_partial_orphan_keeps_answered() -> None:
     assert len(result) == 2
     assert len(result[0].tool_calls) == 1
     assert result[0].tool_calls[0].id == "tc1"
+
+
+def test_turn_lock_is_one_object_per_session(db: Path) -> None:
+    """The lock only serialises anything if every caller for a key gets the same one."""
+    store = SessionStore(db)
+    assert store.turn_lock("u", "s1") is store.turn_lock("u", "s1")
+    assert store.turn_lock("u", "s1") is not store.turn_lock("u", "s2")
+    assert store.turn_lock("u", "s1") is not store.turn_lock("v", "s1")
+
+
+async def test_is_busy_reflects_a_held_turn_lock(db: Path) -> None:
+    store = SessionStore(db)
+    assert not store.is_busy("u", "s1")
+    async with store.turn_lock("u", "s1"):
+        assert store.is_busy("u", "s1")
+        assert not store.is_busy("u", "s2")
+    assert not store.is_busy("u", "s1")
+
+
+def test_reset_forgets_the_turn_lock(db: Path) -> None:
+    store = SessionStore(db)
+    lock = store.turn_lock("u", "s1")
+    store.reset("u", "s1")
+    assert store.turn_lock("u", "s1") is not lock

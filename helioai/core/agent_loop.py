@@ -337,6 +337,29 @@ async def stream_chat(
         ...     if ev["event"] == "reply":
         ...         print(ev["text"], end="")
     """
+    # One turn at a time per session. The store hands every caller the same history
+    # list; two turns interleaving their appends persisted a corrupted transcript — two
+    # browser tabs on one session were enough. The lock is held for the whole turn, so
+    # a second request waits for the first to finish (the web layer answers 409 instead
+    # of waiting, see app.chat_stream). Closing the inner generator explicitly is what
+    # runs its cleanup now rather than at garbage collection.
+    async with store.turn_lock(user_id, session_id):
+        turn = _stream_turn(llm_client, user_id, session_id, user_text, restricted=restricted)
+        try:
+            async for ev in turn:
+                yield ev
+        finally:
+            await turn.aclose()
+
+
+async def _stream_turn(
+    llm_client: LLMClient,
+    user_id: str,
+    session_id: str,
+    user_text: str,
+    *,
+    restricted: bool = True,
+) -> AsyncIterator[dict]:
     import helioai.workspace as _ws
 
     _ws_token = _ws.set_session(session_id)

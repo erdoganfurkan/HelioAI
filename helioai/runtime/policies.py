@@ -34,6 +34,9 @@ class Policy:
         comment_replies: Whether text the model writes alongside tool calls is shown as
             a `reply`. The lead thinks aloud for the reader; a role's asides are noise
             the lead never sees.
+        stream_replies: Whether the model's text is shown as it is generated
+            (`reply_delta` events, then the usual `reply`). The lead's answer is read by
+            a person waiting for it; a role's goes to the lead, whole.
         stop_on_empty_reply: Whether a response with neither text nor tool calls ends
             the run as a failure. The lead's does — the usual cause is the output budget,
             and the error names the setting to raise; a role's simply ends with an empty
@@ -58,6 +61,7 @@ class Policy:
     sandbox_no_network: bool = False
     sub_agent_ctx: Mapping[str, str] | None = None
     comment_replies: bool = False
+    stream_replies: bool = False
     stop_on_empty_reply: bool = False
     bogus_retry: bool = True
     provider: str | None = None

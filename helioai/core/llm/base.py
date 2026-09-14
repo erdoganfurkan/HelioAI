@@ -6,7 +6,7 @@ import asyncio
 import logging
 import random
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -259,3 +259,33 @@ class LLMClient(ABC):
             The assistant reply, carrying `tool_calls` when the model requested any.
         """
         raise NotImplementedError
+
+    async def stream_chat(
+        self,
+        messages: list[Message],
+        tools: list[ToolDef],
+        system_prompt: str | None = None,
+        tool_choice: str = "auto",
+    ) -> AsyncIterator[str | Message]:
+        """Send one turn and yield the reply's text as it is generated, then the reply.
+
+        The default is `chat()` in one piece: a client with no streaming support yields
+        the finished `Message` and nothing before it, so a caller that streams works
+        unchanged against every provider. Clients that stream yield text deltas (`str`)
+        and end with the same `Message` `chat()` would have returned — same content,
+        same tool calls, same usage.
+
+        Args:
+            messages: Conversation history.
+            tools: Tools the model may call this turn.
+            system_prompt: Instructions placed before the history.
+            tool_choice: As for `chat`. Passed on only when it is not the default, so
+                a client whose `chat` predates the argument still works.
+
+        Yields:
+            Text deltas, then the final `Message`.
+        """
+        kwargs: dict[str, Any] = {"system_prompt": system_prompt}
+        if tool_choice != "auto":
+            kwargs["tool_choice"] = tool_choice
+        yield await self.chat(messages, tools, **kwargs)

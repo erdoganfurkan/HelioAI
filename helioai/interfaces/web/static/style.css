@@ -92,6 +92,7 @@ select:focus { border-color: var(--accent); }
 .msg-user, .msg-ai { max-width: 72%; padding: 12px 16px; border-radius: 12px; line-height: 1.5; word-break: break-word; }
 .msg-user { align-self: flex-end; background: var(--user-bubble); border: 1px solid var(--accent-dim); }
 .msg-ai { align-self: flex-start; background: var(--ai-bubble); border: 1px solid var(--border); }
+.msg-ai-live { white-space: pre-wrap; }
 
 /* Timeline events */
 .tl-event {

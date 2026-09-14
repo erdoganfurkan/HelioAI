@@ -808,3 +808,138 @@ async def test_a_provider_reporting_no_usage_costs_zero_not_a_crash(build):
     reply = await client.chat([Message(role="user", content="hi")], tools=[])
 
     assert (reply.prompt_tokens, reply.completion_tokens, reply.cached_tokens) == (0, 0, 0)
+
+
+# ── streaming ──────────────────────────────────────────────────────────────────
+
+
+def _chunk(content=None, tool_calls=None, finish_reason=None, usage=None):
+    """One OpenAI-shaped stream chunk. tool_calls entries: (index, id, name, arguments)."""
+    frags = [
+        SimpleNamespace(index=i, id=tc_id, function=SimpleNamespace(name=name, arguments=args))
+        for i, tc_id, name, args in (tool_calls or [])
+    ]
+    delta = SimpleNamespace(content=content, tool_calls=frags or None)
+    choices = (
+        [SimpleNamespace(delta=delta, finish_reason=finish_reason)]
+        if (content is not None or frags or finish_reason)
+        else []
+    )
+    return SimpleNamespace(choices=choices, usage=usage)
+
+
+class _Stream:
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._chunks:
+            raise StopAsyncIteration
+        return self._chunks.pop(0)
+
+
+def _streaming_client(chunks):
+    client, fake = _groq_client()
+    fake.completions.response = _Stream(chunks)
+    return client, fake
+
+
+async def _collect(client, tools=()):
+    items = [
+        item
+        async for item in client.stream_chat(
+            [Message(role="user", content="q")], list(tools), system_prompt="be brief"
+        )
+    ]
+    return items[:-1], items[-1]
+
+
+async def test_streaming_yields_text_deltas_then_the_same_message_chat_would_return():
+    usage = SimpleNamespace(
+        prompt_tokens=120,
+        completion_tokens=9,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=40),
+    )
+    client, fake = _streaming_client(
+        [
+            _chunk(content="θ_Bn "),
+            _chunk(content="= 57.5°"),
+            _chunk(finish_reason="stop"),
+            _chunk(usage=usage),
+        ]
+    )
+    deltas, final = await _collect(client)
+    assert deltas == ["θ_Bn ", "= 57.5°"]
+    assert final.role == "assistant" and final.content == "θ_Bn = 57.5°"
+    assert final.tool_calls is None
+    assert (final.prompt_tokens, final.completion_tokens, final.cached_tokens) == (120, 9, 40)
+    sent = fake.calls[-1]
+    assert sent["stream"] is True and sent["stream_options"] == {"include_usage": True}
+    assert sent["messages"][0] == {"role": "system", "content": "be brief"}
+
+
+async def test_streaming_reassembles_tool_call_fragments_by_index():
+    client, _ = _streaming_client(
+        [
+            _chunk(tool_calls=[(0, "call_a", "get_timeseries", '{"param_id": "amda/')]),
+            _chunk(tool_calls=[(1, "call_b", "load_recipe", '{"name": "theta_bn"}')]),
+            _chunk(tool_calls=[(0, None, None, 'imf", "start": "2015-03-17T03:30:00"}')]),
+            _chunk(finish_reason="tool_calls"),
+        ]
+    )
+    deltas, final = await _collect(client)
+    assert deltas == []
+    assert [(tc.id, tc.name) for tc in final.tool_calls] == [
+        ("call_a", "get_timeseries"),
+        ("call_b", "load_recipe"),
+    ]
+    assert final.tool_calls[0].arguments == {"param_id": "amda/imf", "start": "2015-03-17T03:30:00"}
+    assert final.tool_calls[1].arguments == {"name": "theta_bn"}
+
+
+async def test_streaming_holds_back_an_inline_reasoning_block():
+    """A reasoning model thinks inline; the reader must not watch the thinking scroll by,
+    and the final content is stripped exactly as chat() strips it."""
+    client, _ = _streaming_client(
+        [
+            _chunk(content="<think>the shock is"),
+            _chunk(content=" quasi-perp</think>"),
+            _chunk(content="θ_Bn ≈ 60°."),
+            _chunk(finish_reason="stop"),
+        ]
+    )
+    deltas, final = await _collect(client)
+    assert "".join(deltas) == "θ_Bn ≈ 60°."
+    assert "<think>" not in "".join(deltas)
+    assert final.content == "θ_Bn ≈ 60°."
+
+
+async def test_a_streamed_turn_with_nothing_in_it_is_retried_through_chat():
+    client, fake = _streaming_client([_chunk(content=""), _chunk(finish_reason="stop")])
+    retried = _openai_response(content="second try")
+    calls_before = len(fake.calls)
+
+    async def create(**kwargs):
+        fake.calls.append(kwargs)
+        return retried if not kwargs.get("stream") else _Stream([_chunk(finish_reason="stop")])
+
+    fake.completions.create = create
+    deltas, final = await _collect(client)
+    assert final.content == "second try"
+    assert len(fake.calls) == calls_before + 2 and fake.calls[-1].get("stream") is None
+
+
+async def test_a_client_without_streaming_support_yields_the_reply_whole():
+    """The base default: `chat()` in one piece, so every provider works behind a caller
+    that streams."""
+    from helioai.core.llm.base import LLMClient
+
+    class Plain(LLMClient):
+        async def chat(self, messages, tools, system_prompt=None, tool_choice="auto"):
+            return Message(role="assistant", content="whole")
+
+    items = [item async for item in Plain().stream_chat([], [], system_prompt="s")]
+    assert len(items) == 1 and items[0].content == "whole"

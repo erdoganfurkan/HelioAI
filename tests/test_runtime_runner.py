@@ -313,3 +313,58 @@ def test_the_lead_defers_ten_tools_and_the_gain_is_what_was_measured():
 
     assert len(defs) == 21 and len(shown) == 12
     assert size(shown) < 0.62 * size(defs), "the finder must not eat the saving"
+
+
+# ── streaming ─────────────────────────────────────────────────────────────────────
+
+
+class _StreamingLLM(ScriptedLLM):
+    """A scripted model whose text replies arrive in three slices."""
+
+    async def stream_chat(self, messages, tools, system_prompt=None, tool_choice="auto"):
+        reply = await self.chat(
+            messages, tools, system_prompt=system_prompt, tool_choice=tool_choice
+        )
+        if reply.content and not reply.tool_calls:
+            third = max(1, len(reply.content) // 3)
+            for i in range(0, len(reply.content), third):
+                yield reply.content[i : i + third]
+        yield reply
+
+
+async def test_a_streaming_policy_yields_deltas_that_add_up_to_the_reply():
+    llm = _StreamingLLM([assistant_text("θ_Bn = 57.5 deg, quasi-perpendicular.")])
+    events, end = await _drain(
+        Runner(_policy(stream_replies=True), llm), [Message(role="user", content="q")]
+    )
+    deltas = [e for e in events if e["event"] == "reply_delta"]
+    assert len(deltas) >= 3
+    assert "".join(e["data"]["text"] for e in deltas) == end.final_text
+    assert [e["event"] for e in events] == ["reply_delta"] * len(deltas)
+
+
+async def test_a_policy_that_does_not_stream_asks_for_the_reply_whole():
+    llm = _StreamingLLM([assistant_text("whole")])
+    events, end = await _drain(
+        Runner(_policy(stream_replies=False), llm), [Message(role="user", content="q")]
+    )
+    assert events == [] and end.final_text == "whole"
+
+
+async def test_the_lead_streams_its_answer_and_the_journal_keeps_only_the_reply(
+    monkeypatch, tmp_path
+):
+    """Deltas are transient: the journal keeps the `reply` that follows and nothing else,
+    so a replay shows the answer once."""
+    from helioai.core import agent_loop
+    from helioai.core.session import SessionStore
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr(agent_loop, "store", test_store)
+    llm = _StreamingLLM([assistant_text("streamed answer")])
+
+    live = [ev async for ev in agent_loop.stream_chat(llm, "web", "s-stream", "q")]
+    kinds = [e["event"] for e in live]
+    assert kinds.count("reply_delta") >= 3 and kinds.count("reply") == 1
+    journaled = [e["event"] for e in test_store.events("web", "s-stream")]
+    assert "reply_delta" not in journaled and journaled.count("reply") == 1

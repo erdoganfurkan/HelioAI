@@ -124,6 +124,9 @@ def _render_jupyter_event(ev: dict) -> None:
     if name == "user":
         pass  # the cell that asked is right above; journaled for replay
 
+    elif name == "reply_delta":
+        pass  # the notebook renders the whole reply once, as Markdown, on `reply`
+
     elif name == "tool_call":
         detail = data.get("display")
         if detail is None:

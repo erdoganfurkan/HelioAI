@@ -64,6 +64,7 @@ function createView(sid) {
     streaming: false,
     abort: null,
     pendingUser: null,
+    liveReply: null,
   };
   views.set(sid, view);
   return view;
@@ -297,10 +298,23 @@ function renderEvent(view, ev) {
     view.chat.append(box);
     if (isActive(view)) scrollBottom();
 
+  } else if (event === 'reply_delta') {
+    // The answer as it is written: plain text into one live bubble, which the final
+    // `reply` then re-renders as Markdown in place — so a reader watches the answer
+    // arrive and still gets the formatted version, once.
+    if (!view.liveReply) {
+      view.liveReply = el('div', 'msg-ai msg-ai-live');
+      view.chat.append(view.liveReply);
+    }
+    view.liveReply.textContent += data.text || '';
+    if (isActive(view)) scrollBottom();
+
   } else if (event === 'reply') {
-    const bubble = el('div', 'msg-ai');
+    const bubble = view.liveReply || el('div', 'msg-ai');
+    view.liveReply = null;
+    bubble.classList.remove('msg-ai-live');
     bubble.innerHTML = DOMPurify.sanitize(marked.parse(data.text || ''));
-    view.chat.append(bubble);
+    if (!bubble.parentNode) view.chat.append(bubble);
     if (isActive(view)) scrollBottom();
 
   } else if (event === 'done') {
@@ -639,6 +653,7 @@ async function sendMessage() {
   } finally {
     view.abort = null;
     view.pendingUser = null;
+    view.liveReply = null;
     view.streaming = false;
     if (isActive(view)) setStreaming(false);
   }

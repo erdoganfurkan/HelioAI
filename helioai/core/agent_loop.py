@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from helioai.config import settings
-from helioai.core.events import make
+from helioai.core.events import NOT_JOURNALED, make
 from helioai.core.llm.base import LLMClient, Message, ToolCall, ToolDef
 from helioai.core.session import store, strip_orphan_tool_calls
 from helioai.core.skills_loader import SkillError, list_skill_names
@@ -381,7 +381,8 @@ async def stream_chat(
         turn = _stream_turn(llm_client, user_id, session_id, user_text, restricted=restricted)
         try:
             async for ev in turn:
-                store.append_event(user_id, session_id, ev)
+                if ev["event"] not in NOT_JOURNALED:
+                    store.append_event(user_id, session_id, ev)
                 yield ev
         finally:
             await turn.aclose()
@@ -421,6 +422,7 @@ async def _stream_turn(
         tools=tools,
         max_turns=settings.agent.max_iterations,
         comment_replies=True,
+        stream_replies=True,
         stop_on_empty_reply=True,
         deferred=_DEFERRED_TOOLS,
     )

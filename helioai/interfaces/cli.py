@@ -165,6 +165,12 @@ def _capped_output(text: str, pad: str, max_lines: int = 6) -> str:
     return body
 
 
+# The text of the reply printed so far from `reply_delta` events, so the final `reply`
+# prints only what the stream did not — an appended correction — instead of the whole
+# answer a second time.
+_streamed: list[str] = []
+
+
 def _render_event(ev: dict) -> None:
     from helioai.core.event_display import describe_findings
 
@@ -175,8 +181,22 @@ def _render_event(ev: dict) -> None:
     if name == "user":
         pass  # the person who typed the question is looking at it; journaled for replay
 
+    elif name == "reply_delta":
+        if not _streamed:
+            print("\n\033[92m", end="")
+        print(data["text"], end="", flush=True)
+        _streamed.append(data["text"])
+
     elif name == "reply":
-        print(f"\n\033[92m{data['text']}\033[0m\n")
+        streamed = "".join(_streamed)
+        _streamed.clear()
+        text = data["text"]
+        if streamed and text.startswith(streamed):
+            print(f"{text[len(streamed) :]}\033[0m\n")
+        elif streamed:
+            print(f"\033[0m\n\n\033[92m{text}\033[0m\n")
+        else:
+            print(f"\n\033[92m{text}\033[0m\n")
 
     elif name == "tool_call":
         tool = data["name"]

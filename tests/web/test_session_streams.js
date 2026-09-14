@@ -85,6 +85,9 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   //    bubble drawn at send time must not be doubled by it.
   streamA.push(sse({ event: 'user', data: { text: 'Question A' } }));
   streamA.push(sse({ event: 'tool_call', data: { turn: 1, name: 'search_parameters', display: 'q' } }));
+  // The answer streams into one live bubble, which the final reply re-renders in place.
+  streamA.push(sse({ event: 'reply_delta', data: { text: 'Answer' } }));
+  streamA.push(sse({ event: 'reply_delta', data: { text: ' A' } }));
   streamA.push(sse({ event: 'reply', data: { text: 'Answer A' } }));
   streamA.push(sse({ event: 'done', data: { n_iterations: 1 } }));
   streamA.close();
@@ -102,6 +105,8 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   assert.equal(chatArea.querySelectorAll('.msg-user').filter(e => e.textContent === 'Question A').length, 1,
     'the journaled user event confirms the bubble already drawn, it does not add one');
   assert.ok(chatArea.textContent.includes('Answer A'), 'A shows the answer that streamed in the background');
+  assert.equal(chatArea.querySelectorAll('.msg-ai').length, 1, 'deltas and the final reply share one bubble');
+  assert.equal(chatArea.querySelectorAll('.msg-ai-live').length, 0, 'the live bubble is finalised on reply');
   assert.ok(document.getElementById('ad-body').textContent.includes('search_parameters'), 'A keeps its activity');
   assert.equal(fetchLog.slice(fetchesBefore).filter(f => f.url.startsWith('/api/sessions/')).length, 0,
     'a session already held in memory is not refetched');

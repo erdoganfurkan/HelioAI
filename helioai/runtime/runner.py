@@ -163,7 +163,13 @@ class Runner:
         for i in range(policy.max_turns):
             turn = self.turns = i + 1
             history[:] = strip_orphan_tool_calls(history)
-            response = await self._call_model(history, turn, first=(i == 0))
+            response: Message | None = None
+            async for item in self._model_turn(history, turn, first=(i == 0)):
+                if isinstance(item, Message):
+                    response = item
+                else:
+                    yield make("reply_delta", text=item, **extra)
+            assert response is not None
             history.append(response)
 
             if not response.tool_calls:
@@ -266,7 +272,10 @@ class Runner:
                 )
         yield self._end(None, capped=True)
 
-    async def _call_model(self, history: list[Message], turn: int, *, first: bool) -> Message:
+    async def _model_turn(
+        self, history: list[Message], turn: int, *, first: bool
+    ) -> AsyncIterator[str | Message]:
+        """One model call: text deltas when the policy streams, then the reply."""
         policy = self.policy
         log.info("llm_call_start", agent=policy.name, turn=turn, n_messages=len(history))
         t0 = time.monotonic()
@@ -275,7 +284,19 @@ class Runner:
         # exactly as the lead always did; a role asks for a tool on its first turn.
         if policy.tool_choice_first != "auto":
             kwargs["tool_choice"] = policy.tool_choice_first if first else "auto"
-        response = await self.llm.chat(compact_history(history), self.visible_tools(), **kwargs)
+        payload, tools = compact_history(history), self.visible_tools()
+        # A duck-typed client without `stream_chat` is a client that does not stream.
+        stream = getattr(self.llm, "stream_chat", None) if policy.stream_replies else None
+        if stream is not None:
+            response = None
+            async for item in stream(payload, tools, **kwargs):
+                if isinstance(item, Message):
+                    response = item
+                elif item:
+                    yield item
+            assert response is not None, "stream_chat must end with the reply"
+        else:
+            response = await self.llm.chat(payload, tools, **kwargs)
         log.info(
             "llm_call_end",
             agent=policy.name,
@@ -289,7 +310,7 @@ class Runner:
         self.usage["n_calls"] += 1
         if self.on_llm_call is not None:
             self.on_llm_call(turn, response)
-        return response
+        yield response
 
     def visible_tools(self) -> list[ToolDef]:
         """The definitions the model is shown this call: the policy's tools minus the

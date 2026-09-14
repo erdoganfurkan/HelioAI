@@ -26,6 +26,9 @@ KINDS: dict[str, tuple[str, ...]] = {
     # from its journal alone; the CLI and the notebook leave it unrendered — the person
     # who typed it is looking at it.
     "user": ("text",),
+    # A slice of the reply as the model writes it; the full `reply` still follows, so
+    # renderers that ignore deltas lose nothing. Not journaled: the `reply` is.
+    "reply_delta": ("text",),
     "reply": ("text",),
     "tool_call": ("turn", "name", "arguments", "display"),
     "tool_result": ("turn", "name", "summary", "display"),
@@ -54,8 +57,11 @@ ARTIFACT_KINDS: dict[str, tuple[str, ...]] = {
 
 # Kinds the lead emits and a sub-agent never does, and the reverse.
 LEAD_ONLY: frozenset[str] = frozenset(
-    {"user", "reply", "plan", "provenance", "sub_agent_start", "error", "done"}
+    {"user", "reply_delta", "reply", "plan", "provenance", "sub_agent_start", "error", "done"}
 )
+
+# Kinds the journal leaves out: transient by nature, and fully covered by another kind.
+NOT_JOURNALED: frozenset[str] = frozenset({"reply_delta"})
 
 # Artifact kinds an interface may leave unrendered on purpose. `exports` is recorded
 # in the provenance ledger and shown through `findings`, not as a card of its own.

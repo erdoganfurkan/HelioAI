@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import AsyncIterator
 from typing import Any
 
 from openai import AsyncOpenAI, BadRequestError
@@ -169,28 +170,43 @@ def from_openai_response(response: Any, provider: str = "openai") -> Message:
             )
         return Message(role="assistant", content=content, **usage)
 
-    tool_calls: list[ToolCall] = []
-    for tc in tool_calls_raw:
-        try:
-            args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-        except json.JSONDecodeError as e:
-            # `finish_reason="length"` next to unparseable arguments is not "the model
-            # emits bad JSON" — it is OUR output budget slicing a valid call mid-string.
-            # The two need different fixes (raise max_output_tokens vs distrust the
-            # model), and a log line that cannot tell them apart cost an hour of
-            # diagnosis on a run where six 12k-char run_python calls all "lost" their code.
-            log.warning(
-                "%s tool_call %s args unparseable (finish_reason=%s, %d chars, %s): %r",
-                provider,
-                tc.function.name,
-                finish_reason,
-                len(tc.function.arguments or ""),
-                "output budget truncated the call" if finish_reason == "length" else e,
-                (tc.function.arguments or "")[:200],
-            )
-            args = {}
-        tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
+    tool_calls = [
+        _parse_tool_call(tc.id, tc.function.name, tc.function.arguments, finish_reason, provider)
+        for tc in tool_calls_raw
+    ]
     return Message(role="assistant", content=content, tool_calls=tool_calls, **usage)
+
+
+def _parse_tool_call(
+    call_id: str, name: str, arguments: str | None, finish_reason: str | None, provider: str
+) -> ToolCall:
+    try:
+        args = json.loads(arguments) if arguments else {}
+    except json.JSONDecodeError as e:
+        # `finish_reason="length"` next to unparseable arguments is not "the model
+        # emits bad JSON" — it is OUR output budget slicing a valid call mid-string.
+        # The two need different fixes (raise max_output_tokens vs distrust the
+        # model), and a log line that cannot tell them apart cost an hour of
+        # diagnosis on a run where six 12k-char run_python calls all "lost" their code.
+        log.warning(
+            "%s tool_call %s args unparseable (finish_reason=%s, %d chars, %s): %r",
+            provider,
+            name,
+            finish_reason,
+            len(arguments or ""),
+            "output budget truncated the call" if finish_reason == "length" else e,
+            (arguments or "")[:200],
+        )
+        args = {}
+    return ToolCall(id=call_id, name=name, arguments=args)
+
+
+def _visible_so_far(raw: str) -> str:
+    """The part of a streamed reply a reader may see: everything but an inline reasoning
+    block, including one that has opened and not closed yet."""
+    if "<think>" in raw and "</think>" not in raw:
+        return raw[: raw.index("<think>")]
+    return _strip_reasoning(raw)
 
 
 class OpenAICompatClient(LLMClient):
@@ -265,6 +281,30 @@ class OpenAICompatClient(LLMClient):
         Returns:
             The assistant reply, carrying `tool_calls` when the model requested any.
         """
+        kwargs = self._request(messages, tools, system_prompt, tool_choice)
+        response = await self._create(kwargs, tool_choice)
+        reply = from_openai_response(response, self._provider)
+        if not (reply.content or "").strip() and not reply.tool_calls:
+            # A turn with neither text nor a tool call is not an answer, and on a
+            # reasoning model it is not rare either: the whole output allowance can go
+            # into hidden reasoning and leave nothing to emit. It is also transient —
+            # the identical request, replayed, came back with two tool calls in half
+            # the wall time. The loop above treats this as fatal and abandons the
+            # question, so two acts of a six-act notebook were lost to a condition that
+            # one more attempt clears. Retried once, not in a loop: if the second is
+            # empty too, the caller's error is the honest outcome.
+            log.warning("%s empty turn, retrying once: %s", self._provider, self._model)
+            response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
+            reply = from_openai_response(response, self._provider)
+        return reply
+
+    def _request(
+        self,
+        messages: list[Message],
+        tools: list[ToolDef],
+        system_prompt: str | None,
+        tool_choice: str,
+    ) -> dict:
         openai_messages: list[dict] = []
         if system_prompt:
             openai_messages.append({"role": self._system_role, "content": system_prompt})
@@ -280,9 +320,11 @@ class OpenAICompatClient(LLMClient):
         if tools:
             kwargs["tools"] = to_openai_tools(tools)
             kwargs["tool_choice"] = tool_choice
+        return kwargs
 
+    async def _create(self, kwargs: dict, tool_choice: str) -> Any:
         try:
-            response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
+            return await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
         except BadRequestError as e:
             # Forcing a tool call is a preference, never worth losing the turn over.
             # DeepSeek v4 in thinking mode rejects `required` outright ("Thinking mode
@@ -293,19 +335,94 @@ class OpenAICompatClient(LLMClient):
                 raise
             log.warning("tool_choice_rejected_falling_back_to_auto: %s", self._model)
             kwargs["tool_choice"] = "auto"
-            response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
+            return await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
 
-        reply = from_openai_response(response, self._provider)
-        if not (reply.content or "").strip() and not reply.tool_calls:
-            # A turn with neither text nor a tool call is not an answer, and on a
-            # reasoning model it is not rare either: the whole output allowance can go
-            # into hidden reasoning and leave nothing to emit. It is also transient —
-            # the identical request, replayed, came back with two tool calls in half
-            # the wall time. The loop above treats this as fatal and abandons the
-            # question, so two acts of a six-act notebook were lost to a condition that
-            # one more attempt clears. Retried once, not in a loop: if the second is
-            # empty too, the caller's error is the honest outcome.
-            log.warning("%s empty turn, retrying once: %s", self._provider, self._model)
-            response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
-            reply = from_openai_response(response, self._provider)
-        return reply
+    async def stream_chat(
+        self,
+        messages: list[Message],
+        tools: list[ToolDef],
+        system_prompt: str | None = None,
+        tool_choice: str = "auto",
+    ) -> AsyncIterator[str | Message]:
+        """Send one chat turn, yielding the reply's text as it arrives, then the reply.
+
+        Text deltas are yielded as the provider sends them, with an inline
+        `<think>` block held back until it closes. Tool-call fragments are
+        reassembled by index and parsed exactly as `chat()` parses a finished call;
+        the usage comes from the final chunk (`stream_options.include_usage`). An
+        endpoint that rejects the streaming request falls back to `chat()`, and a
+        streamed turn that ends with neither text nor a tool call is retried once
+        through `chat()`, as `chat()` retries its own.
+
+        Args:
+            messages: Conversation history.
+            tools: Tools the model may call.
+            system_prompt: Instructions prepended as the first message.
+            tool_choice: `auto` to let the model decide, `required` to force a call.
+
+        Yields:
+            Text deltas, then the final `Message`.
+        """
+        kwargs = self._request(messages, tools, system_prompt, tool_choice)
+        kwargs["stream"] = True
+        kwargs["stream_options"] = {"include_usage": True}
+        try:
+            stream = await self._create(kwargs, tool_choice)
+        except BadRequestError as e:
+            if "stream" not in str(e).lower():
+                raise
+            log.warning("%s rejected streaming, falling back to chat(): %s", self._provider, e)
+            yield await self.chat(messages, tools, system_prompt, tool_choice)
+            return
+
+        raw = ""
+        sent = 0
+        calls: dict[int, dict] = {}
+        usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0}
+        finish_reason = None
+        async for chunk in stream:
+            if getattr(chunk, "usage", None):
+                usage = _usage(chunk)
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            choice = choices[0]
+            finish_reason = getattr(choice, "finish_reason", None) or finish_reason
+            delta = getattr(choice, "delta", None)
+            if delta is None:
+                continue
+            if getattr(delta, "content", None):
+                raw += delta.content
+                visible = _visible_so_far(raw)
+                if len(visible) > sent:
+                    yield visible[sent:]
+                    sent = len(visible)
+            for frag in getattr(delta, "tool_calls", None) or []:
+                slot = calls.setdefault(
+                    getattr(frag, "index", 0) or 0, {"id": None, "name": None, "arguments": ""}
+                )
+                if getattr(frag, "id", None):
+                    slot["id"] = frag.id
+                fn = getattr(frag, "function", None)
+                if fn is not None:
+                    if getattr(fn, "name", None):
+                        slot["name"] = fn.name
+                    if getattr(fn, "arguments", None):
+                        slot["arguments"] += fn.arguments
+
+        content = _strip_reasoning(raw)
+        tool_calls = [
+            _parse_tool_call(
+                c["id"] or f"call_{i}",
+                c["name"] or "",
+                c["arguments"],
+                finish_reason,
+                self._provider,
+            )
+            for i, c in sorted(calls.items())
+        ]
+        if not content.strip() and not tool_calls:
+            log.warning("%s empty streamed turn, retrying once: %s", self._provider, self._model)
+            yield await self.chat(messages, tools, system_prompt, tool_choice)
+            return
+        yield Message(role="assistant", content=content, tool_calls=tool_calls or None, **usage)

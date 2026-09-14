@@ -227,3 +227,26 @@ def test_sub_agent_end_lists_the_measured_values(capsys):
         },
     )
     assert "theta_bn_deg = 47.3 deg" in out
+
+
+def test_a_streamed_reply_is_printed_once_with_only_the_appended_correction_after(capsys):
+    """Deltas print as they arrive; the final `reply` must not print the answer a second
+    time — only what the stream did not carry, such as an appended id correction."""
+    from helioai.interfaces import cli
+
+    cli._render_event({"event": "reply_delta", "data": {"text": "θ_Bn = "}})
+    cli._render_event({"event": "reply_delta", "data": {"text": "57.5°"}})
+    cli._render_event({"event": "reply", "data": {"text": "θ_Bn = 57.5°\n\n⚠️ note"}})
+    out = capsys.readouterr().out
+    assert out.count("θ_Bn = 57.5°") == 1
+    assert "⚠️ note" in out
+    assert cli._streamed == []
+
+
+def test_a_reply_that_diverges_from_its_stream_is_printed_whole(capsys):
+    from helioai.interfaces import cli
+
+    cli._render_event({"event": "reply_delta", "data": {"text": "first draft"}})
+    cli._render_event({"event": "reply", "data": {"text": "a different final answer"}})
+    out = capsys.readouterr().out
+    assert "first draft" in out and "a different final answer" in out

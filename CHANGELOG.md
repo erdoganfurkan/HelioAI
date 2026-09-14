@@ -126,6 +126,14 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   budget, whether the first turn must call a tool. The two public generators are thin
   wrappers around it and every interface sees exactly the events it saw, in the same
   order — the loop tests and the journal golden did not change.
+- **The answer streams.** The lead's text is shown as the model writes it — token by
+  token in the CLI and in the browser, where a live bubble is re-rendered as Markdown
+  once the reply is complete; the notebook keeps rendering the finished answer. Every
+  OpenAI-compatible provider (Groq, OpenCode, Ollama, Azure) streams; Gemini and any
+  client without streaming support hand the reply over whole, so nothing breaks behind
+  a caller that streams. An inline `<think>` block is held back until it closes. The
+  deltas are not journaled — the `reply` that follows is — so a replay shows the answer
+  once. Sub-agents do not stream: their text goes to the lead, whole.
 - **Fewer tool definitions per model call.** Twenty-one tool schemas — about 3 800
   tokens — rode on every call of a lead turn. The six plasma-physics tools and the four
   catalog tools are used in a minority of sessions; their definitions are now withheld

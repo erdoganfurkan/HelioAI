@@ -64,12 +64,22 @@ def _show_history() -> None:
     if not summaries:
         print("No sessions found.")
         return
-    print(f"{'Session':<10}  {'Updated':<16}  {'Msgs':>4}  First message")
-    print("-" * 72)
+    print(f"{'Session':<10}  {'Updated':<16}  {'Msgs':>4}  {'Tokens':>7}  First message")
+    print("-" * 80)
     for s in summaries:
         sid = s["session_id"][:8]
         ts = s["updated_at"][:16].replace("T", " ")
-        print(f"{sid:<10}  {ts:<16}  {s['n_messages']:>4}  {s['first_message']}")
+        tokens = _fmt_tokens(s.get("tokens", 0))
+        print(f"{sid:<10}  {ts:<16}  {s['n_messages']:>4}  {tokens:>7}  {s['first_message']}")
+
+
+def _fmt_tokens(n: int) -> str:
+    """`12.3k` rather than `12345`: a column, not a bill."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n) if n else "-"
 
 
 def _pick_session() -> str | None:

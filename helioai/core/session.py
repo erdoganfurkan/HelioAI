@@ -45,6 +45,21 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_session_seq
     ON messages(user_id, session_id, seq);
+
+CREATE TABLE IF NOT EXISTS usage (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           TEXT NOT NULL,
+    session_id        TEXT NOT NULL,
+    recorded_at       REAL NOT NULL DEFAULT (julianday('now')),
+    turn              INTEGER,
+    agent             TEXT NOT NULL DEFAULT 'lead',
+    provider          TEXT NOT NULL DEFAULT '',
+    prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cached_tokens     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_user_time ON usage(user_id, recorded_at);
 """
 
 # Additive only, each one tried on its own: a column that already exists raises and
@@ -235,11 +250,102 @@ class SessionStore:
             )
             conn.commit()
 
+    def record_usage(
+        self,
+        user_id: str,
+        session_id: str,
+        *,
+        turn: int | None,
+        agent: str,
+        provider: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cached_tokens: int = 0,
+    ) -> None:
+        """Append what one LLM call cost, as the provider reported it.
+
+        The counts have ridden on `Message` since 0.2.x and were dropped at save time,
+        so a session reloaded from disk reported no cost and nothing could say what a
+        user had spent. Kept apart from `messages` on purpose: one row per call, never
+        rewritten by `save`, so a compacted or reset history does not erase the bill.
+        Zero counts are skipped — a provider that reports none leaves no row rather
+        than a misleading zero.
+
+        Args:
+            user_id: Owner of the session.
+            session_id: The conversation the call belonged to; a sub-agent's calls
+                are charged to its parent session.
+            turn: Turn index within the run, for ordering.
+            agent: `"lead"` or the sub-agent role.
+            provider: Provider name, since a session may switch providers.
+            prompt_tokens: Input tokens billed.
+            completion_tokens: Output tokens billed.
+            cached_tokens: The part of the prompt served from the provider's cache.
+        """
+        if not (prompt_tokens or completion_tokens):
+            return
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "INSERT INTO usage(user_id, session_id, turn, agent, provider, "
+                "prompt_tokens, completion_tokens, cached_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    user_id,
+                    session_id,
+                    turn,
+                    agent,
+                    provider,
+                    int(prompt_tokens),
+                    int(completion_tokens),
+                    int(cached_tokens),
+                ),
+            )
+            conn.commit()
+
+    def usage_totals(
+        self, user_id: str, session_id: str | None = None, since_days: float | None = None
+    ) -> dict:
+        """Sum a user's token usage, optionally for one session or a recent window.
+
+        Args:
+            user_id: Whose usage.
+            session_id: Restrict to one session; None for every session.
+            since_days: Only calls in the last N days; None for all time.
+
+        Returns:
+            `{"prompt_tokens", "completion_tokens", "cached_tokens", "n_calls"}`, zeros
+            when nothing was recorded.
+        """
+        clauses = ["user_id = ?"]
+        params: list = [user_id]
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if since_days is not None:
+            clauses.append("recorded_at >= julianday('now') - ?")
+            params.append(float(since_days))
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), "
+                "COALESCE(SUM(cached_tokens), 0), COUNT(*) FROM usage WHERE "
+                + " AND ".join(clauses),
+                params,
+            ).fetchone()
+        return {
+            "prompt_tokens": int(row[0]),
+            "completion_tokens": int(row[1]),
+            "cached_tokens": int(row[2]),
+            "n_calls": int(row[3]),
+        }
+
     def reset(self, user_id: str, session_id: str) -> None:
-        """Delete a session and its messages, and drop it from the cache."""
+        """Delete a session, its messages and its usage rows, and drop it from the cache."""
         with self._lock, self._connect() as conn:
             conn.execute(
                 "DELETE FROM sessions WHERE user_id = ? AND session_id = ?",
+                (user_id, session_id),
+            )
+            conn.execute(
+                "DELETE FROM usage WHERE user_id = ? AND session_id = ?",
                 (user_id, session_id),
             )
             conn.commit()
@@ -292,8 +398,8 @@ class SessionStore:
             limit: Maximum number of sessions to return.
 
         Returns:
-            Dicts with session_id, updated_at, first_message, n_messages and
-            workspace_dir, most recent first.
+            Dicts with session_id, updated_at, first_message, n_messages,
+            workspace_dir and tokens (prompt + completion, all calls), most recent first.
         """
         from datetime import datetime
 
@@ -306,7 +412,9 @@ class SessionStore:
                           ORDER BY seq LIMIT 1) AS first_user,
                        (SELECT COUNT(*) FROM messages WHERE user_id = s.user_id
                           AND session_id = s.session_id) AS n_messages,
-                       s.workspace_dir
+                       s.workspace_dir,
+                       (SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM usage
+                          WHERE user_id = s.user_id AND session_id = s.session_id) AS tokens
                 FROM sessions s
                 WHERE s.user_id = ?
                 ORDER BY s.updated_at DESC, s.rowid DESC LIMIT ?
@@ -314,7 +422,7 @@ class SessionStore:
                 (user_id, limit),
             ).fetchall()
         out: list[dict] = []
-        for session_id, jd, first_user, n_messages, workspace_dir in rows:
+        for session_id, jd, first_user, n_messages, workspace_dir, tokens in rows:
             preview = (first_user or "").strip().replace("\n", " ")
             if len(preview) > 80:
                 preview = preview[:77] + "..."
@@ -327,6 +435,7 @@ class SessionStore:
                     "n_messages": n_messages,
                     "updated_at": iso,
                     "workspace_dir": workspace_dir,
+                    "tokens": int(tokens),
                 }
             )
         return out

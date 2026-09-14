@@ -29,7 +29,7 @@ KINDS: dict[str, tuple[str, ...]] = {
     "invalid_ids": ("ids",),
     "recipe_bypassed": ("recipes",),
     "sub_agent_start": ("task_id", "role", "description"),
-    "sub_agent_end": ("task_id", "role", "summary", "n_iterations", "error", "findings"),
+    "sub_agent_end": ("task_id", "role", "summary", "n_iterations", "error", "findings", "usage"),
     "error": ("message",),
     "done": ("n_iterations",),
 }

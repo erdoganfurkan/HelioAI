@@ -397,6 +397,16 @@ async def _stream_turn(
                 duration_ms=int((time.monotonic() - t0) * 1000),
                 has_tool_calls=bool(response.tool_calls),
             )
+            store.record_usage(
+                user_id,
+                session_id,
+                turn=turn,
+                agent="lead",
+                provider=settings.llm.provider,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                cached_tokens=response.cached_tokens,
+            )
             history.append(response)
 
             if not response.tool_calls:
@@ -508,6 +518,17 @@ async def _stream_turn(
                                 # values the run actually measured, and the interfaces
                                 # had no other way to show it — the prose summary is
                                 # the model's account, the findings are the evidence.
+                                usage = end_data.get("usage") or {}
+                                store.record_usage(
+                                    user_id,
+                                    session_id,
+                                    turn=turn,
+                                    agent=sub_role or "sub_agent",
+                                    provider=settings.llm.provider,
+                                    prompt_tokens=usage.get("prompt_tokens", 0),
+                                    completion_tokens=usage.get("completion_tokens", 0),
+                                    cached_tokens=usage.get("cached_tokens", 0),
+                                )
                                 sub_end_event = {
                                     "task_id": tc.id,
                                     "role": sub_role,
@@ -515,6 +536,7 @@ async def _stream_turn(
                                     "n_iterations": end_data.get("n_iterations", 0),
                                     "error": end_data.get("error"),
                                     "findings": end_data.get("findings", {}),
+                                    "usage": usage,
                                 }
                             else:
                                 yield sub_ev

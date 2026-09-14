@@ -219,6 +219,28 @@ async def chat_stream(
     )
 
 
+@app.get("/api/me")
+async def me(user_id: str = Depends(require_user)) -> dict:
+    """Who the caller is and what they have spent.
+
+    The first thing a per-user quota needs is a number to compare against; until now
+    nothing summed the token counts the providers report. Totals for today (UTC-ish:
+    the last 24 h), the last 30 days and all time.
+
+    Returns:
+        `{"user_id", "usage": {"day", "month", "total"}}` — each a dict of
+        prompt/completion/cached tokens and call count.
+    """
+    return {
+        "user_id": user_id,
+        "usage": {
+            "day": store.usage_totals(user_id, since_days=1),
+            "month": store.usage_totals(user_id, since_days=30),
+            "total": store.usage_totals(user_id),
+        },
+    }
+
+
 @app.get("/api/sessions")
 async def list_sessions(user_id: str = Depends(require_user)) -> list:
     """List the calling user's sessions, most recent first.

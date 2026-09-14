@@ -572,3 +572,74 @@ async def test_sub_agent_end_reemitted_by_the_lead_keeps_the_findings(monkeypatc
     assert len(ends) == 1
     assert ends[0]["findings"] == findings
     assert ends[0]["summary"] == "theta_Bn by coplanarity"
+
+
+@pytest.mark.asyncio
+async def test_lead_and_sub_agent_usage_is_charged_to_the_session(monkeypatch, tmp_path):
+    """The providers' token counts rode on Message and were dropped at save. Every lead
+    call is now a usage row, and a sub-agent's calls are reported on sub_agent_end and
+    charged to the parent session under the role."""
+    from helioai.core import agent_loop
+    from helioai.core.llm.base import Message, ToolCall
+    from helioai.core.session import SessionStore
+
+    store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr(agent_loop, "store", store)
+
+    async def fake_subagent(**kwargs):
+        yield {
+            "event": "sub_agent_end",
+            "data": {
+                "task_id": kwargs["task_id"],
+                "role": kwargs["role"],
+                "findings": {},
+                "summary": "done",
+                "n_iterations": 2,
+                "error": None,
+                "artifacts": [],
+                "usage": {
+                    "prompt_tokens": 3000,
+                    "completion_tokens": 400,
+                    "cached_tokens": 0,
+                    "n_calls": 2,
+                },
+            },
+        }
+
+    monkeypatch.setattr(agent_loop, "stream_subagent", fake_subagent)
+    responses = [
+        Message(
+            role="assistant",
+            tool_calls=[
+                ToolCall(
+                    id="t1",
+                    name="task",
+                    arguments={"agent_role": "data_analyst", "description": "x"},
+                )
+            ],
+            prompt_tokens=1000,
+            completion_tokens=50,
+        ),
+        Message(
+            role="assistant",
+            content="answer",
+            prompt_tokens=1200,
+            completion_tokens=80,
+            cached_tokens=900,
+        ),
+    ]
+
+    class _LLM:
+        async def chat(self, messages, tools, **k):
+            return responses.pop(0)
+
+    async for _ in agent_loop.stream_chat(_LLM(), "web", "s1", "go", restricted=False):
+        pass
+
+    totals = store.usage_totals("web", "s1")
+    assert totals == {
+        "prompt_tokens": 5200,
+        "completion_tokens": 530,
+        "cached_tokens": 900,
+        "n_calls": 3,
+    }

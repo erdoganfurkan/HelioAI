@@ -372,6 +372,9 @@ async def stream_subagent(
     artifacts: list[dict] = []
     n_iters = 0
     started: dict = {}
+    # What this run cost, summed over its LLM calls. Reported on sub_agent_end rather
+    # than written here: a sub-agent persists nothing, the lead owns the session.
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "n_calls": 0}
     try:
         system_prompt, skills_loaded = _build_system_prompt(role_cfg)
         for skill_name in skills_loaded:
@@ -400,6 +403,10 @@ async def stream_subagent(
             response = await llm_client.chat(
                 compact_history(history), tools, system_prompt=system_prompt, tool_choice=tc_choice
             )
+            usage["prompt_tokens"] += response.prompt_tokens
+            usage["completion_tokens"] += response.completion_tokens
+            usage["cached_tokens"] += response.cached_tokens
+            usage["n_calls"] += 1
             history.append(response)
 
             if not response.tool_calls:
@@ -517,6 +524,7 @@ async def stream_subagent(
                 "n_iterations": n_iters,
                 "error": final_text if capped else None,
                 "artifacts": artifacts,
+                "usage": usage,
             },
         }
 
@@ -532,6 +540,7 @@ async def stream_subagent(
                 "n_iterations": n_iters,
                 "error": str(e),
                 "artifacts": [],
+                "usage": usage,
             },
         }
 

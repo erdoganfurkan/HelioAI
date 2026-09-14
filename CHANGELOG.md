@@ -121,6 +121,13 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   the emitters, the CLI, the notebook magic and the browser to that list, so a kind
   added to a loop and forgotten in one interface — or documented and never emitted —
   fails in CI. Three docstrings used to carry their own, disagreeing copies.
+- **Token usage is kept.** Every provider reports what a call cost and every count was
+  dropped at save time, so nothing could say what a session — or a user — had spent.
+  Each lead call is now a row in a `usage` table (turn, agent, provider, prompt /
+  completion / cached tokens); a sub-agent reports its total on `sub_agent_end` and is
+  charged to the parent session under its role. `helioai history` shows a tokens column,
+  `GET /api/me` returns the caller's totals for the day, the month and all time — the
+  number a per-user quota compares against.
 
 ### Removed
 

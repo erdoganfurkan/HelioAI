@@ -981,3 +981,15 @@ def test_loopback_bind_never_needs_users(monkeypatch):
     monkeypatch.setattr(settings.web_auth, "allow_unauthenticated_public", False)
     for host in ("127.0.0.1", "localhost", "::1"):
         refuse_unauthenticated_public_bind(host)
+
+
+def test_api_me_reports_the_callers_usage(web_client):
+    import helioai.interfaces.web.app as web_app
+
+    web_app.store.record_usage(
+        "web", "s", turn=1, agent="lead", provider="groq", prompt_tokens=100, completion_tokens=20
+    )
+    body = web_client.get("/api/me").json()
+    assert body["user_id"] == "web"
+    assert body["usage"]["total"]["prompt_tokens"] == 100
+    assert body["usage"]["day"]["n_calls"] == 1

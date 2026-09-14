@@ -96,7 +96,14 @@ def test_cli_renders_only_figures_for_now():
 def test_the_sub_agent_end_the_lead_reemits_carries_every_contract_key():
     """The re-emitted event used to drop `findings`; the contract now names it."""
     src = (ROOT / "core" / "agent_loop.py").read_text(encoding="utf-8")
-    block = src[src.index("sub_end_event = {") : src.index("}", src.index("sub_end_event = {"))]
+    start = src.index("sub_end_event = {")
+    depth, end = 0, src.index("{", start)
+    for pos in range(end, len(src)):
+        depth += {"{": 1, "}": -1}.get(src[pos], 0)
+        if depth == 0:
+            end = pos
+            break
+    block = src[start:end]
     for key in events.KINDS["sub_agent_end"]:
         assert f'"{key}"' in block, f"the lead's sub_agent_end lacks {key!r}"
 

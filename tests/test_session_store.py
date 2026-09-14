@@ -338,3 +338,95 @@ def test_save_on_a_fresh_store_does_not_deadlock(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "sessions.db")
     store.save("u", "s", [Message(role="user", content="hi")])
     assert SessionStore(tmp_path / "sessions.db").get_or_create("u", "s")[0].content == "hi"
+
+
+# ── usage: what the providers report, finally kept ────────────────────────────
+
+
+def test_usage_is_recorded_per_call_and_summed(db: Path) -> None:
+    store = SessionStore(db)
+    store.record_usage(
+        "u", "s1", turn=1, agent="lead", provider="groq", prompt_tokens=1000, completion_tokens=200
+    )
+    store.record_usage(
+        "u",
+        "s1",
+        turn=1,
+        agent="data_analyst",
+        provider="groq",
+        prompt_tokens=3000,
+        completion_tokens=500,
+        cached_tokens=800,
+    )
+    store.record_usage(
+        "u", "s2", turn=1, agent="lead", provider="groq", prompt_tokens=10, completion_tokens=1
+    )
+    store.record_usage(
+        "v", "s1", turn=1, agent="lead", provider="groq", prompt_tokens=99, completion_tokens=99
+    )
+
+    assert store.usage_totals("u", "s1") == {
+        "prompt_tokens": 4000,
+        "completion_tokens": 700,
+        "cached_tokens": 800,
+        "n_calls": 2,
+    }
+    assert store.usage_totals("u")["n_calls"] == 3
+    assert store.usage_totals("v")["prompt_tokens"] == 99
+    assert store.usage_totals("nobody") == {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "cached_tokens": 0,
+        "n_calls": 0,
+    }
+
+
+def test_zero_usage_leaves_no_row(db: Path) -> None:
+    """A provider that reports nothing must not look like a free call."""
+    store = SessionStore(db)
+    store.record_usage(
+        "u", "s", turn=1, agent="lead", provider="ollama", prompt_tokens=0, completion_tokens=0
+    )
+    assert store.usage_totals("u")["n_calls"] == 0
+
+
+def test_usage_survives_a_history_save_and_dies_with_a_reset(db: Path) -> None:
+    store = SessionStore(db)
+    store.record_usage(
+        "u", "s", turn=1, agent="lead", provider="groq", prompt_tokens=5, completion_tokens=5
+    )
+    store.save("u", "s", [Message(role="user", content="hi")])
+    assert store.usage_totals("u", "s")["n_calls"] == 1
+    store.reset("u", "s")
+    assert store.usage_totals("u", "s")["n_calls"] == 0
+
+
+def test_list_summaries_carries_the_session_tokens(db: Path) -> None:
+    store = SessionStore(db)
+    store.save("u", "s", [Message(role="user", content="q")])
+    store.record_usage(
+        "u", "s", turn=1, agent="lead", provider="groq", prompt_tokens=700, completion_tokens=300
+    )
+    assert store.list_summaries("u")[0]["tokens"] == 1000
+
+
+def test_a_database_without_the_usage_table_gains_it_on_open(db: Path) -> None:
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (user_id TEXT NOT NULL, session_id TEXT NOT NULL,
+            created_at REAL NOT NULL DEFAULT (julianday('now')),
+            updated_at REAL NOT NULL DEFAULT (julianday('now')),
+            workspace_dir TEXT, PRIMARY KEY (user_id, session_id));
+        CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '', tool_calls TEXT, tool_call_id TEXT);
+        """
+    )
+    conn.commit()
+    conn.close()
+    store = SessionStore(db)
+    store.record_usage(
+        "u", "s", turn=1, agent="lead", provider="groq", prompt_tokens=1, completion_tokens=1
+    )
+    assert store.usage_totals("u")["n_calls"] == 1

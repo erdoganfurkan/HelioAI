@@ -22,6 +22,10 @@ try:
     import plasmapy, plasmapy.formulary
 except Exception:
     pass
+try:
+    import geopack, geopack.geopack
+except Exception:
+    pass
 """
 
 

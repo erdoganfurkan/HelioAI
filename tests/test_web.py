@@ -390,11 +390,17 @@ def test_factory_unknown_provider():
         build_llm_client("unknown_provider_xyz")
 
 
-def test_factory_default_returns_client():
-    """Factory with no override returns a valid LLMClient instance."""
-    from helioai.core.llm.base import LLMClient
-    from helioai.core.llm.factory import build_llm_client
+def test_factory_default_returns_client(monkeypatch):
+    """Factory with no override returns a client for the configured provider.
 
+    Pinned to ollama, the one provider that needs no key: with the default (azure)
+    this test only passed when a `.env` or CI-injected key happened to be present,
+    so the documented `python -m pytest` failed on a clean clone.
+    """
+    from helioai.core.llm.base import LLMClient
+    from helioai.core.llm.factory import build_llm_client, settings
+
+    monkeypatch.setattr(settings.llm, "provider", "ollama")
     client = build_llm_client()
     assert isinstance(client, LLMClient)
 

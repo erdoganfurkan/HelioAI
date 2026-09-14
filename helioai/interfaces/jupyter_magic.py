@@ -97,7 +97,7 @@ def _run_async(coro):
         return pool.submit(asyncio.run, coro).result()
 
 
-def _get_llm():
+def _get_llm(provider: str | None = None):
     """Build a fresh client for this cell.
 
     Deliberately not cached. `_run_async` gives every cell its own event loop via
@@ -111,7 +111,7 @@ def _get_llm():
     """
     from helioai.core.llm.factory import build_llm_client
 
-    return build_llm_client()
+    return build_llm_client(provider)
 
 
 def _render_jupyter_event(ev: dict) -> None:
@@ -225,6 +225,14 @@ def _render_jupyter_event(ev: dict) -> None:
 class HelioAIMagics(Magics):
     """IPython magics exposing the agent inside a notebook."""
 
+    def __init__(self, shell=None, **kwargs) -> None:
+        super().__init__(shell, **kwargs)
+        # The provider chosen with %helioai_provider, None until the user picks one.
+        # Held on the instance and passed to the factory explicitly — the web UI does
+        # the same with its request field. Writing HELIOAI_LLM_PROVIDER into the
+        # environment, as this used to, changed nothing: settings reads it once, at import.
+        self._provider: str | None = None
+
     @cell_magic
     def helioai(self, line: str, cell: str) -> None:
         """`%%helioai` — send a natural-language query to the agent.
@@ -245,7 +253,7 @@ class HelioAIMagics(Magics):
         setup_logging("WARNING")
 
         async def _run():
-            llm = _get_llm()
+            llm = _get_llm(self._provider)
             try:
                 async for ev in stream_chat(
                     llm, _USER_ID, _SESSION_ID, cell.strip(), restricted=_dev_restricted
@@ -311,14 +319,26 @@ class HelioAIMagics(Magics):
 
     @line_magic
     def helioai_provider(self, line: str) -> None:
-        """`%helioai_provider [name]` — show or switch the LLM provider."""
-        provider = line.strip().lower()
-        if provider not in ("groq", "gemini", "azure", "opencode", "ollama"):
-            print(f"Unknown provider {provider!r}. Use: groq | gemini | azure | opencode | ollama")
-            return
-        import os
+        """`%helioai_provider [name]` — show or switch the LLM provider for the next cells.
 
-        os.environ["HELIOAI_LLM_PROVIDER"] = provider
+        The choice lives on this magics instance, so it lasts for the kernel and is
+        handed to `build_llm_client` on every cell. The provider names come from the
+        factory rather than a list kept here, which is how ollama went missing once.
+        """
+        from helioai.config import settings
+        from helioai.core.llm.factory import OPENAI_COMPAT
+
+        known = ["azure", "gemini", *OPENAI_COMPAT]
+        provider = line.strip().lower()
+        if not provider:
+            print(
+                f"Provider: {self._provider or settings.llm.provider!r}. Known: {' | '.join(known)}"
+            )
+            return
+        if provider not in known:
+            print(f"Unknown provider {provider!r}. Use: {' | '.join(known)}")
+            return
+        self._provider = provider
         print(f"Provider switched to {provider!r}.")
 
     @line_magic

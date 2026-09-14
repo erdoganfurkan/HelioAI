@@ -71,19 +71,75 @@ def test_session_unknown_command(capsys):
 # --- %helioai_provider ---
 
 
-def test_provider_valid_switches_llm(monkeypatch, capsys):
-    """Switching sets the env var; the next cell picks it up when it builds.
+def _run_cell_and_capture_provider(magic, monkeypatch) -> list:
+    """Run one `%%helioai` cell with the loop and the LLM factory stubbed out; return
+    the `provider` arguments the factory received."""
+    import helioai.interfaces.jupyter_magic as jm
 
-    This used to also assert that the cached `_llm` was cleared. There is no
-    cache any more — see `test_get_llm_is_never_cached_across_cells`.
+    built: list = []
+
+    def fake_build_llm_client(provider=None):
+        built.append(provider)
+        client = MagicMock()
+
+        async def aclose():
+            return None
+
+        client.aclose = aclose
+        return client
+
+    async def fake_stream_chat(llm, user_id, session_id, text, *, restricted=True):
+        yield {"event": "done", "data": {"n_iterations": 0}}
+
+    monkeypatch.setattr("helioai.core.llm.factory.build_llm_client", fake_build_llm_client)
+    monkeypatch.setattr("helioai.core.agent_loop.stream_chat", fake_stream_chat)
+    monkeypatch.setattr(jm, "setup_logging", lambda *a, **k: None, raising=False)
+    magic.helioai("", "plot IMF Bz")
+    return built
+
+
+def test_provider_switch_is_what_the_next_cell_builds(monkeypatch, capsys):
+    """`%helioai_provider gemini` must change the client the next cell is built with.
+
+    It used to set `HELIOAI_LLM_PROVIDER` in the environment — which `settings`
+    reads exactly once, at import — so the switch printed a confirmation and changed
+    nothing. The old test asserted the environment variable and so passed with the
+    bug in place.
     """
+    magic = _make_magic()
+    magic.helioai_provider("gemini")
+    assert "gemini" in capsys.readouterr().out
+
+    built = _run_cell_and_capture_provider(magic, monkeypatch)
+    assert built == ["gemini"]
+
+
+def test_provider_unset_lets_the_factory_use_the_configured_default(monkeypatch):
+    built = _run_cell_and_capture_provider(_make_magic(), monkeypatch)
+    assert built == [None]
+
+
+def test_provider_switch_does_not_touch_the_environment(monkeypatch):
     import os
 
-    monkeypatch.setenv("HELIOAI_LLM_PROVIDER", "azure")
+    monkeypatch.delenv("HELIOAI_LLM_PROVIDER", raising=False)
     _make_magic().helioai_provider("gemini")
+    assert "HELIOAI_LLM_PROVIDER" not in os.environ
 
-    assert os.environ.get("HELIOAI_LLM_PROVIDER") == "gemini"
-    assert "gemini" in capsys.readouterr().out
+
+def test_provider_without_argument_shows_the_current_one(capsys):
+    from helioai.config import settings
+
+    magic = _make_magic()
+    magic.helioai_provider("")
+    out = capsys.readouterr().out
+    assert settings.llm.provider in out
+    assert "Unknown provider" not in out
+
+    magic.helioai_provider("groq")
+    capsys.readouterr()
+    magic.helioai_provider("")
+    assert "groq" in capsys.readouterr().out
 
 
 def test_provider_accepts_ollama(capsys):
@@ -93,9 +149,13 @@ def test_provider_accepts_ollama(capsys):
     assert "Unknown provider" not in capsys.readouterr().out
 
 
-def test_provider_invalid(capsys):
-    _make_magic().helioai_provider("openai")
+def test_provider_invalid_keeps_the_previous_choice(capsys):
+    magic = _make_magic()
+    magic.helioai_provider("groq")
+    capsys.readouterr()
+    magic.helioai_provider("openai")
     assert "Unknown provider" in capsys.readouterr().out
+    assert magic._provider == "groq"
 
 
 # --- %helioai_history ---

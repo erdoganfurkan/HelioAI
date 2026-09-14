@@ -20,6 +20,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   was not. The registration tests now check that every schema default, `required`
   list and public parameter agrees with the function it describes, so the two cannot
   drift apart again.
+- **`%helioai_provider` did nothing.** It wrote `HELIOAI_LLM_PROVIDER` into the
+  environment, which `settings` reads exactly once, at import — so the confirmation
+  printed and the next cell kept the configured provider. The choice is now held by
+  the magic and handed to the client factory on every cell; `%helioai_provider` with
+  no argument shows the current one, and the accepted names come from the factory.
 
 ## [0.2.1] — 2026-08-14
 

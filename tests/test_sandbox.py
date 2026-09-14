@@ -642,7 +642,16 @@ export('fill_blanked', magnitude(np.array([[1e31, 1e31, 1e31]])))
     assert ex["fill_blanked"]["n_finite"] == 0, "1e31 fill must not become a magnitude"
 
 
-def test_a_fresh_sandbox_home_gets_the_hosts_speasy_inventory(tmp_path, monkeypatch):
+def _host_inventory(monkeypatch, tmp_path, files: dict[str, bytes]) -> Path:
+    src = tmp_path / "host" / "speasy"
+    for rel, content in files.items():
+        (src / rel).parent.mkdir(parents=True, exist_ok=True)
+        (src / rel).write_bytes(content)
+    monkeypatch.setattr(sandbox, "_host_speasy_inventory", lambda: src)
+    return src
+
+
+def test_a_users_first_run_copies_the_hosts_speasy_inventory_once(tmp_path, monkeypatch):
     """Regression: a session could burn every run_python without executing user code.
 
     The sandbox hands each session a new HOME, so speasy found no inventory and
@@ -650,49 +659,79 @@ def test_a_fresh_sandbox_home_gets_the_hosts_speasy_inventory(tmp_path, monkeypa
     the index stayed incomplete, so the next spawn started over. Five run_python calls
     were lost to it in one Act, including a bare `print("hello")` at 30 s.
     """
-    from helioai.tools.sandbox import _seed_speasy_inventory
+    from helioai.workspace import user_home
 
-    host = tmp_path / "host"
-    (host / "speasy" / "index").mkdir(parents=True)
-    (host / "speasy" / "index" / "cache.db").write_text("inventory", encoding="utf-8")
-    monkeypatch.setenv("XDG_DATA_HOME", str(host))
+    _host_inventory(monkeypatch, tmp_path, {"index/cache.db": b"inventory"})
 
-    home = tmp_path / "session"
-    home.mkdir()
-    _seed_speasy_inventory(str(home))
+    seed = sandbox._user_speasy_seed("alice")
 
-    assert (home / ".local" / "share" / "speasy" / "index" / "cache.db").read_text(
-        encoding="utf-8"
-    ) == "inventory"
+    assert seed == user_home("alice") / ".speasy"
+    assert (seed / "index" / "cache.db").read_bytes() == b"inventory"
+    assert not list(seed.parent.glob(".speasy.*")), "staging directory left behind"
 
 
-def test_seeding_never_overwrites_an_inventory_the_session_already_built(tmp_path, monkeypatch):
-    """The session's own index is the fresher one; clobbering it would lose its warm state."""
-    from helioai.tools.sandbox import _seed_speasy_inventory
+def test_two_sessions_of_one_user_share_the_seed_and_no_session_holds_a_copy(tmp_path, monkeypatch):
+    """269 MB per session was the cost of copying per session; the seed lives beside the
+    workspaces, never inside one, so an export never ships it and the TTL never has to."""
+    from helioai.workspace import user_home
 
-    host = tmp_path / "host"
-    (host / "speasy").mkdir(parents=True)
-    (host / "speasy" / "cache.db").write_text("host", encoding="utf-8")
-    monkeypatch.setenv("XDG_DATA_HOME", str(host))
+    _host_inventory(monkeypatch, tmp_path, {"index/cache.db": b"inventory"})
 
-    home = tmp_path / "session"
-    own = home / ".local" / "share" / "speasy"
+    first = sandbox._user_speasy_seed("alice")
+    (first / "index" / "warm.db").write_bytes(b"warmed by session one")
+    second = sandbox._user_speasy_seed("alice")
+
+    assert second == first
+    assert (second / "index" / "warm.db").read_bytes() == b"warmed by session one"
+    assert not first.is_relative_to(user_home("alice") / "workspace")
+    assert sandbox._user_speasy_seed("bob") != first
+
+
+def test_seeding_never_overwrites_a_seed_the_user_already_has(tmp_path, monkeypatch):
+    """The user's own index is the fresher one; clobbering it would lose its warm state."""
+    from helioai.workspace import user_home
+
+    _host_inventory(monkeypatch, tmp_path, {"cache.db": b"host"})
+    own = user_home("alice") / ".speasy"
     own.mkdir(parents=True)
-    (own / "cache.db").write_text("session", encoding="utf-8")
+    (own / "cache.db").write_bytes(b"user")
 
-    _seed_speasy_inventory(str(home))
-    assert (own / "cache.db").read_text(encoding="utf-8") == "session"
+    assert sandbox._user_speasy_seed("alice") == own
+    assert (own / "cache.db").read_bytes() == b"user"
 
 
 def test_seeding_is_silent_when_the_host_has_no_inventory(tmp_path, monkeypatch):
     """No host inventory is the fresh-install case: pay the rebuild, never raise."""
-    from helioai.tools.sandbox import _seed_speasy_inventory
+    from helioai.workspace import user_home
 
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "nothing-here"))
-    home = tmp_path / "session"
-    home.mkdir()
-    _seed_speasy_inventory(str(home))  # must not raise
-    assert not (home / ".local" / "share" / "speasy").exists()
+    monkeypatch.setattr(sandbox, "_host_speasy_inventory", lambda: tmp_path / "nothing-here")
+
+    assert sandbox._user_speasy_seed("alice") is None
+    assert not (user_home("alice") / ".speasy").exists()
+
+
+def test_the_seed_is_bound_after_the_data_tmpfs_and_the_workspace(tmp_path, monkeypatch):
+    """`--tmpfs data_dir` masks everything under data/, and the seed lives there; the
+    workspace bind re-exposes the session directory the seed is mounted into. Either
+    one placed later would hide the seed, and speasy would rebuild its inventory in
+    the session — the 2026-08-12 lesson, in mount order."""
+    from helioai.config import settings
+
+    monkeypatch.setattr(sandbox, "_bwrap_works", lambda: True)
+    plot_dir = str(tmp_path / "users" / "alice" / "workspace" / "s1")
+    seed = str(tmp_path / "users" / "alice" / ".speasy")
+
+    cmd = sandbox._build_sandbox_cmd(plot_dir, "print(1)", speasy_seed=seed)
+
+    target = os.path.join(plot_dir, ".local", "share", "speasy")
+    seed_idx = cmd.index(seed)
+    assert cmd[seed_idx - 1] == "--bind"
+    assert cmd[seed_idx + 1] == target
+    data_tmpfs_idx = cmd.index(str(settings.data_dir))
+    assert cmd[data_tmpfs_idx - 1] == "--tmpfs"
+    assert data_tmpfs_idx < cmd.index(plot_dir) < seed_idx < cmd.index("--chdir")
+
+    assert seed not in sandbox._build_sandbox_cmd(plot_dir, "print(1)")
 
 
 async def test_speasy_is_not_imported_until_it_is_used() -> None:
@@ -894,21 +933,18 @@ def test_seed_skips_the_read_only_download_caches(tmp_path, monkeypatch):
     Copying everything cost 706 MB per spawn against 95 MB for the index, and the
     homes are never deleted — fourteen of them filled a 149 GB disk in fifty minutes.
     """
-    import helioai.tools.sandbox as sb
+    _host_inventory(
+        monkeypatch,
+        tmp_path,
+        {
+            "index/9b/cache.val": b"x" * 2048,
+            "cda_inventory/masters_cdf/aim_cips.cdf": b"y" * 4096,
+            "index.diskcache.backup/old.val": b"z" * 4096,
+        },
+    )
 
-    src = tmp_path / "xdg" / "speasy"
-    (src / "index" / "9b").mkdir(parents=True)
-    (src / "index" / "9b" / "cache.val").write_bytes(b"x" * 2048)
-    (src / "cda_inventory" / "masters_cdf").mkdir(parents=True)
-    (src / "cda_inventory" / "masters_cdf" / "aim_cips.cdf").write_bytes(b"y" * 4096)
-    (src / "index.diskcache.backup").mkdir()
-    (src / "index.diskcache.backup" / "old.val").write_bytes(b"z" * 4096)
+    seeded = sandbox._user_speasy_seed("alice")
 
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
-    home = tmp_path / "sandbox_home"
-    sb._seed_speasy_inventory(str(home))
-
-    seeded = home / ".local" / "share" / "speasy"
     assert (seeded / "index" / "9b" / "cache.val").read_bytes() == b"x" * 2048
     assert not (seeded / "cda_inventory").exists()
     assert not (seeded / "index.diskcache.backup").exists()

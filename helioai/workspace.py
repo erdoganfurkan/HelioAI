@@ -284,9 +284,12 @@ def is_under_workspace(path: str | Path) -> bool:
 def cleanup_old_runs(ttl_seconds: int | None = None) -> int:
     """Purge session directories older than the TTL, for every user.
 
-    Called on CLI startup, so a machine that runs the agent regularly never
-    accumulates workspaces. Removal failures are ignored rather than raised:
-    housekeeping must not stop a user from asking a question.
+    Called on CLI startup, when the notebook magic loads and when the MCP server
+    starts, and every hour by `cleanup_periodically` under the web server — the one
+    process that never restarts, and so never reached this until it did. Removal
+    failures are ignored rather than raised: housekeeping must not stop a user from
+    asking a question. A user's home (profile, catalogs, speasy seed) is never touched;
+    only what is under `workspace/`.
 
     Args:
         ttl_seconds: Age above which a session directory is deleted, measured on
@@ -313,3 +316,29 @@ def cleanup_old_runs(ttl_seconds: int | None = None) -> int:
                 shutil.rmtree(session_dir, ignore_errors=True)
                 removed += 1
     return removed
+
+
+async def cleanup_periodically(period_seconds: float = 3600.0) -> None:
+    """Run `cleanup_old_runs` every `period_seconds` until the task is cancelled.
+
+    The web server used to clean up once, at startup, and then run for weeks: a demo
+    machine had 76 session directories of 269 MB each, every one of them past the
+    TTL. The sweep runs in a worker thread so a slow disk never stalls a stream, and
+    a failing sweep is logged and retried at the next tick rather than ending the task.
+
+    Args:
+        period_seconds: Time between sweeps; the first sweep happens after one period,
+            since the caller already swept at startup.
+    """
+    import asyncio
+
+    from helioai.logging_config import get_logger
+
+    while True:
+        await asyncio.sleep(period_seconds)
+        try:
+            removed = await asyncio.to_thread(cleanup_old_runs)
+            if removed:
+                get_logger(__name__).info("workspace_cleanup", removed=removed)
+        except Exception:
+            get_logger(__name__).warning("workspace_cleanup_failed", exc_info=True)

@@ -6,6 +6,7 @@ Figures from the sandbox are served via /figure?path=<abs_path>.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import shutil
@@ -80,9 +81,14 @@ def _owns_path(user_id: str, path: str) -> bool:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     from helioai.tools.mcp_client import discover_and_register
+    from helioai.workspace import cleanup_periodically
 
     await discover_and_register()
-    yield
+    janitor = asyncio.create_task(cleanup_periodically())
+    try:
+        yield
+    finally:
+        janitor.cancel()
 
 
 app = FastAPI(title="HelioAI", docs_url=None, redoc_url=None, lifespan=_lifespan)

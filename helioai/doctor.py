@@ -14,7 +14,6 @@ smoke test and a bug report both want.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -147,7 +146,9 @@ def check_sandbox() -> Check:
 
 
 def check_speasy_inventory() -> Check:
-    base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "speasy"
+    from helioai.tools.sandbox import _host_speasy_inventory
+
+    base = _host_speasy_inventory()
     if not base.is_dir():
         return Check("speasy inventory", WARN, f"{base} absent — first import will build it")
     return Check(

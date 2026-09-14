@@ -92,3 +92,51 @@ def test_migrate_storage_idempotent(_data_dir, monkeypatch):
     # rerun: no crash, no duplication
     _run_migrate_storage()
     assert (_data_dir / "users" / "web" / "catalogs" / "icmes.json").exists()
+
+
+async def test_periodic_cleanup_sweeps_on_every_tick_and_survives_a_failing_sweep(monkeypatch):
+    """The web server swept once at startup and then ran for weeks; a demo machine held
+    76 expired sessions of 269 MB each. The sweep must also outlive its own errors."""
+    import asyncio
+
+    import helioai.workspace as ws
+
+    calls: list[int] = []
+
+    def flaky_cleanup():
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise OSError("disk went away")
+        return 2
+
+    monkeypatch.setattr(ws, "cleanup_old_runs", flaky_cleanup)
+    task = asyncio.create_task(ws.cleanup_periodically(period_seconds=0.01))
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if len(calls) >= 3:
+            break
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(calls) >= 3
+
+
+def test_notebook_and_mcp_sweep_expired_sessions_on_load(monkeypatch):
+    """The CLI swept at startup; a notebook kernel and the MCP server never did."""
+    from unittest.mock import MagicMock
+
+    import helioai.mcp_server as ms
+    import helioai.workspace as ws
+    from helioai.interfaces.jupyter_magic import load_ipython_extension
+
+    swept: list[str] = []
+    monkeypatch.setattr(ws, "cleanup_old_runs", lambda: swept.append("swept") or 0)
+
+    load_ipython_extension(MagicMock())
+    assert swept == ["swept"]
+
+    monkeypatch.setattr(ms, "serve_http", lambda host, port: None)
+    monkeypatch.setattr(ms.sys, "argv", ["helioai-mcp", "--http"])
+    ms.main()
+    assert swept == ["swept", "swept"]

@@ -108,6 +108,13 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   stream and, with it, the tool call — but only a timeout used to kill the subprocess, so
   the bubblewrap tree kept running until its own 300 s ceiling, one orphan per abandoned
   question. Cancellation now kills the whole process group before propagating.
+- **A session no longer costs 300 MB of disk before its first line of code runs.** The
+  speasy inventory the sandbox needs was copied into *every* session directory (269 MB
+  on the demo machine, 304 MB here, 76 sessions deep); it is now copied once per user, to
+  `users/<user>/.speasy/`, and bind-mounted into each sandbox. A new session weighs
+  200 KB. The seed sits beside the workspaces, never inside one, so an export never
+  ships it. Expired workspaces are also swept hourly by the web server and when the
+  notebook magic or the MCP server loads, not only at CLI startup.
 
 ### Added
 

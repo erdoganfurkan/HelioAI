@@ -95,7 +95,7 @@ _SENSITIVE_HOME_PATHS = frozenset(
     }
 )
 
-# Subtrees of speasy's data directory NOT worth copying into every sandbox home.
+# Subtrees of speasy's data directory NOT worth copying into a user's seed.
 # `cda_inventory/masters_cdf` is a read-only download cache of CDAWeb master CDFs
 # (548 MB on the host that surfaced this) which only `spz.get_data()` inside the
 # sandbox would touch — and every prompt tells the model to use `load_data()` instead.
@@ -135,7 +135,7 @@ def _sandbox_env(home: str = "/tmp") -> dict[str, str]:
     # rebuild the font cache on every single run.
     env["MPLCONFIGDIR"] = os.path.join(home, ".cache", "matplotlib")
     # Keeping the inventory fresh is the host's job, not the sandbox's. The copy seeded
-    # by `_seed_speasy_inventory` is only ever as old as the host's own, which speasy
+    # by `_user_speasy_seed` is only ever as old as the host's own, which speasy
     # refreshes on its usual cycle outside here; letting each spawn re-validate it over
     # the network instead costs a round trip per run (11 s against 5 s measured) and
     # buys nothing, since every session starts from that same copy.
@@ -143,43 +143,65 @@ def _sandbox_env(home: str = "/tmp") -> dict[str, str]:
     return env
 
 
-def _seed_speasy_inventory(home: str) -> None:
-    """Give a fresh sandbox home the speasy inventory the host already built.
+def _host_speasy_inventory() -> Path:
+    """Where the host's own speasy inventory lives — the source every seed is copied from.
+
+    A function rather than a constant so the test suite can point it at nothing: the
+    suite must never copy the developer's inventory (300 MB under the VS Code snap) into
+    each temporary data directory it creates, which is what filled `/tmp` with 11 GB.
+    """
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share", "speasy")
+
+
+def _user_speasy_seed(user: str) -> Path | None:
+    """One speasy inventory per user, bind-mounted into every session sandbox.
 
     The sandbox hands every session a new HOME, so `XDG_DATA_HOME` is new too, so
-    `import speasy` finds no inventory and rebuilds it — 35 MB fetched from the
-    providers, well past the default run timeout. The spawn is then SIGKILLed
-    mid-build, the index stays incomplete, and the next spawn starts over: a session
-    can burn every one of its `run_python` calls without executing a line of user
-    code. A `print("hello")` timing out at 30 s is what this looks like from outside.
+    `import speasy` finds no inventory and rebuilds it — 35 MB fetched from the providers,
+    well past the default run timeout. The spawn is SIGKILLed mid-build, the index stays
+    incomplete, the next spawn starts over: a `print("hello")` timing out at 30 s is what
+    this looks like from outside. The fix was to copy the host's inventory in — and a copy
+    per *session* cost 269 MB each (304 MB here), 76 sessions deep on one disk, nothing
+    ever reclaiming them before the workspace TTL.
 
-    Copying is deliberate rather than sharing one directory across sessions: the
-    index is a diskcache SQLite that the sandbox must be able to write, and under
-    bwrap only the session's own directory is really on disk (`data_dir` is masked by
-    a tmpfs). A copy needs no new bind mount and no cross-session locking.
+    The copy is now made once per user, at `users/<user>/.speasy/`, outside every session
+    directory (so never inside an export) and bind-mounted read-write into the sandbox at
+    the path speasy expects. Two sessions of one user share the SQLite index; diskcache
+    serialises them with its own busy timeout, a cost accepted against 269 MB a session.
+    Only what the sandbox must be able to WRITE is copied — see `_SEED_SKIP`.
 
-    Only what the sandbox must be able to WRITE is copied — see `_SEED_SKIP`. Copying
-    the whole tree cost 706 MB per spawn on a host where speasy's data directory had
-    grown, against 95 MB for the index alone, and nothing deletes those homes: fourteen
-    of them filled a 149 GB disk in fifty minutes. The size was invisible from the code
-    because `XDG_DATA_HOME` decides which tree is read — under the VS Code snap it
-    points at `~/snap/code/<rev>/.local/share`, not `~/.local/share`, and that copy held
-    548 MB of CDAWeb master CDFs accumulated over months.
-
-    Best-effort by construction — no host inventory, no permission, no space, and the
+    The copy lands in a staging directory renamed into place, so a concurrent first run
+    never sees a half-built seed; when the rename loses the race, the other copy wins.
+    Best-effort by construction: no host inventory, no permission, no space, and the
     session simply pays the rebuild as before. It must never be the reason a run fails.
-    """
-    src = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share", "speasy")
-    dst = Path(home, ".local", "share", "speasy")
-    if dst.exists() or not src.is_dir():
-        return
-    try:
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*_SEED_SKIP))
-    except (OSError, shutil.Error) as e:
-        from helioai.logging_config import get_logger
 
-        get_logger(__name__).debug("speasy_inventory_not_seeded", src=str(src), error=str(e))
+    Args:
+        user: Owner of the seed, as `workspace.current_user()` names them.
+
+    Returns:
+        The seed directory, or None when there is nothing to bind.
+    """
+    from helioai.workspace import user_home
+
+    seed = user_home(user) / ".speasy"
+    if seed.is_dir():
+        return seed
+    src = _host_speasy_inventory()
+    if not src.is_dir():
+        return None
+    staging = seed.with_name(f".speasy.{os.getpid()}.staging")
+    try:
+        seed.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, staging, ignore=shutil.ignore_patterns(*_SEED_SKIP))
+        os.rename(staging, seed)
+    except (OSError, shutil.Error) as e:
+        shutil.rmtree(staging, ignore_errors=True)
+        if not seed.is_dir():
+            from helioai.logging_config import get_logger
+
+            get_logger(__name__).debug("speasy_seed_not_built", src=str(src), error=str(e))
+            return None
+    return seed
 
 
 def _kill_proc_tree(proc: asyncio.subprocess.Process) -> None:
@@ -204,11 +226,14 @@ def _kill_proc_tree(proc: asyncio.subprocess.Process) -> None:
 _BWARP = shutil.which("bwrap")
 
 
+@lru_cache(maxsize=1)
 def _bwrap_works() -> bool:
     """Check that bubblewrap can actually set up a namespace on this host.
 
     `shutil.which` finds the binary but the kernel may not allow user
-    namespaces (Debian default, Docker seccomp profiles, etc.).
+    namespaces (Debian default, Docker seccomp profiles, etc.). Probed once per
+    process: the answer is a property of the host, and `run_python` asks twice per
+    run — once to decide whether a seed is needed, once to build the command.
     """
     if not _BWARP or sys.platform != "linux":
         return False
@@ -223,13 +248,23 @@ def _bwrap_works() -> bool:
         return False
 
 
-def _build_sandbox_cmd(plot_dir: str, full_code: str, no_net: bool = False) -> list[str]:
+def _build_sandbox_cmd(
+    plot_dir: str, full_code: str, no_net: bool = False, speasy_seed: str | None = None
+) -> list[str]:
     """Build the sandbox execution command.
 
     Prefers bubblewrap (bwrap) for PID-namespace isolation — prevents the
     sandbox from reading /proc/<server-pid>/environ even when the server and
     sandbox share the same host UID. Falls back to plain python + preexec_fn
     when bwrap is not functional (local dev, restrictive seccomp profiles).
+
+    Args:
+        plot_dir: The session workspace, the one directory the sandbox may write.
+        full_code: The assembled script (preamble, user code, postamble).
+        no_net: Add `--unshare-net`; only honoured under bwrap.
+        speasy_seed: The user's speasy inventory (`_user_speasy_seed`), bound at the
+            path speasy reads inside the sandbox HOME. Mounted after the `data_dir`
+            tmpfs and the workspace bind, both of which would otherwise mask it.
     """
     if _bwrap_works():
         from helioai.config import _ROOT, settings
@@ -276,6 +311,8 @@ def _build_sandbox_cmd(plot_dir: str, full_code: str, no_net: bool = False) -> l
         # Re-bind THIS session's workspace writable LAST, so no earlier tmpfs
         # (/tmp or data/) can mask it — plot_dir may live under either.
         cmd += ["--bind", plot_dir, plot_dir]
+        if speasy_seed:
+            cmd += ["--bind", speasy_seed, os.path.join(plot_dir, ".local", "share", "speasy")]
         # Start IN the workspace. Without this the cwd is inherited from the server,
         # which is the repo root under --ro-bind / /, so `open("out.py", "w")` failed
         # with EROFS — the standalone-script export in examples/02 could not write
@@ -835,12 +872,21 @@ async def run_python(
         plot_dir_line + _SANDBOX_PREAMBLE + textwrap.dedent(code) + "\n" + _SANDBOX_POSTAMBLE
     )
 
-    cmd = _build_sandbox_cmd(plot_dir, full_code, no_net=_no_net)
+    speasy_seed: Path | None = None
+    if _bwrap_works():
+        from helioai.workspace import current_user
+
+        speasy_seed = await asyncio.to_thread(_user_speasy_seed, current_user())
+    cmd = _build_sandbox_cmd(
+        plot_dir,
+        full_code,
+        no_net=_no_net,
+        speasy_seed=str(speasy_seed) if speasy_seed else None,
+    )
     using_bwrap = cmd[0].endswith("bwrap") if cmd else False
 
     try:
         if using_bwrap:
-            _seed_speasy_inventory(plot_dir)
             sandbox_env = _sandbox_env(home=plot_dir)
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

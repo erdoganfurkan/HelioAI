@@ -453,8 +453,14 @@ class HelioAIMagics(Magics):
 def load_ipython_extension(ipython: Any) -> None:
     """Register the HelioAI magics. Called by `%load_ext`.
 
+    Also sweeps expired session workspaces: a notebook kernel is the one HelioAI
+    process the CLI's startup sweep never runs in.
+
     Args:
         ipython: The active InteractiveShell, supplied by IPython itself. This
             hook name and signature are IPython's contract, not ours.
     """
+    from helioai.workspace import cleanup_old_runs
+
     ipython.register_magics(HelioAIMagics)
+    cleanup_old_runs()

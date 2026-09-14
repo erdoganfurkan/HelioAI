@@ -411,6 +411,9 @@ def main() -> None:
         helioai-mcp --http --port 8765     # streamable HTTP on 127.0.0.1:8765
     """
     setup_logging("WARNING")
+    from helioai.workspace import cleanup_old_runs
+
+    cleanup_old_runs()
     args = sys.argv[1:]
     if "--http" in args:
         host = _arg(args, "--host", "127.0.0.1")

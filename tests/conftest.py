@@ -86,6 +86,7 @@ def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     from helioai.config import settings
     from helioai.core import session
+    from helioai.tools import sandbox
 
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(settings.rag, "chroma_dir", tmp_path / "chroma")
@@ -95,6 +96,9 @@ def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(session.store, "_schema_ready", False)
     monkeypatch.setattr(session.store, "_cache", {})
     monkeypatch.setattr(session.store, "_turn_locks", {})
+    # The developer's inventory is 300 MB under the VS Code snap; copied into each
+    # test's data directory it filled /tmp with 11 GB. Seeding has its own tests.
+    monkeypatch.setattr(sandbox, "_host_speasy_inventory", lambda: tmp_path / "no-host-inventory")
     return tmp_path
 
 

@@ -328,7 +328,9 @@ async def stream_chat(
 
     Yields:
         Dicts with an `"event"` key and a `"data"` payload — every kind listed in
-        `core/events.py`; the turn ends with `done`.
+        `core/events.py`; the turn opens with `user` and ends with `done`. Each one is
+        appended to the session's journal (`SessionStore.append_event`) before it is
+        yielded, so `store.events()` replays exactly what an interface was shown.
 
     Example:
         >>> llm = build_llm_client()
@@ -343,9 +345,13 @@ async def stream_chat(
     # of waiting, see app.chat_stream). Closing the inner generator explicitly is what
     # runs its cleanup now rather than at garbage collection.
     async with store.turn_lock(user_id, session_id):
+        opening = make("user", text=user_text)
+        store.append_event(user_id, session_id, opening)
+        yield opening
         turn = _stream_turn(llm_client, user_id, session_id, user_text, restricted=restricted)
         try:
             async for ev in turn:
+                store.append_event(user_id, session_id, ev)
                 yield ev
         finally:
             await turn.aclose()

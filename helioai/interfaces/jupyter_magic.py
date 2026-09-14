@@ -121,7 +121,10 @@ def _render_jupyter_event(ev: dict) -> None:
     nested = "sub_agent_ctx" in data
     pad = "    " if nested else ""
 
-    if name == "tool_call":
+    if name == "user":
+        pass  # the cell that asked is right above; journaled for replay
+
+    elif name == "tool_call":
         detail = data.get("display")
         if detail is None:
             detail = ", ".join(

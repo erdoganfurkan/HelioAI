@@ -8,8 +8,10 @@ of every call.
 
 `ScriptedRegistry` replaces the per-file `fake_call_tool` closures: results keyed by tool
 name, or by tool name and arguments when a test needs two calls of one tool to differ,
-returned as the `ToolResult` the real registry returns. Nothing here reaches a network,
-a model or the disk; that is the point.
+returned as the `ToolResult` the real registry returns. Install it over the real
+registry's dispatch — `monkeypatch.setattr(registry, "call_tool", scripted.call_tool)` —
+so the tool definitions the model is shown stay the real ones. Nothing here reaches a
+network, a model or the disk; that is the point.
 """
 
 from __future__ import annotations

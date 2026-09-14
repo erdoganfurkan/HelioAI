@@ -60,6 +60,19 @@ CREATE TABLE IF NOT EXISTS usage (
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_user_time ON usage(user_id, recorded_at);
+
+CREATE TABLE IF NOT EXISTS events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    seq        INTEGER NOT NULL,
+    ts         REAL NOT NULL DEFAULT (julianday('now')),
+    kind       TEXT NOT NULL,
+    data       TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_session_seq
+    ON events(user_id, session_id, seq);
 """
 
 # Additive only, each one tried on its own: a column that already exists raises and
@@ -337,17 +350,72 @@ class SessionStore:
             "n_calls": int(row[3]),
         }
 
+    def append_event(self, user_id: str, session_id: str, event: dict) -> None:
+        """Journal one event of a turn, in the order it was yielded.
+
+        The journal is what a session replays from: the browser used to rebuild a
+        past conversation by re-parsing the JSON of every `tool` message with a
+        hundred lines of shape-sniffing, and lost the plan, the provenance verdict, the
+        figure reviews and everything a sub-agent did on the way. Written *before* the
+        event is handed to the interface, so a stream cut mid-turn still leaves what was
+        shown. Its own table, never rewritten by `save`, so a compacted history does
+        not erase the record.
+
+        Args:
+            user_id: Owner of the session.
+            session_id: The conversation the event belongs to.
+            event: `{"event": kind, "data": {...}}` as `events.make` builds it. Payloads
+                are stored as JSON; unknown types are stringified, as they are for the
+                model.
+        """
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "INSERT INTO events(user_id, session_id, seq, kind, data) VALUES (?, ?, "
+                "(SELECT COALESCE(MAX(seq), -1) + 1 FROM events WHERE user_id = ? AND session_id = ?),"
+                " ?, ?)",
+                (
+                    user_id,
+                    session_id,
+                    user_id,
+                    session_id,
+                    event["event"],
+                    json.dumps(event.get("data") or {}, ensure_ascii=False, default=str),
+                ),
+            )
+            conn.commit()
+
+    def events(self, user_id: str, session_id: str) -> list[dict]:
+        """A session's journal, oldest first, in the shape the loops yield.
+
+        Args:
+            user_id: Owner of the session.
+            session_id: The conversation.
+
+        Returns:
+            `[{"event": kind, "data": {...}}, ...]` — exactly what `stream_chat` yielded,
+            turn after turn, so a replay renders with the same code as the live stream.
+            Empty for a session recorded before the journal existed.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT kind, data FROM events WHERE user_id = ? AND session_id = ? ORDER BY seq",
+                (user_id, session_id),
+            ).fetchall()
+        return [{"event": kind, "data": json.loads(data)} for kind, data in rows]
+
     def reset(self, user_id: str, session_id: str) -> None:
-        """Delete a session, its messages and its usage rows, and drop it from the cache."""
+        """Delete a session, its messages, its usage rows and its journal, and drop it
+        from the cache."""
         with self._lock, self._connect() as conn:
             conn.execute(
                 "DELETE FROM sessions WHERE user_id = ? AND session_id = ?",
                 (user_id, session_id),
             )
-            conn.execute(
-                "DELETE FROM usage WHERE user_id = ? AND session_id = ?",
-                (user_id, session_id),
-            )
+            for table in ("usage", "events"):
+                conn.execute(
+                    f"DELETE FROM {table} WHERE user_id = ? AND session_id = ?",  # noqa: S608
+                    (user_id, session_id),
+                )
             conn.commit()
         self._cache.pop((user_id, session_id), None)
         self._turn_locks.pop((user_id, session_id), None)

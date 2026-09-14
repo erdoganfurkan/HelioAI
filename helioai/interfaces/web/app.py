@@ -23,6 +23,7 @@ from helioai.config import dev_unlock, settings
 from helioai.core.agent_loop import stream_chat
 from helioai.core.llm.factory import build_llm_client
 from helioai.core.session import store
+from helioai.interfaces.web.legacy_replay import messages_view
 from helioai.logging_config import get_logger
 from helioai.workspace import is_under_workspace, user_home
 
@@ -261,157 +262,42 @@ async def list_sessions(user_id: str = Depends(require_user)) -> list:
     return store.list_summaries(user_id)
 
 
-@app.get("/api/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str, user_id: str = Depends(require_user)) -> dict:
-    """Replay a session: its messages plus any figures and figure reviews.
+@app.get("/api/sessions/{session_id}/events")
+async def get_session_events(session_id: str, user_id: str = Depends(require_user)) -> dict:
+    """Replay a session from its journal: every event the live stream showed, in order.
 
-    Artifacts accumulate from tool results and are attached to the assistant message
-    that closes the turn. A turn cut short — browser closed mid-stream, iteration cap —
-    has no such message, so its figures and scripts are flushed as an empty assistant
-    entry instead: once at the next user message, so they cannot be pinned onto an
-    unrelated later answer, and once at the end of the history, so they are not
-    dropped altogether. Both happened in the audit replay.
+    The browser renders these with the same function as the live stream, so a reloaded
+    session shows the plan, the provenance verdict, the figure reviews and the
+    sub-agent trace exactly as they appeared.
 
     Args:
         session_id: Session to replay.
-        user_id: Resolved by `require_user`; a session belonging to anyone else
-            reads as empty rather than as a 403, which says nothing about
-            whether it exists.
+        user_id: Resolved by `require_user`; a session belonging to anyone else reads
+            as empty rather than as a 403, which says nothing about whether it exists.
 
     Returns:
-        `{"messages": [...]}` — the stored messages in order, each assistant
-        entry carrying the figures, cards, catalogs, code and recipes that the
-        tool calls before it produced.
+        `{"events": [...]}` — empty for a session recorded before the journal existed,
+        which the browser then fetches through `/messages`.
     """
-    history = store.get_or_create(user_id, session_id)
-    out: list[dict] = []
-    pending_figures: list[str] = []
-    pending_cards: list[dict] = []
-    pending_catalogs: list[dict] = []
-    pending_code: list[dict] = []
-    pending_recipes: list[dict] = []
+    return {"events": store.events(user_id, session_id)}
 
-    def _flush(content: str) -> None:
-        nonlocal pending_figures, pending_cards, pending_catalogs, pending_code, pending_recipes
-        entry: dict = {"role": "assistant", "content": content}
-        if pending_figures:
-            entry["figures"] = pending_figures[:]
-            pending_figures = []
-        if pending_cards:
-            entry["cards"] = pending_cards[:]
-            pending_cards = []
-        if pending_catalogs:
-            entry["catalogs"] = pending_catalogs[:]
-            pending_catalogs = []
-        if pending_code:
-            entry["code"] = pending_code[:]
-            pending_code = []
-        if pending_recipes:
-            entry["recipes"] = pending_recipes[:]
-            pending_recipes = []
-        if content or len(entry) > 2:
-            out.append(entry)
 
-    for m in history:
-        if m.role == "user":
-            _flush("")
-            if m.origin:
-                # HelioAI's own note (an automated correction), sent with the user role
-                # because that is the only role the providers forward — shown as a
-                # system line so the person is not credited with writing it.
-                out.append({"role": "system", "origin": m.origin, "content": m.content})
-            else:
-                out.append({"role": "user", "content": m.content})
-        elif m.role == "assistant" and m.content:
-            _flush(m.content)
-        elif m.role == "tool" and m.content:
-            try:
-                data = json.loads(m.content)
-                if isinstance(data, dict):
-                    if data.get("figure_paths"):  # run_python direct
-                        pending_figures.extend(data["figure_paths"])
-                    for card in data.get(
-                        "cards", []
-                    ):  # param_card()/document_method() in run_python
-                        if not isinstance(card, dict):
-                            continue
-                        if card.get("kind") == "parameter_card":
-                            pending_cards.append(card)
-                        elif card.get("kind") == "method_used":
-                            pending_recipes.append(
-                                {
-                                    "kind": "recipe_used",
-                                    "name": card.get("name", ""),
-                                    "reference": card.get("reference", ""),
-                                    "description": card.get("method", ""),
-                                }
-                            )
-                    if data.get("code_path"):  # run_python direct — artifact code
-                        pending_code.append(
-                            {
-                                "kind": "code",
-                                "code_path": data["code_path"],
-                                "name": Path(data["code_path"]).name,
-                                "n_lines": data.get("n_lines"),
-                            }
-                        )
-                    if "metadata" in data and data.get("name") and data.get("code"):  # load_recipe
-                        _meta = data.get("metadata") or {}
-                        pending_recipes.append(
-                            {
-                                "kind": "recipe_used",
-                                "name": data["name"],
-                                "reference": _meta.get("reference", ""),
-                                "description": _meta.get("description", ""),
-                            }
-                        )
-                    if data.get("_kind") == "catalog_preview":  # get_catalog
-                        pending_catalogs.append(
-                            {
-                                "kind": "catalog_preview",
-                                "catalog_id": data.get("catalog_id"),
-                                "name": data.get("name"),
-                                "type": data.get("type"),
-                                "nb_events_total": data.get("nb_events_total"),
-                                "columns": data.get("columns", []),
-                                "sample": (data.get("sample") or [])[:5],
-                                "survey_start": data.get("survey_start"),
-                                "survey_stop": data.get("survey_stop"),
-                            }
-                        )
-                    if data.get("param_id") and "preview" in data:  # get_timeseries direct
-                        pending_cards.append(
-                            {
-                                "kind": "parameter_card",
-                                "param_id": data.get("param_id"),
-                                "name": data.get("name"),
-                                "mission": data.get("mission"),
-                                "instrument": data.get("instrument"),
-                                "units": data.get("units"),
-                                "cadence": data.get("cadence"),
-                                "components": data.get("components"),
-                                "n_points": data.get("n_points"),
-                                "start": data.get("start"),
-                                "stop": data.get("stop"),
-                            }
-                        )
-                    for art in data.get("artifacts", []):  # résultat sous-agent
-                        if not isinstance(art, dict):
-                            continue
-                        if art.get("figure_paths"):
-                            pending_figures.extend(art["figure_paths"])
-                        if art.get("kind") == "parameter_card":
-                            pending_cards.append(art)
-                        if art.get("kind") == "catalog_preview":
-                            pending_catalogs.append(art)
-                        if art.get("kind") == "code":
-                            pending_code.append(art)
-                        if art.get("kind") == "recipe_used":
-                            pending_recipes.append(art)
-            except (ValueError, TypeError):
-                pass
-    _flush("")
-    return {"messages": out}
+@app.get("/api/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, user_id: str = Depends(require_user)) -> dict:
+    """Replay a session recorded before the event journal, from its messages.
+
+    Kept for those sessions only — see `legacy_replay`. A session with a journal is
+    served by `/events`.
+
+    Args:
+        session_id: Session to replay.
+        user_id: Resolved by `require_user`; another user's session reads as empty.
+
+    Returns:
+        `{"messages": [...]}` — the stored messages in order, each assistant entry
+        carrying the artifacts the tool calls before it produced.
+    """
+    return {"messages": messages_view(store.get_or_create(user_id, session_id))}
 
 
 @app.get("/api/profile")

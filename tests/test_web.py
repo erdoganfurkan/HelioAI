@@ -967,3 +967,111 @@ def test_api_me_reports_the_callers_usage(web_client):
     assert body["user_id"] == "web"
     assert body["usage"]["total"]["prompt_tokens"] == 100
     assert body["usage"]["day"]["n_calls"] == 1
+
+
+# ── the journal: what the stream showed is what a reload replays ─────────────────
+
+
+def _scripted_turn(tmp_path):
+    """A lead turn that exercises most kinds: plan, skill, sandbox figure + exports, reply."""
+    from support.scripted import ScriptedLLM, ScriptedRegistry, assistant_calls, assistant_text
+
+    fig = tmp_path / "fig_0_0.png"
+    fig.write_bytes(b"\x89PNG\r\n")
+    llm = ScriptedLLM(
+        [
+            assistant_calls("present_plan", arguments={"title": "Plan", "steps": []}),
+            assistant_calls("run_python", arguments={"code": "export('theta_bn', 57.5, 'deg')"}),
+            assistant_text("θ_Bn = 57.5°."),
+        ]
+    )
+    reg = ScriptedRegistry(
+        {
+            "run_python": {
+                "stdout": "",
+                "figure_paths": [str(fig)],
+                "exports": {"theta_bn": {"mean": 57.5, "min": 57.5, "max": 57.5, "units": "deg"}},
+                "cards": [],
+                "code_path": str(tmp_path / "code_0.py"),
+                "n_lines": 1,
+            }
+        }
+    )
+    return llm, reg
+
+
+def test_the_journal_is_the_stream_and_the_endpoint_serves_it(monkeypatch, tmp_path):
+    """The golden behind the Runner extraction: the events `stream_chat` yields, the
+    rows `store.events()` returns and the body of `/api/sessions/{id}/events` are one
+    and the same list — opened by the question, closed by `done`. A reload renders it
+    with the very code that rendered the live stream."""
+    import asyncio
+
+    from helioai.core import agent_loop
+    from helioai.core.session import SessionStore
+    from helioai.interfaces.web.app import app
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr(agent_loop, "store", test_store)
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+    llm, reg = _scripted_turn(tmp_path)
+    monkeypatch.setattr(agent_loop.registry, "call_tool", reg.call_tool)
+
+    async def run():
+        return [ev async for ev in agent_loop.stream_chat(llm, "web", "sess-journal", "θ_Bn?")]
+
+    streamed = asyncio.run(run())
+    kinds = [e["event"] for e in streamed]
+    assert kinds[0] == "user" and kinds[-1] == "done"
+    assert {"plan", "tool_call", "tool_result", "artifact", "reply"} <= set(kinds)
+
+    journaled = test_store.events("web", "sess-journal")
+    served = TestClient(app).get("/api/sessions/sess-journal/events").json()["events"]
+    assert journaled == json.loads(json.dumps(streamed, default=str))
+    assert served == journaled
+
+
+def test_a_second_turn_appends_to_the_journal_and_a_reset_empties_it(monkeypatch, tmp_path):
+    import asyncio
+
+    from support.scripted import ScriptedLLM, assistant_text
+
+    from helioai.core import agent_loop
+    from helioai.core.session import SessionStore
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr(agent_loop, "store", test_store)
+
+    async def turn(text):
+        llm = ScriptedLLM([assistant_text(f"answer to {text}")])
+        return [ev async for ev in agent_loop.stream_chat(llm, "web", "s2", text)]
+
+    asyncio.run(turn("one"))
+    asyncio.run(turn("two"))
+    texts = [e["data"]["text"] for e in test_store.events("web", "s2") if e["event"] == "user"]
+    assert texts == ["one", "two"]
+    test_store.reset("web", "s2")
+    assert test_store.events("web", "s2") == []
+
+
+def test_a_session_without_a_journal_is_served_empty_so_the_browser_falls_back(
+    monkeypatch, tmp_path
+):
+    """Sessions recorded before the journal existed have messages and no events; the
+    browser asks `/messages` only in that case (see tests/web/test_session_streams.js)."""
+    from helioai.core.llm.base import Message
+    from helioai.core.session import SessionStore
+    from helioai.interfaces.web.app import app
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    test_store.save(
+        "web", "old", [Message(role="user", content="q"), Message(role="assistant", content="a")]
+    )
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+
+    client = TestClient(app)
+    assert client.get("/api/sessions/old/events").json() == {"events": []}
+    assert [m["role"] for m in client.get("/api/sessions/old/messages").json()["messages"]] == [
+        "user",
+        "assistant",
+    ]

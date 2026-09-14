@@ -13,7 +13,7 @@ helioai/
 │   ├── agent_loop.py       stream_chat — the lead agent
 │   ├── sub_agents.py       stream_subagent — delegation with tool whitelists
 │   ├── tool_exec.py        shared execution logic between the two loops
-│   ├── session.py          SQLite history per (user_id, session_id)
+│   ├── session.py          SQLite history + event journal per (user_id, session_id)
 │   ├── skills_loader.py    markdown skills
 │   ├── vision.py           stateless figure review side-call
 │   ├── skills/             SKILL.md prompt assets
@@ -80,7 +80,7 @@ Everything is namespaced per user, then per session:
 <data_dir>/users/<user_id>/workspace/<session>/   figures, scripts, npz, manifest.json
 <data_dir>/users/<user_id>/catalogs/              saved catalogs
 <data_dir>/chroma/                                the shared parameter index
-<data_dir>/sessions.db                            SQLite history
+<data_dir>/sessions.db                            SQLite history, usage and event journal
 ```
 
 `<data_dir>` is `<repo>/data` from a clone and `~/.local/share/helioai` when installed —

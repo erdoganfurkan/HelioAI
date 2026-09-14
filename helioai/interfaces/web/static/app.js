@@ -63,6 +63,7 @@ function createView(sid) {
     steps: 0, tools: 0, subagents: 0,
     streaming: false,
     abort: null,
+    pendingUser: null,
   };
   views.set(sid, view);
   return view;
@@ -211,7 +212,18 @@ function renderEvent(view, ev) {
   const nested = !!data.sub_agent_ctx;
   const nestCls = nested ? ' tl-nested' : '';
 
-  if (event === 'tool_call') {
+  if (event === 'user') {
+    // The live path shows the question the instant it is sent (see sendMessage), before
+    // the server answers; the event then confirms the bubble already there. On a replay
+    // nothing is pending, so the bubble is drawn here — the same code path as live.
+    if (view.pendingUser) {
+      view.pendingUser = null;
+    } else {
+      view.chat.append(el('div', 'msg-user', data.text || ''));
+      if (isActive(view)) scrollBottom();
+    }
+
+  } else if (event === 'tool_call') {
     view.tools++;
     // `display` is built server-side by core/event_display.py so this timeline, the CLI
     // and the Jupyter magic word things identically. The argsStr fallback keeps replays
@@ -568,7 +580,8 @@ async function sendMessage() {
   if (!text || !view || view.streaming) return;
 
   view.chat.querySelector('.welcome')?.remove();
-  view.chat.append(el('div', 'msg-user', text));
+  view.pendingUser = el('div', 'msg-user', text);
+  view.chat.append(view.pendingUser);
   input.value = '';
   input.style.height = 'auto';
   scrollBottom();
@@ -625,6 +638,7 @@ async function sendMessage() {
     if (isActive(view)) scrollBottom();
   } finally {
     view.abort = null;
+    view.pendingUser = null;
     view.streaming = false;
     if (isActive(view)) setStreaming(false);
   }
@@ -710,6 +724,19 @@ async function resumeSession(sid, itemEl) {
   if (itemEl) itemEl.classList.add('active');
 
   try {
+    // The journal is what the live stream showed, event by event; it renders through
+    // the very function the stream used, so a reloaded session looks like it did.
+    const journal = await fetch(`/api/sessions/${sid}/events`);
+    const events = (await journal.json()).events || [];
+    if (events.length) {
+      resetDock(view);
+      events.forEach(ev => renderEvent(view, ev));
+      if (isActive(view)) scrollBottom();
+      return;
+    }
+    // A session recorded before the journal existed: the server groups its messages
+    // and guesses the artifacts from their shape (legacy_replay.py). Never used when a
+    // journal exists.
     const resp = await fetch(`/api/sessions/${sid}/messages`);
     const data = await resp.json();
     const messages = data.messages || data;

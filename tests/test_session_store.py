@@ -430,3 +430,57 @@ def test_a_database_without_the_usage_table_gains_it_on_open(db: Path) -> None:
         "u", "s", turn=1, agent="lead", provider="groq", prompt_tokens=1, completion_tokens=1
     )
     assert store.usage_totals("u")["n_calls"] == 1
+
+
+def test_events_are_journaled_in_order_and_come_back_in_the_shape_they_were_yielded(
+    db: Path,
+) -> None:
+    store = SessionStore(db)
+    first = {"event": "user", "data": {"text": "θ_Bn for the 2015-03-17 shock?"}}
+    second = {"event": "tool_call", "data": {"turn": 1, "name": "load_recipe", "arguments": {}}}
+    store.append_event("u", "s", first)
+    store.append_event("u", "s", second)
+    store.append_event("u", "other", {"event": "user", "data": {"text": "elsewhere"}})
+
+    assert store.events("u", "s") == [first, second]
+    assert store.events("u", "other")[0]["data"]["text"] == "elsewhere"
+    assert store.events("u", "never") == []
+
+
+def test_the_journal_survives_a_history_save_and_dies_with_a_reset(db: Path) -> None:
+    """`save` rewrites `messages` whole; the record of what was shown must not go with
+    it, and a deleted session must not leave its journal behind."""
+    store = SessionStore(db)
+    store.append_event("u", "s", {"event": "user", "data": {"text": "q"}})
+    store.save("u", "s", [Message(role="user", content="q")])
+    assert len(store.events("u", "s")) == 1
+    store.reset("u", "s")
+    assert store.events("u", "s") == []
+
+
+def test_a_database_without_the_events_table_gains_it_on_open(db: Path) -> None:
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (user_id TEXT NOT NULL, session_id TEXT NOT NULL,
+            created_at REAL NOT NULL DEFAULT (julianday('now')),
+            updated_at REAL NOT NULL DEFAULT (julianday('now')),
+            workspace_dir TEXT, PRIMARY KEY (user_id, session_id));
+        CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '', tool_calls TEXT, tool_call_id TEXT);
+        """
+    )
+    conn.commit()
+    conn.close()
+    store = SessionStore(db)
+    store.append_event("u", "s", {"event": "done", "data": {"n_iterations": 1}})
+    assert store.events("u", "s") == [{"event": "done", "data": {"n_iterations": 1}}]
+
+
+def test_a_payload_the_model_would_see_stringified_is_journaled_the_same_way(db: Path) -> None:
+    from pathlib import PurePosixPath
+
+    store = SessionStore(db)
+    store.append_event("u", "s", {"event": "artifact", "data": {"path": PurePosixPath("/a/b")}})
+    assert store.events("u", "s")[0]["data"] == {"path": "/a/b"}

@@ -22,6 +22,10 @@ from typing import Any
 # kind → the payload keys every emitter provides (extra keys may travel along;
 # `sub_agent_ctx` is added to any kind a sub-agent emits).
 KINDS: dict[str, tuple[str, ...]] = {
+    # The question that opens a turn. Yielded and journaled first, so a session replays
+    # from its journal alone; the CLI and the notebook leave it unrendered — the person
+    # who typed it is looking at it.
+    "user": ("text",),
     "reply": ("text",),
     "tool_call": ("turn", "name", "arguments", "display"),
     "tool_result": ("turn", "name", "summary", "display"),
@@ -50,7 +54,7 @@ ARTIFACT_KINDS: dict[str, tuple[str, ...]] = {
 
 # Kinds the lead emits and a sub-agent never does, and the reverse.
 LEAD_ONLY: frozenset[str] = frozenset(
-    {"reply", "plan", "provenance", "sub_agent_start", "error", "done"}
+    {"user", "reply", "plan", "provenance", "sub_agent_start", "error", "done"}
 )
 
 # Artifact kinds an interface may leave unrendered on purpose. `exports` is recorded

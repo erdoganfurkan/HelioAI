@@ -172,7 +172,10 @@ def _render_event(ev: dict) -> None:
     nested = "sub_agent_ctx" in data
     pad = "    " if nested else "  "
 
-    if name == "reply":
+    if name == "user":
+        pass  # the person who typed the question is looking at it; journaled for replay
+
+    elif name == "reply":
         print(f"\n\033[92m{data['text']}\033[0m\n")
 
     elif name == "tool_call":

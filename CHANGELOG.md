@@ -118,6 +118,16 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Added
 
+- **A session replays from its journal.** Every event a turn yields — the question that
+  opened it, each tool call and result, the plan, the figures, the provenance verdict,
+  the sub-agent trace — is appended to an `events` table before it reaches the screen.
+  Reloading a session in the browser renders that journal with the same code as the live
+  stream, so nothing that was shown is lost: the previous replay re-parsed the JSON of
+  every tool message and guessed the figures from its shape, and lost the plan, the
+  verdicts and everything a sub-agent did. Sessions recorded before the journal existed
+  keep the old view (`legacy_replay.py`), used only when there is no journal. The stream
+  now opens with a `user` event carrying the question; the CLI and the notebook leave it
+  unrendered.
 - **A tool call returns a typed result.** `registry.call_tool` used to serialise every
   tool's dict to JSON on the spot, and five readers downstream — the history, the artifact
   extractor, the figure review, the MCP server, the event display — each parsed that text

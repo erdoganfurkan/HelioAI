@@ -653,3 +653,31 @@ def test_a_quantity_exported_several_times_is_sourced_by_any_of_its_runs():
     assert invented.contradicted == 1
     assert invented.details[0]["name"] == "compression_ratio"
     assert invented.details[0]["code_path"] == "/s/code_7.py"
+
+
+def test_concurrent_records_keep_every_value(tmp_path, monkeypatch):
+    """The ledger has the same read-modify-write shape as the manifest and the same
+    failure: two threads appending at once lose one of the two exports."""
+    import threading
+    import time
+
+    real_read = provenance._read_ledger_file
+
+    def slow_read(session_dir):
+        data = real_read(session_dir)
+        time.sleep(0.005)
+        return data
+
+    monkeypatch.setattr(provenance, "_read_ledger_file", slow_read)
+
+    def one(i: int) -> None:
+        provenance.record({f"v{i:02d}": _stats(float(i))}, code_path=str(tmp_path / "code_0.py"))
+
+    threads = [threading.Thread(target=one, args=(i,)) for i in range(16)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+
+    names = {v["name"] for v in provenance.read_ledger(tmp_path)["values"]}
+    assert names == {f"v{i:02d}" for i in range(16)}

@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -134,10 +136,55 @@ def _read_manifest_file(data_dir: Path) -> dict:
     return {"datasets": {}}
 
 
+_dir_locks: dict[str, threading.Lock] = {}
+_dir_locks_guard = threading.Lock()
+
+
+def dir_lock(path: Path) -> threading.Lock:
+    """The lock to hold across a read-modify-write of the files under `path`.
+
+    A `threading.Lock`, not an `asyncio.Lock`: these writers are synchronous, called
+    from coroutines today and from worker threads tomorrow, and a thread lock is
+    correct in both places without binding to any event loop. One lock per
+    directory string, created on first use and never dropped — a few dozen entries
+    per process at most.
+
+    Args:
+        path: The directory whose index files the caller is about to rewrite.
+
+    Returns:
+        The same lock for the same directory, for the life of the process.
+    """
+    key = str(path)
+    with _dir_locks_guard:
+        lock = _dir_locks.get(key)
+        if lock is None:
+            lock = _dir_locks[key] = threading.Lock()
+        return lock
+
+
+def write_json_atomic(path: Path, payload: Any) -> None:
+    """Write `payload` as JSON so that `path` is never observed half-written.
+
+    The text goes to a sibling `.tmp` file first and is swapped in with `os.replace`,
+    atomic on POSIX and on Windows when the target exists. A crash mid-write used to
+    leave a truncated `manifest.json` and with it an unreadable session.
+
+    Args:
+        path: Destination file.
+        payload: Anything `json.dumps` accepts.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def _write_manifest_file(data_dir: Path, manifest: dict) -> None:
-    (data_dir / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json_atomic(data_dir / "manifest.json", manifest)
 
 
 def read_manifest(session_dir: Path) -> dict:
@@ -257,33 +304,36 @@ def save_timeseries(
             )
             return None
 
-        manifest = _read_manifest_file(data_dir)
-        base = _slug(name_hint or param_id)
-        name = _unique_name(manifest, base, param_id, start, stop)
-        fname = f"{name}.npz"
+        with dir_lock(data_dir):
+            manifest = _read_manifest_file(data_dir)
+            base = _slug(name_hint or param_id)
+            name = _unique_name(manifest, base, param_id, start, stop)
+            fname = f"{name}.npz"
 
-        np.savez_compressed(data_dir / fname, time=time_arr, values=values_arr)
+            np.savez_compressed(data_dir / fname, time=time_arr, values=values_arr)
 
-        cols = list(columns) if isinstance(columns, (list, tuple)) else []
-        # Derived from what was actually written rather than passed in, so it can
-        # never drift from the file: get_timeseries blanks fill values to NaN
-        # before saving, so this is the fraction with no measurement.
-        missing_pct = round(100 * float(np.isnan(values_arr).mean()), 1) if values_arr.size else 0.0
-        manifest.setdefault("datasets", {})[name] = {
-            "kind": "timeseries",
-            "file": fname,
-            "param_id": param_id,
-            "units": units,
-            "start": start,
-            "stop": stop,
-            "shape": list(values_arr.shape),
-            "columns": cols,
-            "missing_pct": missing_pct,
-            "source": source,
-            "created": str(int(_time.time())),
-        }
-        _write_manifest_file(data_dir, manifest)
-        return {"dataset": name}
+            cols = list(columns) if isinstance(columns, (list, tuple)) else []
+            # Derived from what was actually written rather than passed in, so it can
+            # never drift from the file: get_timeseries blanks fill values to NaN
+            # before saving, so this is the fraction with no measurement.
+            missing_pct = (
+                round(100 * float(np.isnan(values_arr).mean()), 1) if values_arr.size else 0.0
+            )
+            manifest.setdefault("datasets", {})[name] = {
+                "kind": "timeseries",
+                "file": fname,
+                "param_id": param_id,
+                "units": units,
+                "start": start,
+                "stop": stop,
+                "shape": list(values_arr.shape),
+                "columns": cols,
+                "missing_pct": missing_pct,
+                "source": source,
+                "created": str(int(_time.time())),
+            }
+            _write_manifest_file(data_dir, manifest)
+            return {"dataset": name}
     except Exception as e:
         log.warning("datastore: save_timeseries failed for %r: %s", param_id, e)
         return None
@@ -358,30 +408,31 @@ def save_event_collection(
         if not arrays:
             return None
 
-        manifest = _read_manifest_file(data_dir)
-        base = _slug(name_hint or param_id) + "_events"
-        name = base
-        if name in manifest.get("datasets", {}):
-            i2 = 2
-            while f"{base}_{i2}" in manifest.get("datasets", {}):
-                i2 += 1
-            name = f"{base}_{i2}"
-        fname = f"{name}.npz"
+        with dir_lock(data_dir):
+            manifest = _read_manifest_file(data_dir)
+            base = _slug(name_hint or param_id) + "_events"
+            name = base
+            if name in manifest.get("datasets", {}):
+                i2 = 2
+                while f"{base}_{i2}" in manifest.get("datasets", {}):
+                    i2 += 1
+                name = f"{base}_{i2}"
+            fname = f"{name}.npz"
 
-        np.savez_compressed(data_dir / fname, **arrays)
+            np.savez_compressed(data_dir / fname, **arrays)
 
-        manifest.setdefault("datasets", {})[name] = {
-            "kind": "event_collection",
-            "file": fname,
-            "param_id": param_id,
-            "units": units,
-            "n_events": len(series),
-            "events": events_meta,
-            "source": source,
-            "created": str(int(_time.time())),
-        }
-        _write_manifest_file(data_dir, manifest)
-        return {"dataset": name}
+            manifest.setdefault("datasets", {})[name] = {
+                "kind": "event_collection",
+                "file": fname,
+                "param_id": param_id,
+                "units": units,
+                "n_events": len(series),
+                "events": events_meta,
+                "source": source,
+                "created": str(int(_time.time())),
+            }
+            _write_manifest_file(data_dir, manifest)
+            return {"dataset": name}
     except Exception as e:
         log.warning("datastore: save_event_collection failed for %r: %s", param_id, e)
         return None

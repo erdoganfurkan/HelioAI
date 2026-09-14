@@ -637,3 +637,84 @@ def test_find_existing_is_silent_without_a_session(monkeypatch):
 
     monkeypatch.setattr(ws, "get_session_dir", lambda: (_ for _ in ()).throw(RuntimeError("x")))
     assert find_existing("cda/X/Y", "a", "b") is None
+
+
+# ── concurrent and interrupted manifest writes ────────────────────────────────
+
+
+def _save(name: str) -> None:
+    t = np.array(["2005-01-17T00:00:00", "2005-01-17T01:00:00"], dtype="datetime64[s]")
+    save_timeseries(
+        f"amda/{name}",
+        time=t,
+        values=np.array([1.0, 2.0]),
+        param_id=f"amda/{name}",
+        units="nT",
+        start="2005-01-17T00:00:00",
+        stop="2005-01-18T00:00:00",
+        columns=None,
+        source="test",
+    )
+
+
+def test_concurrent_saves_in_one_session_keep_every_dataset(session_dir, monkeypatch):
+    """Sixteen threads each persist a different parameter into the same session.
+
+    Every save is a read-modify-write of `manifest.json`; without a lock two of them
+    read the same manifest and the second write drops the first entry. The sleep
+    inside the read is what makes the interleaving certain rather than lucky.
+    """
+    import threading
+    import time
+
+    from helioai import datastore
+
+    real_read = datastore._read_manifest_file
+
+    def slow_read(data_dir):
+        m = real_read(data_dir)
+        time.sleep(0.005)
+        return m
+
+    monkeypatch.setattr(datastore, "_read_manifest_file", slow_read)
+
+    ctx = __import__("contextvars").copy_context()
+    threads = [
+        threading.Thread(target=ctx.copy().run, args=(_save, f"p{i:02d}")) for i in range(16)
+    ]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+
+    names = set(read_manifest(session_dir)["datasets"])
+    assert names == {f"p{i:02d}" for i in range(16)}
+
+
+def test_an_interrupted_manifest_write_leaves_the_previous_manifest_intact(
+    session_dir, monkeypatch
+):
+    """The manifest is the index of everything a session downloaded. A crash while
+    rewriting it in place left half a file and an unreadable session; the write goes
+    to a sibling file and is swapped in atomically, so the old manifest survives."""
+    import os
+
+    _save("first")
+    before = read_manifest(session_dir)
+
+    def failing_replace(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    _save("second")
+    monkeypatch.undo()
+
+    assert read_manifest(session_dir) == before
+    assert not list((session_dir / "data").glob("*.tmp")), (
+        "the failed write cleaned up after itself"
+    )
+
+
+def test_a_successful_write_leaves_no_temporary_file(session_dir):
+    _save("only")
+    assert not list((session_dir / "data").glob("manifest.json*.tmp"))

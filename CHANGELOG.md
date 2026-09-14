@@ -31,6 +31,25 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   interleaved result. A turn now holds a per-session lock from its first read to its
   last save; the web UI answers `409 Conflict` to a second request instead of leaving a
   tab that looks hung while it waits.
+- **A session's manifest and provenance ledger could lose entries or be left
+  half-written.** Both are read-modify-write JSON files with no lock, so two
+  downloads persisted at once kept only one of them; and both were rewritten in place,
+  so a crash mid-write left an unreadable session. Writers now hold a per-directory
+  lock and swap a complete file in atomically — the pattern the HELIO4CAST cache
+  already used.
+- **`HELIOAI_DATA_DIR` now relocates everything.** It moved the session store and the
+  per-user homes, but the index, the saved catalogues and the profile kept deriving
+  from the default directory computed before the variable was read — so the Docker
+  volume held two trees. The dead `HELIOAI_WORKSPACE` / `workspace_dir` setting, read
+  and consumed by nothing since storage became per-user, is gone.
+
+### Changed
+
+- **If you set `HELIOAI_DATA_DIR` (the Docker image does), run `helioai migrate-storage`
+  once after upgrading.** It moves the index, the catalogues and the profile from the
+  default directory to the configured one, never overwrites, and can be re-run. The
+  `search_parameters` error names the legacy copy when it exists, so an upgraded
+  install is not sent into an hour-long rebuild.
 
 ## [0.2.1] — 2026-08-14
 

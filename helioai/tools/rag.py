@@ -63,6 +63,29 @@ def _quiet_model_loading() -> None:
         pass
 
 
+def _index_missing_message() -> str:
+    """Explain an absent index, naming a legacy copy when one exists.
+
+    Before 0.3.0 the index ignored `HELIOAI_DATA_DIR` and lived under the default data
+    directory; an install that set the variable finds its index gone after upgrading.
+    Rebuilding takes the better part of an hour, moving takes a second — so the message
+    points at the copy and at the command that moves it.
+    """
+    from helioai.config import _default_data_dir
+
+    msg = (
+        f"ChromaDB index not found at {settings.rag.chroma_dir}. "
+        "Run `helioai index` first to build the parameter catalog."
+    )
+    legacy = _default_data_dir() / "chroma"
+    if legacy.exists() and legacy.resolve() != settings.rag.chroma_dir.resolve():
+        msg += (
+            f" An index built by an earlier version exists at {legacy}: run "
+            "`helioai migrate-storage` to move it here instead of rebuilding."
+        )
+    return msg
+
+
 def _load():
     global _model, _collection
     if _model is not None and _collection is not None:
@@ -78,10 +101,7 @@ def _load():
             import chromadb
 
             if not settings.rag.chroma_dir.exists():
-                raise RuntimeError(
-                    f"ChromaDB index not found at {settings.rag.chroma_dir}. "
-                    "Run `helioai index` first to build the parameter catalog."
-                )
+                raise RuntimeError(_index_missing_message())
             client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
             _collection = client.get_collection(name=settings.rag.collection_name)
 
@@ -102,7 +122,7 @@ def _collection_only():
             import chromadb
 
             if not settings.rag.chroma_dir.exists():
-                raise RuntimeError(f"ChromaDB index not found at {settings.rag.chroma_dir}.")
+                raise RuntimeError(_index_missing_message())
             client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
             _collection = client.get_collection(name=settings.rag.collection_name)
     return _collection

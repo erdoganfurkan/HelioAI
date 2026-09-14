@@ -749,3 +749,35 @@ def test_loading_the_encoder_does_not_draw_a_progress_bar(monkeypatch, tmp_path)
         hf_logging.enable_progress_bar()
 
     assert seen["bar_enabled_at_construction"] is False
+
+
+# ── a missing index names its legacy copy ─────────────────────────────────────
+
+
+def test_missing_index_message_points_at_a_legacy_copy(monkeypatch, tmp_path):
+    """Before 0.3.0 the index ignored HELIOAI_DATA_DIR; after upgrading, an install
+    that sets it sees no index where it now looks — while the old one is a `mv` away.
+    The message must say so rather than send the user into an hour-long rebuild."""
+    import helioai.config as cfg
+    from helioai.tools import rag as rag_module
+
+    legacy_root = tmp_path / "legacy"
+    (legacy_root / "chroma").mkdir(parents=True)
+    monkeypatch.setattr(cfg, "_default_data_dir", lambda: legacy_root)
+    monkeypatch.setattr(rag_module.settings.rag, "chroma_dir", tmp_path / "new" / "chroma")
+
+    msg = rag_module._index_missing_message()
+    assert str(tmp_path / "new" / "chroma") in msg
+    assert str(legacy_root / "chroma") in msg
+    assert "helioai migrate-storage" in msg
+
+
+def test_missing_index_message_is_plain_when_there_is_no_legacy_copy(monkeypatch, tmp_path):
+    import helioai.config as cfg
+    from helioai.tools import rag as rag_module
+
+    monkeypatch.setattr(cfg, "_default_data_dir", lambda: tmp_path / "legacy")
+    monkeypatch.setattr(rag_module.settings.rag, "chroma_dir", tmp_path / "new" / "chroma")
+    msg = rag_module._index_missing_message()
+    assert "helioai index" in msg
+    assert "migrate-storage" not in msg

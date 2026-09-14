@@ -193,9 +193,13 @@ class RAGConfig:
 
 @dataclass
 class WorkspaceConfig:
-    """Per-session working directories, cleaned up after `ttl_seconds`."""
+    """Retention of per-session working directories.
 
-    workspace_dir: Path = field(default_factory=lambda: _DATA / "workspace")
+    Their location is not a setting: `workspace.user_home` derives it from `data_dir`
+    per user. A `workspace_dir` field (and `HELIOAI_WORKSPACE`) used to sit here, read
+    from the environment and consumed by nothing since storage became per-user.
+    """
+
     ttl_seconds: int = 86400 * 7  # 7 days
 
 
@@ -359,12 +363,15 @@ def _load() -> Settings:
     max_out = os.environ.get("HELIOAI_MAX_OUTPUT_TOKENS", "")
     out_override = int(max_out) if max_out.strip().isdigit() else None
 
+    # Every derived path hangs off data_dir, read first — not off the module-level
+    # default computed before the variable was. Deriving them from `_DATA` honoured
+    # HELIOAI_DATA_DIR for sessions and user homes only, and left the index, the
+    # catalogues and the profile in the default tree: a Docker volume held two trees.
     data_dir = Path(os.environ.get("HELIOAI_DATA_DIR", str(_DATA)))
-    workspace_dir = Path(os.environ.get("HELIOAI_WORKSPACE", str(_DATA / "workspace")))
     workspace_ttl = int(os.environ.get("HELIOAI_WORKSPACE_TTL_S", str(86400 * 7)))
-    profile_path = Path(os.environ.get("HELIOAI_PROFILE", str(_DATA / "profile.md")))
+    profile_path = Path(os.environ.get("HELIOAI_PROFILE", str(data_dir / "profile.md")))
     recipes_dir = Path(os.environ.get("HELIOAI_RECIPES_DIR", str(_PKG_RECIPES)))
-    catalogs_dir = Path(os.environ.get("HELIOAI_CATALOGS_DIR", str(_DATA / "catalogs")))
+    catalogs_dir = Path(os.environ.get("HELIOAI_CATALOGS_DIR", str(data_dir / "catalogs")))
     hybrid_enabled = os.environ.get("HELIOAI_RAG_HYBRID", "1") != "0"
 
     dev_token = os.environ.get("HELIOAI_DEV_TOKEN", "")
@@ -373,7 +380,7 @@ def _load() -> Settings:
     s = Settings(
         data_dir=data_dir,
         web_auth=WebAuthConfig(users=web_users),
-        workspace=WorkspaceConfig(workspace_dir=workspace_dir, ttl_seconds=workspace_ttl),
+        workspace=WorkspaceConfig(ttl_seconds=workspace_ttl),
         profile=ProfileConfig(profile_path=profile_path),
         recipes=RecipesConfig(recipes_dir=recipes_dir),
         catalogs=CatalogsConfig(catalogs_dir=catalogs_dir),
@@ -387,7 +394,7 @@ def _load() -> Settings:
             provider=os.environ.get("HELIOAI_VISION_PROVIDER", "azure").lower(),
             model=os.environ.get("HELIOAI_VISION_MODEL", ""),
         ),
-        rag=RAGConfig(hybrid_enabled=hybrid_enabled),
+        rag=RAGConfig(chroma_dir=data_dir / "chroma", hybrid_enabled=hybrid_enabled),
         dev=DevConfig(token=dev_token),
         llm=LLMConfig(
             provider=provider,

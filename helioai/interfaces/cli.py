@@ -349,14 +349,21 @@ def _interactive(*, restricted: bool = True) -> None:
 
 
 def _run_migrate_storage() -> None:
-    """One-shot, idempotent migration of legacy flat storage into per-user homes."""
+    """One-shot, idempotent migration of legacy storage layouts.
+
+    Two layouts are folded in. Flat storage (`data/catalogs`, `data/profiles/*.md`,
+    `data/profile.md`) moves into per-user homes. And for an install that sets
+    `HELIOAI_DATA_DIR`: the index, catalogues and profile that older versions kept
+    deriving from the *default* data directory move under the configured one — see
+    `_migrate_split_data_dir`.
+    """
     import shutil
     from pathlib import Path
 
     from helioai.config import settings
     from helioai.workspace import DEFAULT_USER, user_home
 
-    moved = 0
+    moved = _migrate_split_data_dir()
 
     legacy_catalogs = Path(settings.catalogs.catalogs_dir)
     if legacy_catalogs.is_dir():
@@ -386,6 +393,39 @@ def _run_migrate_storage() -> None:
             moved += 1
 
     print(f"migrate-storage: moved {moved} file(s) into data/users/")
+
+
+def _migrate_split_data_dir() -> int:
+    """Move `chroma/`, `catalogs/` and `profile.md` from the default data directory to
+    the configured one, when `HELIOAI_DATA_DIR` points elsewhere.
+
+    Until 0.3.0 those three derived from the default directory whatever the variable
+    said, so a Docker volume held sessions under `/app/data` and the index under
+    `/app/data/helioai`. Each item moves only when the destination does not exist yet,
+    which keeps the command re-runnable and never overwrites a rebuilt index.
+
+    Returns:
+        How many items moved.
+    """
+    import shutil
+
+    from helioai.config import _default_data_dir, settings
+
+    legacy_root = _default_data_dir()
+    if legacy_root.resolve() == settings.data_dir.resolve():
+        return 0
+    moved = 0
+    for src, dst in (
+        (legacy_root / "chroma", settings.rag.chroma_dir),
+        (legacy_root / "catalogs", settings.catalogs.catalogs_dir),
+        (legacy_root / "profile.md", settings.profile.profile_path),
+    ):
+        if src.exists() and not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))
+            print(f"migrate-storage: {src} -> {dst}")
+            moved += 1
+    return moved
 
 
 _MCP_CLIENTS = ("claude-code", "claude-code-project", "claude-desktop", "codex")

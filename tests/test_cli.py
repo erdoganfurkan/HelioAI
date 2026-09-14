@@ -264,3 +264,67 @@ def test_a_query_mentioning_help_is_still_a_query(monkeypatch):
     cli.main()
 
     assert seen["q"] == "what does the --help flag of speasy do"
+
+
+# ── migrate-storage: the split data directory ─────────────────────────────────
+
+
+def _split_layout(tmp_path, monkeypatch):
+    """A pre-0.3.0 install with HELIOAI_DATA_DIR set: sessions under `configured/`,
+    index / catalogues / profile under the default tree the variable did not reach."""
+    import helioai.config as cfg
+    from helioai.config import settings
+
+    legacy = tmp_path / "default"
+    configured = tmp_path / "configured"
+    (legacy / "chroma").mkdir(parents=True)
+    (legacy / "chroma" / "chroma.sqlite3").write_text("index")
+    (legacy / "catalogs").mkdir()
+    (legacy / "catalogs" / "shocks.json").write_text("[]")
+    (legacy / "profile.md").write_text("I study shocks")
+    configured.mkdir()
+
+    monkeypatch.setattr(cfg, "_default_data_dir", lambda: legacy)
+    monkeypatch.setattr(settings, "data_dir", configured)
+    monkeypatch.setattr(settings.rag, "chroma_dir", configured / "chroma")
+    monkeypatch.setattr(settings.catalogs, "catalogs_dir", configured / "catalogs")
+    monkeypatch.setattr(settings.profile, "profile_path", configured / "profile.md")
+    return legacy, configured
+
+
+def test_migrate_storage_moves_the_split_tree_under_the_configured_data_dir(tmp_path, monkeypatch):
+    from helioai.interfaces import cli
+
+    legacy, configured = _split_layout(tmp_path, monkeypatch)
+    moved = cli._migrate_split_data_dir()
+
+    assert moved == 3
+    assert (configured / "chroma" / "chroma.sqlite3").read_text() == "index"
+    assert (configured / "catalogs" / "shocks.json").exists()
+    assert not (legacy / "chroma").exists()
+    assert not (legacy / "profile.md").exists()
+
+
+def test_migrate_storage_never_overwrites_and_is_idempotent(tmp_path, monkeypatch):
+    from helioai.interfaces import cli
+
+    legacy, configured = _split_layout(tmp_path, monkeypatch)
+    (configured / "chroma").mkdir()
+    (configured / "chroma" / "chroma.sqlite3").write_text("rebuilt")
+
+    assert cli._migrate_split_data_dir() == 2
+    assert (configured / "chroma" / "chroma.sqlite3").read_text() == "rebuilt"
+    assert (legacy / "chroma" / "chroma.sqlite3").read_text() == "index"
+    assert cli._migrate_split_data_dir() == 0
+
+
+def test_migrate_storage_is_a_no_op_when_the_data_dir_is_the_default(tmp_path, monkeypatch):
+    import helioai.config as cfg
+    from helioai.config import settings
+    from helioai.interfaces import cli
+
+    (tmp_path / "chroma").mkdir()
+    monkeypatch.setattr(cfg, "_default_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    assert cli._migrate_split_data_dir() == 0
+    assert (tmp_path / "chroma").exists()

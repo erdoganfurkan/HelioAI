@@ -84,7 +84,6 @@ def test_user_data_is_never_written_inside_the_package():
     for label, path in (
         ("data_dir", settings.data_dir),
         ("chroma_dir", settings.rag.chroma_dir),
-        ("workspace_dir", settings.workspace.workspace_dir),
         ("catalogs_dir", settings.catalogs.catalogs_dir),
         ("profile_path", settings.profile.profile_path),
     ):

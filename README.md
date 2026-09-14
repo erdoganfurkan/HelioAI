@@ -122,7 +122,7 @@ Plus 217 AMDA event catalogs and timetables. Ask `helioai "what missions are ava
 |---|---|
 | [Quickstart](https://erdoganfurkan.github.io/HelioAI/quickstart/) | First session, end to end |
 | [Interfaces](https://erdoganfurkan.github.io/HelioAI/guide/interfaces/) | CLI · Jupyter · web UI · MCP |
-| [Agent tools](https://erdoganfurkan.github.io/HelioAI/guide/tools/) | The 17 tools and 4 sub-agents |
+| [Agent tools](https://erdoganfurkan.github.io/HelioAI/guide/tools/) | The 18 tools and 4 sub-agents |
 | [Recipes and provenance](https://erdoganfurkan.github.io/HelioAI/guide/recipes/) | The 11 vetted scientific scripts |
 | [Reproducible export](https://erdoganfurkan.github.io/HelioAI/guide/export/) | How a session becomes a notebook |
 | [Architecture](https://erdoganfurkan.github.io/HelioAI/dev/architecture/) | For contributors |

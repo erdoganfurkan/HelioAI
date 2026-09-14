@@ -60,7 +60,7 @@ helioai/
 │   └── llm/                base, openai_compat (groq/ollama/azure/opencode), azure, gemini, factory
 ├── tools/
 │   ├── registry.py         ToolRegistry — JSON dispatch to async functions
-│   ├── setup.py            registers the 17 tools on import — without it the registry is EMPTY
+│   ├── setup.py            registers the 18 tools on import — without it the registry is EMPTY
 │   ├── rag.py              hybrid BM25 + dense, fused by RRF
 │   └── ...                 speasy, catalogs, plasmapy, sandbox, recipes, literature, mcp_client
 └── interfaces/             cli.py, jupyter_magic.py, web/ (FastAPI + SSE)

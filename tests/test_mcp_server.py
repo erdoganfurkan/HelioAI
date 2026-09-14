@@ -373,10 +373,10 @@ async def test_sandbox_failure_is_reported_as_an_error(monkeypatch, tmp_path):
     assert result.is_error is True
 
 
-async def test_list_tools_marks_the_two_writers_as_not_read_only():
+async def test_list_tools_marks_the_three_writers_as_not_read_only():
     result = await ms._list_tools(None, None)
     writers = {t.name for t in result.tools if not t.annotations.read_only_hint}
-    assert writers == {"run_python", "save_catalog"}
+    assert writers == {"run_python", "run_recipe", "save_catalog"}
 
 
 async def test_list_tools_annotates_every_tool():

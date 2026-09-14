@@ -33,6 +33,7 @@ EXPECTED_TOOLS = {
     "save_catalog",
     "list_recipes",
     "load_recipe",
+    "run_recipe",
     "find_papers",
 }
 

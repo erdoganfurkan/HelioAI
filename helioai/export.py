@@ -532,7 +532,8 @@ def _collect_recipes(history) -> list[dict]:
     """Return the methods/recipes used during the session, for the Methods section.
 
     Three sources:
-      - load_recipe tool calls → reference/description read from the recipe file header
+      - load_recipe and run_recipe tool calls → reference/description read from the
+        recipe file header
       - document_method() cards in run_python results (methods computed outside a recipe)
       - `recipe_used` artifacts carried back in a sub-agent's task result — a recipe the
         data_analyst loaded never appears as a lead tool call, only there
@@ -559,7 +560,7 @@ def _collect_recipes(history) -> list[dict]:
 
     for m in history:
         for tc in m.tool_calls or []:
-            if tc.name != "load_recipe":
+            if tc.name not in ("load_recipe", "run_recipe"):
                 continue
             args = tc.arguments
             if isinstance(args, str):

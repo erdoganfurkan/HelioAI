@@ -293,7 +293,9 @@ async def test_a_policy_with_nothing_deferred_shows_every_tool_and_no_finder():
 
 def test_the_lead_defers_ten_tools_and_the_gain_is_what_was_measured():
     """Pins the measurement the deferral rests on: 21 definitions per call before,
-    11 plus the finder after. A tool added to the registry shows up here on purpose."""
+    11 plus the finder after — 22 and 12 since `run_recipe`, which is shown, not deferred,
+    and so costs the saving a point. A tool added to the registry shows up here on
+    purpose."""
     import json
 
     import helioai.tools.setup  # noqa: F401
@@ -311,8 +313,8 @@ def test_the_lead_defers_ten_tools_and_the_gain_is_what_was_measured():
             len(json.dumps({"n": t.name, "d": t.description, "p": t.parameters})) for t in ts
         )
 
-    assert len(defs) == 21 and len(shown) == 12
-    assert size(shown) < 0.62 * size(defs), "the finder must not eat the saving"
+    assert len(defs) == 22 and len(shown) == 13
+    assert size(shown) < 0.63 * size(defs), "the finder must not eat the saving"
 
 
 # ── streaming ─────────────────────────────────────────────────────────────────────

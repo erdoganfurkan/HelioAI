@@ -462,6 +462,45 @@ registry.register(
 )(_rcp.load_recipe)
 
 registry.register(
+    name="run_recipe",
+    description=(
+        "Run a shipped recipe as shipped on this session's data — no copying its code into "
+        "run_python, no rewriting its formula. `inputs` binds the variables the recipe reads: "
+        "a string is a Python expression evaluated in the sandbox (e.g. "
+        '{"B_up": "load_data(\'b3gsm\').values[m_up]"}), a number or list is literal. For a '
+        "recipe that is a library of functions (rankine_hugoniot, pressure_balance, "
+        "shock_timing_2sc), pass `call`: one expression applying its function to the inputs. "
+        "Returns the recipe's own export() values, stdout and figures, and records the recipe "
+        "and its reference as the method used. Download data with get_timeseries first."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Recipe name from list_recipes (e.g. 'theta_bn').",
+            },
+            "inputs": {
+                "type": "object",
+                "description": "{variable: expression-or-literal}, bound before the recipe runs.",
+                "additionalProperties": True,
+            },
+            "call": {
+                "type": "string",
+                "description": "Optional expression evaluated after the recipe; its value is printed.",
+            },
+            "timeout": {
+                "type": "number",
+                "description": "Max execution time in seconds (default 60).",
+                "default": 60.0,
+            },
+        },
+        "required": ["name"],
+    },
+    read_only=False,
+)(_rcp.run_recipe)
+
+registry.register(
     name="find_papers",
     description=(
         "Search the peer-reviewed literature via NASA ADS (astronomy/heliophysics). "

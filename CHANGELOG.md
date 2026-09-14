@@ -118,6 +118,19 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Added
 
+- **A recipe runs as shipped: `run_recipe(name, inputs)`.** `load_recipe` handed the model
+  the source and the model then pasted a part of it into `run_python` — or read its
+  constants and rewrote the computation by hand, which is what the recipe check keeps
+  catching. The new tool binds the inputs first (`{"B_up": "load_data('b3gsm').values[m_up]"}`,
+  each a Python expression evaluated in the sandbox, or a literal), inserts the recipe's
+  source verbatim, and — for a recipe that is a library of functions rather than a script,
+  such as `rankine_hugoniot` — applies one `call` to the inputs. The numbers come from the
+  recipe's own `export()` calls, the script written to the workspace is the one the
+  notebook export reproduces, and the run is recorded as a use of the recipe with its
+  reference. A recipe whose demo is guarded by `if __name__ == "__main__":` runs its
+  functions, not its demo. `data_analyst` and `plasma_physicist` may call it; a recipe run
+  this way is exempt from the recipe check. Tested in the real sandbox on the shapes the
+  data actually has — a Wind SWE scalar is `(N, 1)`.
 - **One agent loop.** `stream_chat` (the lead) and `stream_subagent` (a delegated role)
   were two copies of the same loop — call the model, start the tool calls, review the
   figures, emit the events, append the results — and drifted the way copies do. The loop

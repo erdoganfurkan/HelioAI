@@ -83,6 +83,11 @@ def describe_tool_call(name: str, arguments: dict | None) -> str:
         n_lines = len(str(args.get("code", "")).splitlines())
         return f"{n_lines} lines of Python" if n_lines else "Python"
 
+    if name == "run_recipe":
+        bound = args.get("inputs") or {}
+        names = ", ".join(str(k) for k in bound) if isinstance(bound, dict) else ""
+        return _clip(f"{args.get('name', '')}({names})")
+
     if name == "search_parameters":
         queries = args.get("queries")
         if isinstance(queries, list) and queries:
@@ -159,7 +164,7 @@ def describe_tool_result(name: str, result: str) -> str:
                 top = str(results[0].get("id", ""))
             return _clip(f"{len(results)} hits" + (f", top {top}" if top else ""))
 
-    if name == "run_python":
+    if name in ("run_python", "run_recipe"):
         bits = []
         n_fig = data.get("n_figures") or len(data.get("figure_paths") or [])
         if n_fig:

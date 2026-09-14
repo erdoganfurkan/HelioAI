@@ -119,6 +119,7 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "get_timeseries",
             "get_events_timeseries",
             "load_recipe",
+            "run_recipe",
             "run_python",
         ),
         # 8 was not enough for a multi-spacecraft job: discovering that a CDA
@@ -168,7 +169,13 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
         # list_recipes/load_recipe were missing, so this role could not reach the
         # recipes even though several exist for exactly its job. It reinvented the
         # jump conditions each time, unattributably.
-        allowed_tools=("run_python", "search_parameters", "list_recipes", "load_recipe"),
+        allowed_tools=(
+            "run_python",
+            "search_parameters",
+            "list_recipes",
+            "load_recipe",
+            "run_recipe",
+        ),
         max_turns=4,
         auto_load_skills=("plasma_physicist",),
         sandbox_no_network=True,

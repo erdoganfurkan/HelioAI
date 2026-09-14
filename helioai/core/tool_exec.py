@@ -252,7 +252,7 @@ def _extract_artifact(tool_name: str, payload: object) -> list[dict]:
         # A failed run leaves the offending script on disk. Surfacing it is the whole
         # point when something broke — hiding it left the user watching a bare
         # "exited with code 1" with no way to see what ran.
-        if tool_name == "run_python" and data.get("code_path"):
+        if tool_name in _SANDBOX_TOOLS and data.get("code_path"):
             return [
                 artifact(
                     "code",
@@ -267,8 +267,9 @@ def _extract_artifact(tool_name: str, payload: object) -> list[dict]:
 
     artifacts: list[dict] = []
 
-    # Python sandbox: figures + parameter cards emitted via param_card()
-    if tool_name == "run_python":
+    # Python sandbox: figures + parameter cards emitted via param_card(). A recipe run
+    # is a sandbox run whose `method_used` card names the recipe.
+    if tool_name in _SANDBOX_TOOLS:
         if data.get("figure_paths"):
             artifacts.append(
                 artifact(
@@ -375,12 +376,12 @@ def trusted_args(name: str, ctx: RunContext | None = None, *, no_network: bool =
     """The framework-injected arguments of the tools that write to disk.
 
     Passed via `call_tool(..., trusted=...)`, so they bypass the private-argument guard
-    that rejects model- or MCP-supplied `_*` overrides. `run_python` gets its workspace,
-    run index and network flag; `get_timeseries` and `get_events_timeseries` the
-    session's data directory; `save_catalog` the user's catalogue directory. Every other
-    tool gets nothing. Reading them off the context rather than off the workspace
-    contextvars is what lets a tool called from a test, or over MCP, write where its
-    caller said and nowhere else.
+    that rejects model- or MCP-supplied `_*` overrides. `run_python` and `run_recipe` get
+    their workspace, run index and network flag; `get_timeseries` and
+    `get_events_timeseries` the session's data directory; `save_catalog` the user's
+    catalogue directory. Every other tool gets nothing. Reading them off the context
+    rather than off the workspace contextvars is what lets a tool called from a test, or
+    over MCP, write where its caller said and nowhere else.
 
     Args:
         name: Tool about to be called.
@@ -410,14 +411,17 @@ def trusted_args(name: str, ctx: RunContext | None = None, *, no_network: bool =
     return args
 
 
-_WRITING_TOOLS: frozenset[str] = frozenset(
-    {"run_python", "get_timeseries", "get_events_timeseries", "save_catalog"}
+# The two ways into the sandbox: the model's own code, or a shipped recipe on its inputs.
+_SANDBOX_TOOLS: frozenset[str] = frozenset({"run_python", "run_recipe"})
+
+_WRITING_TOOLS: frozenset[str] = _SANDBOX_TOOLS | frozenset(
+    {"get_timeseries", "get_events_timeseries", "save_catalog"}
 )
 
 
-# Tools that must run one at a time within a turn: run_python numbers its scripts from
+# Tools that must run one at a time within a turn: a sandbox run numbers its script from
 # what is on disk (`get_next_run_idx`) and writes into the one session directory.
-_SEQUENTIAL_TOOLS: frozenset[str] = frozenset({"run_python"})
+_SEQUENTIAL_TOOLS: frozenset[str] = _SANDBOX_TOOLS
 
 
 def start_tool_calls(
@@ -665,6 +669,10 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
     textual: a run that redefines a function under the recipe's own name passes it.
     One flag per recipe; "never called" is the more specific finding and wins.
 
+    A recipe the turn ran through `run_recipe` is exempt from all three: the shipped
+    source ran, verbatim, on the inputs the tool bound — which is the very thing the
+    signals try to establish from the outside.
+
     Args:
         text: The finished answer.
         history: The run's message history, to check which recipes were loaded, read
@@ -681,6 +689,7 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
     loaded_calls: dict[str, str] = {}  # tool_call_id -> recipe name
     load_positions: dict[str, int] = {}  # tool_call_id -> index in history
     python_calls: list[tuple[int, str]] = []  # (index in history, code)
+    ran: set[str] = set()
     for i, m in enumerate(history):
         for tc in m.tool_calls or []:
             if tc.name == "load_recipe":
@@ -688,9 +697,13 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
                 if name:
                     loaded_calls[tc.id] = name
                     load_positions[tc.id] = i
+            elif tc.name == "run_recipe":
+                name = (tc.arguments or {}).get("name")
+                if name:
+                    ran.add(name)
             elif tc.name == "run_python":
                 python_calls.append((i, str((tc.arguments or {}).get("code") or "")))
-    loaded_names = set(loaded_calls.values())
+    loaded_names = set(loaded_calls.values()) | ran
 
     exported = _exported_names(artifacts)
     if not exported:
@@ -706,7 +719,7 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
     tool_results = {m.tool_call_id: m.content for m in history if m.role == "tool"}
     for call_id, recipe_name in loaded_calls.items():
         raw = tool_results.get(call_id)
-        if not raw:
+        if not raw or recipe_name in ran:
             continue
         try:
             payload = json.loads(raw)

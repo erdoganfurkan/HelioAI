@@ -30,14 +30,14 @@ helioai/
 ├── tools/
 │   ├── registry.py         ToolRegistry — JSON dispatch to async functions
 │   ├── results.py          ToolResult — a call's payload and the text the model reads
-│   ├── setup.py            registers all 17 tools at import
+│   ├── setup.py            registers all 18 tools at import
 │   ├── rag.py              hybrid BM25 + dense retrieval, fused by RRF
 │   ├── speasy_tools.py     search, download, data-quality scan
 │   ├── catalog_tools.py    AMDA catalogs, event timeseries
 │   ├── plasmapy_tools.py   formulary wrappers
 │   ├── sandbox.py          bubblewrap-isolated Python execution
 │   ├── sandbox_helpers.py  coordinate transforms, boundary models
-│   ├── recipes.py          recipe loading
+│   ├── recipes.py          recipe loading, and run_recipe: a recipe run as shipped
 │   ├── literature.py       NASA ADS
 │   └── mcp_client.py       mounts remote MCP servers into the registry
 ├── data/recipes/           shipped scientific recipes (inside the package)

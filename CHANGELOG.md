@@ -158,9 +158,10 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   interfaces. A step's `tool` field is read word by word against the tools the lead
   knows (the model writes "search_parameters + get_timeseries"), and a planned tool a
   sub-agent ran for the lead is a step done, not a deviation — on the first live run the
-  lead delegated every step and the report said `0/4 used, unplanned: task`. The
-  scaffolding calls (the plan itself, the skills, `search_tools`, `final_answer`) count
-  for nothing on either side.
+  lead delegated every step and the report said `0/4 used, unplanned: task`. What a
+  sub-agent does with its delegation is its whitelist's business, never "unplanned"; only
+  the lead's own improvised calls are. The scaffolding calls (the plan itself, the skills,
+  `search_tools`, `final_answer`) count for nothing on either side.
 - **One verdict on the answer.** The lead's reply was judged from four places — the
   catalogue ids, the recipe bypass, the numbers in the prose, the figures — each with its
   own event and none aware of the others. `runtime.validator` runs them in one call, and

@@ -258,13 +258,49 @@ def test_a_step_naming_two_tools_plans_both_and_an_unknown_word_plans_nothing():
     assert report["missed_tools"] == ["get_timeseries"] and report["unplanned_tools"] == []
 
 
-def test_a_delegation_the_plan_never_needed_is_still_not_a_deviation_but_its_tools_are():
-    """`task` never counts as unplanned — it is a means — but what the sub-agent did with
-    it is compared to the plan like the lead's own calls."""
+def test_a_sub_agents_tools_are_never_unplanned_but_a_planned_tool_nobody_ran_is_missed():
+    """`task` never counts as unplanned — it is a means — and neither does what the role
+    did with it: its whitelist governs that, not the lead's plan. The signal is the step
+    nobody ran."""
     plan = Plan.from_payload({"title": "t", "steps": [{"description": "d", "tool": "run_python"}]})
     report = adherence(plan, [_call("task"), _sub("find_papers", "librarian")], known=KNOWN)
-    assert report["unplanned_tools"] == ["find_papers"] and report["missed_tools"] == ["run_python"]
-    assert report["ratio"] == 0.0
+    assert report["unplanned_tools"] == [] and report["missed_tools"] == ["run_python"]
+    assert report["delegated"] == ["find_papers"] and report["ratio"] == 0.0
+
+
+def test_a_plan_written_in_delegations_alone_is_followed_by_delegating():
+    """Second live run: every step said `task (data_analyst)` or `task (librarian)`; the
+    analyst then called six tools, all reported as unplanned. They are the role's
+    business."""
+    plan = Plan.from_payload(
+        {
+            "title": "t",
+            "steps": [
+                {"description": "resolve, download, plot, θ_Bn", "tool": "task (data_analyst)"},
+                {"description": "papers", "tool": "task (librarian)"},
+            ],
+        }
+    )
+    turn = [
+        _call("task"),
+        _sub("search_parameters", "data_analyst"),
+        _sub("get_timeseries", "data_analyst"),
+        _sub("load_recipe", "data_analyst"),
+        _sub("run_python", "data_analyst"),
+        _sub("run_recipe", "data_analyst"),
+        _call("task"),
+        _sub("find_papers", "librarian"),
+    ]
+    report = adherence(plan, turn, known=KNOWN)
+    assert report["planned"] == ["task"] and report["ratio"] == 1.0
+    assert report["unplanned_tools"] == [] and report["missed_tools"] == []
+    assert len(report["delegated"]) == 6
+
+
+def test_the_leads_own_improvisation_is_still_unplanned():
+    plan = Plan.from_payload({"title": "t", "steps": [{"description": "d", "tool": "task"}]})
+    report = adherence(plan, [_call("task"), _call("find_papers")], known=KNOWN)
+    assert report["unplanned_tools"] == ["find_papers"]
 
 
 def test_without_a_known_set_every_word_of_a_tool_field_is_taken_as_a_tool():

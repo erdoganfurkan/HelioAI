@@ -14,10 +14,13 @@ Two things the first live run settled. A step's `tool` field is prose — the mo
 word against the tools the lead knows, not compared whole. And a planned tool the lead
 had a sub-agent run is a step done, not a deviation: the lead planned the analysis in its
 analyst's tools and then delegated every step, and the report said `0/4 used, unplanned:
-task`. `task` is how a step gets done, so it is never unplanned on its own; what the
-sub-agent did with it is held to the plan like the lead's own calls. The scaffolding
-calls (the plan itself, the skills, `search_tools`, `final_answer`) count for nothing on
-either side.
+task`. A sub-agent's calls therefore satisfy the plan; they are never unplanned — the
+second run planned in delegations alone (`task (data_analyst)`) and its analyst's six
+tools were all "unplanned" — because the `task` step covers whatever the role does, and
+the role's whitelist, not the lead's plan, governs it. What the lead does with its own
+hands is held to the plan, `task` excepted: delegating is how a step gets done. The
+scaffolding calls (the plan itself, the skills, `search_tools`, `final_answer`) count for
+nothing on either side.
 """
 
 from __future__ import annotations
@@ -128,10 +131,10 @@ def adherence(plan: Plan, events: Iterable[dict], known: Collection[str] | None 
     Returns:
         The `plan_report` payload — `title`, `planned` (the tools the plan named),
         `executed` (the tools the lead called itself), `delegated` (the tools its
-        sub-agents called), `unplanned_tools` (called by either, never planned, `task`
-        excepted), `missed_tools` (planned, called by neither) and `ratio`, the share
-        of planned tools that were called, or None when the plan named no tool and
-        there is nothing to hold the run to.
+        sub-agents called), `unplanned_tools` (the lead's own calls that were never
+        planned, `task` excepted), `missed_tools` (planned, called by neither) and
+        `ratio`, the share of planned tools that were called, or None when the plan
+        named no tool and there is nothing to hold the run to.
     """
     planned = plan.tools(known)
     own, delegated = calls_made(events)
@@ -142,7 +145,7 @@ def adherence(plan: Plan, events: Iterable[dict], known: Collection[str] | None 
         "planned": planned,
         "executed": own,
         "delegated": delegated,
-        "unplanned_tools": [t for t in done if t not in planned and t != DELEGATION],
+        "unplanned_tools": [t for t in own if t not in planned and t != DELEGATION],
         "missed_tools": [t for t in planned if t not in done],
         "ratio": round(len(followed) / len(planned), 2) if planned else None,
     }

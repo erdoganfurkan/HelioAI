@@ -116,6 +116,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   `run_python` really sandboxed or on the fallback path (and why), how big the speasy
   inventory and the workspaces have grown. Offline by default, `--online` probes the
   provider once, `--json` for bug reports and CI; exit code 1 when a check fails.
+- **The event contract lives in one place.** `core/events.py` lists every kind the
+  agent loops emit with its payload keys and every artifact kind; a static test holds
+  the emitters, the CLI, the notebook magic and the browser to that list, so a kind
+  added to a loop and forgotten in one interface — or documented and never emitted —
+  fails in CI. Three docstrings used to carry their own, disagreeing copies.
 
 ### Removed
 

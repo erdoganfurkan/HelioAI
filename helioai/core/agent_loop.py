@@ -9,17 +9,8 @@ Two consumption modes share the same generator core (stream_chat):
   - chat()        → collects all events, returns a single ChatResult
   - stream_chat() → async generator, yields one event dict per step
 
-Event shapes:
-  tool_call       {turn, name, arguments}
-  tool_result     {turn, name, summary}
-  sub_agent_start {task_id, role, description}
-  sub_agent_end   {task_id, role, summary, n_iterations, error, findings}
-  plan            {title, steps}
-  skill_loaded    {name}
-  reply           {text}
-  provenance      {matched, contradicted, derived, unsourced, details}
-  done            {n_iterations}
-  error           {message}
+Event kinds and their payloads are listed once, in `core/events.py`, and held to the
+emitters and the three renderers by `tests/test_events_contract.py`.
 """
 
 from __future__ import annotations
@@ -327,11 +318,8 @@ async def stream_chat(
             False (dev token) exposes the base prompt only.
 
     Yields:
-        Dicts with an `"event"` key, one of: `reply` (streamed answer text),
-        `tool_call` / `tool_result`, `artifact` (figure, parameter card, code),
-        `plan`, `sub_agent_start` / `sub_agent_end`, `skill_loaded`,
-        `figure_review`, `provenance`, `invalid_ids`, `recipe_bypassed`,
-        `error`, and finally `done`.
+        Dicts with an `"event"` key and a `"data"` payload — every kind listed in
+        `core/events.py`; the turn ends with `done`.
 
     Example:
         >>> llm = build_llm_client()

@@ -3,6 +3,8 @@
 Each role declares a tool whitelist, a system addon, and an optional set
 of skills auto-loaded into the sub's system prompt. Sub-agents run in
 isolation with a fresh context — the lead's history is invisible to them.
+
+The events a sub-agent yields are the non-lead-only kinds of `core/events.py`.
 """
 
 from __future__ import annotations
@@ -306,9 +308,10 @@ async def stream_subagent(
 ) -> AsyncIterator[dict]:
     """Async generator that runs a sub-agent and yields progress events.
 
-    Yields the same event types as stream_chat (tool_call, tool_result,
-    skill_loaded, artifact) enriched with sub_agent_ctx={role, task_id},
-    then a final sub_agent_end event carrying summary/artifacts/n_iterations/error.
+    Yields the kinds of `core/events.py` that are not lead-only (tool_call, tool_result,
+    skill_loaded, artifact, figure_review, invalid_ids, recipe_bypassed), each enriched
+    with sub_agent_ctx={role, task_id}, then a final sub_agent_end carrying
+    findings/summary/artifacts/n_iterations/error.
 
     `summary` is the sub-agent's whole deliverable and is emitted in full: it becomes
     the lead's tool result, so anything cut here is a measurement the lead can no

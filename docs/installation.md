@@ -79,7 +79,7 @@ GROQ_API_KEY=your_key_here
 | `opencode` | set `HELIOAI_OPENCODE_MODEL` | OpenCode's Zen gateway, flat-rate access to hosted reasoning models |
 | `ollama` | `qwen2.5:14b-instruct` | fully local, no API key |
 
-Any other OpenAI-compatible endpoint works too: a provider is a `base_url` entry in
+Every variable is listed in [Configuration](configuration.md). Any other OpenAI-compatible endpoint works too: a provider is a `base_url` entry in
 `helioai/core/llm/factory.py`, not a class. See [Extending HelioAI](dev/extending.md).
 
 !!! note "Data access needs no key"

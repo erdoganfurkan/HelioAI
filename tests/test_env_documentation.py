@@ -44,6 +44,15 @@ def test_every_setting_read_from_the_environment_is_in_env_example():
     assert not missing, f"read by the code, absent from .env.example: {sorted(missing)}"
 
 
+def test_every_setting_is_in_the_configuration_page():
+    """docs/configuration.md is the reference a user reads; .env.example is the template
+    they copy. Both must know every variable."""
+    page = (ROOT / "docs" / "configuration.md").read_text(encoding="utf-8")
+    documented = set(re.findall(r"`([A-Z][A-Z0-9_]+)`", page))
+    missing = _env_vars_read_by_the_code() - documented
+    assert not missing, f"read by the code, absent from docs/configuration.md: {sorted(missing)}"
+
+
 def test_env_example_documents_nothing_the_code_no_longer_reads():
     """The reverse drift: a variable kept in the example after the code stopped reading it
     (HELIOAI_WORKSPACE was one) sends users configuring a knob that does nothing."""

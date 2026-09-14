@@ -128,6 +128,9 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   charged to the parent session under its role. `helioai history` shows a tokens column,
   `GET /api/me` returns the caller's totals for the day, the month and all time — the
   number a per-user quota compares against.
+- **A configuration reference** (`docs/configuration.md`): every environment variable,
+  its default and its effect, grouped by provider / agent / storage / serving. A test
+  fails when the code reads a variable the page does not list.
 
 ### Removed
 

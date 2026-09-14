@@ -21,6 +21,7 @@ from pathlib import Path
 
 from helioai import provenance
 from helioai.core.event_display import describe_tool_result, finding_str
+from helioai.core.llm.base import ToolCall
 
 # Tools whose results contain large lists (per_event_stats, sample rows) that would
 # flood the LLM context. All other tools pass through untouched so the LLM can reason
@@ -393,7 +394,9 @@ def inject_run_python_args(name: str, *, no_network: bool = False) -> dict:
 _SEQUENTIAL_TOOLS: frozenset[str] = frozenset({"run_python"})
 
 
-def start_tool_calls(tool_calls, *, allowed: set[str] | None = None) -> dict[str, asyncio.Task]:
+def start_tool_calls(
+    tool_calls: list[ToolCall] | None, *, allowed: set[str] | None = None
+) -> dict[str, asyncio.Task]:
     """Start every parallel-safe registry call of a turn at once, keyed by call id.
 
     The prompt asks the model to batch its downloads in one turn, and the loops then

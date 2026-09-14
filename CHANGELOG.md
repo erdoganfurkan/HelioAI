@@ -104,6 +104,10 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   workspaces and a 300 MB speasy seed under `data/users` of whoever ran `pytest` — found
   twice by `ls`, months apart. Every test now gets its own data directory and session
   database, and the run fails, naming the paths, if anything under the real one changed.
+- **A cancelled `run_python` kills its sandbox.** Closing the browser tab cancels the
+  stream and, with it, the tool call — but only a timeout used to kill the subprocess, so
+  the bubblewrap tree kept running until its own 300 s ceiling, one orphan per abandoned
+  question. Cancellation now kills the whole process group before propagating.
 
 ### Added
 

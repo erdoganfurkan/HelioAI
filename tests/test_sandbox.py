@@ -31,6 +31,44 @@ async def test_timeout_hard() -> None:
     assert "timed out" in result["error"].lower()
 
 
+async def test_a_cancelled_run_kills_its_process_tree(monkeypatch) -> None:
+    """Closing the browser tab cancels the SSE generator, and with it `run_python`.
+
+    Only `TimeoutError` used to kill the subprocess; a cancellation propagated straight
+    out of `wait_for` and left the bubblewrap tree running until its own 300 s ceiling —
+    a machine hosting a demo accumulated one orphan per abandoned question.
+    """
+    spawned: list[asyncio.subprocess.Process] = []
+    real_exec = asyncio.create_subprocess_exec
+
+    async def spy_exec(*args, **kwargs):
+        proc = await real_exec(*args, **kwargs)
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(sandbox.asyncio, "create_subprocess_exec", spy_exec)
+
+    task = asyncio.create_task(run_python("import time\nprint('up', flush=True)\ntime.sleep(60)"))
+    while not spawned:
+        await asyncio.sleep(0.02)
+    proc = spawned[0]
+    await asyncio.sleep(0.3)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.wait_for(proc.wait(), timeout=5)
+    assert proc.returncode is not None
+    for _ in range(100):
+        try:
+            os.killpg(proc.pid, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.05)
+    else:
+        pytest.fail(f"process group {proc.pid} still has live members after cancellation")
+
+
 async def test_timeout_is_capped_server_side(monkeypatch) -> None:
     """Real bug: an arbitrarily large caller-supplied timeout was honored as-is —
     nothing clamped it before asyncio.wait_for, so a single run could tie up a

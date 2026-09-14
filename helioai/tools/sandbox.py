@@ -183,14 +183,22 @@ def _seed_speasy_inventory(home: str) -> None:
 
 
 def _kill_proc_tree(proc: asyncio.subprocess.Process) -> None:
-    """Kill the subprocess and its whole session (grandchildren included)."""
+    """Kill the subprocess and its whole session (grandchildren included).
+
+    Both spawn paths use `start_new_session=True`, so the child leads a process group
+    of its own and one `killpg` reaches everything it forked. A process that exited
+    in the meantime is not an error here: the point was that it be gone.
+    """
     if sys.platform != "win32":
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             return
         except (ProcessLookupError, PermissionError):
             pass
-    proc.kill()
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
 
 
 _BWARP = shutil.which("bwrap")
@@ -863,6 +871,11 @@ async def run_python(
                 "stdout": stdout_bytes.decode("utf-8", errors="replace")[-2000:],
                 "stderr": stderr_bytes.decode("utf-8", errors="replace")[-2000:],
             }
+        except asyncio.CancelledError:
+            # The caller is gone (a closed SSE stream, a cancelled task): nothing will
+            # read this result, so nothing should keep running to produce it.
+            _kill_proc_tree(proc)
+            raise
 
         stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace")

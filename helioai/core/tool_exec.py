@@ -19,7 +19,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from helioai import provenance
-from helioai.core.event_display import describe_tool_result
+from helioai.core.event_display import describe_tool_result, finding_str
 
 # Tools whose results contain large lists (per_event_stats, sample rows) that would
 # flood the LLM context. All other tools pass through untouched so the LLM can reason
@@ -58,15 +58,6 @@ def _history_tool_result(tool_name: str, result_text: str) -> str:
     if tool_name in _HEAVY_TOOLS:
         return _redact_host_paths(_summarize_tool_result(result_text, max_chars=600))
     return _redact_host_paths(result_text)
-
-
-def _finding_str(entry) -> str:
-    if not isinstance(entry, dict):
-        return str(entry)[:60]
-    out = f"{entry.get('value')} {entry.get('units') or ''}".strip()
-    if entry.get("min") is not None:
-        out += f" [{entry['min']}, {entry['max']}]"
-    return out
 
 
 def _export_str(stats) -> str | None:
@@ -135,7 +126,7 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
         if isinstance(data.get("findings"), dict) and data["findings"]:
             # A run that hit its turn cap still measured things on the way there, and
             # dropping them here is how a lead ends up with nothing to report but prose.
-            measured = ", ".join(f"{n}={_finding_str(d)}" for n, d in data["findings"].items())
+            measured = ", ".join(f"{n}={finding_str(d)}" for n, d in data["findings"].items())
             summary += f"\nmeasured before failing: {measured}"
         return summary
 
@@ -143,7 +134,7 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
     text_fields: list[str] = []
     for k, v in data.items():
         if k == "findings" and isinstance(v, dict):
-            keep[k] = {n: _finding_str(d) for n, d in v.items()}
+            keep[k] = {n: finding_str(d) for n, d in v.items()}
         elif k == "exports" and isinstance(v, dict):
             lines = {n: _export_str(s) for n, s in v.items()}
             keep[k] = {n: s for n, s in lines.items() if s is not None}

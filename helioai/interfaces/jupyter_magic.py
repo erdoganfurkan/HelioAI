@@ -115,6 +115,8 @@ def _get_llm(provider: str | None = None):
 
 
 def _render_jupyter_event(ev: dict) -> None:
+    from helioai.core.event_display import describe_findings
+
     name, data = ev["event"], ev["data"]
     nested = "sub_agent_ctx" in data
     pad = "    " if nested else ""
@@ -139,7 +141,10 @@ def _render_jupyter_event(ev: dict) -> None:
         role = data.get("role", "")
         summary = (data.get("summary") or "")[:100]
         icon = "✗" if data.get("error") else "✓"
-        print(f"{icon} {role}: {data.get('error') or summary}\n")
+        print(f"{icon} {role}: {data.get('error') or summary}")
+        for line in describe_findings(data.get("findings")):
+            print(f"    {line}")
+        print()
 
     elif name == "skill_loaded":
         print(f"{pad}  📖 skill: {data['name']}")

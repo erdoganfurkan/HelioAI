@@ -232,7 +232,19 @@ function renderEvent(view, ev) {
   } else if (event === 'sub_agent_end') {
     const summary = (data.summary || '').slice(0, 100);
     const icon = data.error ? '✗' : '✓';
-    appendTlEvent(view, icon, `${data.role}: ${data.error || summary}`, 'tl-subagent');
+    const row = appendTlEvent(view, icon, `${data.role}: ${data.error || summary}`, 'tl-subagent');
+    // The measured values, not the prose: one line per finding, capped like the CLI.
+    const findings = Object.entries(data.findings || {});
+    if (findings.length) {
+      const list = el('ul', 'tl-findings');
+      for (const [name, f] of findings.slice(0, 8)) {
+        let text = `${name} = ${f.value}${f.units ? ' ' + f.units : ''}`;
+        if (f.min !== undefined && f.min !== null) text += ` [${f.min}, ${f.max}]`;
+        list.append(el('li', '', text));
+      }
+      if (findings.length > 8) list.append(el('li', '', `… and ${findings.length - 8} more`));
+      row.append(list);
+    }
 
   } else if (event === 'skill_loaded') {
     appendTlEvent(view, '📖', `skill: ${data.name}`, 'tl-skill' + nestCls);

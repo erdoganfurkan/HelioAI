@@ -233,3 +233,16 @@ def test_long_stdout_is_capped_and_says_how_much_was_hidden(capsys, monkeypatch)
     assert "03:58:00" in out
     assert "03:58:39" not in out
     assert "more lines" in out
+
+
+def test_sub_agent_end_lists_the_measured_values(capsys):
+    out = render(
+        capsys,
+        "sub_agent_end",
+        {
+            "role": "data_analyst",
+            "summary": "theta_Bn by coplanarity",
+            "findings": {"theta_bn_deg": {"value": 47.3, "units": "deg"}},
+        },
+    )
+    assert "theta_bn_deg = 47.3 deg" in out

@@ -31,6 +31,39 @@ def _window(args: dict) -> str:
     return f" {str(start)[:16]}→{str(stop)[:16]}" if stop else f" from {str(start)[:16]}"
 
 
+def finding_str(entry) -> str:
+    """`value units [min, max]` for one sub-agent finding, the way the model sees it."""
+    if not isinstance(entry, dict):
+        return str(entry)[:60]
+    out = f"{entry.get('value')} {entry.get('units') or ''}".strip()
+    if entry.get("min") is not None:
+        out += f" [{entry['min']}, {entry['max']}]"
+    return out
+
+
+def describe_findings(findings: dict | None, limit: int = 8) -> list[str]:
+    """One `name = value units` line per measured value, for a person.
+
+    The same text in the CLI, the notebook and the browser, computed once here. Capped
+    because a sub-agent that exported a diagnostic table would otherwise print it whole;
+    the cap says how many were left out.
+
+    Args:
+        findings: The `findings` table of a `sub_agent_end` event.
+        limit: Lines to show before summarising the rest.
+
+    Returns:
+        Lines ready to print, empty when there is nothing measured.
+    """
+    if not findings:
+        return []
+    items = list(findings.items())
+    lines = [f"{name} = {finding_str(entry)}" for name, entry in items[:limit]]
+    if len(items) > limit:
+        lines.append(f"… and {len(items) - limit} more")
+    return lines
+
+
 def describe_tool_call(name: str, arguments: dict | None) -> str:
     """Describe what the agent is about to do, in a reader's terms.
 

@@ -514,3 +514,61 @@ async def test_two_concurrent_turns_on_one_session_do_not_interleave(monkeypatch
     assert [m.role for m in reloaded] == ["user", "assistant", "user", "assistant"]
     for question, answer in zip(reloaded[::2], reloaded[1::2], strict=True):
         assert answer.content == f"answer to {question.content}"
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_end_reemitted_by_the_lead_keeps_the_findings(monkeypatch, tmp_path):
+    """`findings` is the table of values a sub-agent actually measured — the one part
+    of its report with an origin. The lead consumed the sub-agent's `sub_agent_end` and
+    re-emitted a stripped copy (summary, n_iterations, error), so no interface ever saw
+    the numbers; readers got them only when the model chose to quote them."""
+    from helioai.core import agent_loop
+    from helioai.core.llm.base import Message, ToolCall
+    from helioai.core.session import SessionStore
+
+    monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
+
+    findings = {"theta_bn_deg": {"value": 47.3, "units": "deg", "code_path": "code_0.py"}}
+
+    async def fake_subagent(**kwargs):
+        yield {
+            "event": "sub_agent_end",
+            "data": {
+                "task_id": kwargs["task_id"],
+                "role": kwargs["role"],
+                "findings": findings,
+                "summary": "theta_Bn by coplanarity",
+                "n_iterations": 2,
+                "error": None,
+                "artifacts": [],
+            },
+        }
+
+    monkeypatch.setattr(agent_loop, "stream_subagent", fake_subagent)
+
+    responses = [
+        Message(
+            role="assistant",
+            tool_calls=[
+                ToolCall(
+                    id="t1",
+                    name="task",
+                    arguments={"agent_role": "data_analyst", "description": "compute theta_Bn"},
+                )
+            ],
+        ),
+        Message(role="assistant", content="theta_Bn is 47.3 deg."),
+    ]
+
+    class _FakeLLM:
+        async def chat(self, messages, tools, **k):
+            return responses.pop(0)
+
+    events = [
+        ev
+        async for ev in agent_loop.stream_chat(_FakeLLM(), "web", "s1", "theta?", restricted=False)
+    ]
+    ends = [e["data"] for e in events if e["event"] == "sub_agent_end"]
+    assert len(ends) == 1
+    assert ends[0]["findings"] == findings
+    assert ends[0]["summary"] == "theta_Bn by coplanarity"

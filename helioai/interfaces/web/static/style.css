@@ -532,3 +532,6 @@ select:focus { border-color: var(--accent); }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Measured values under a finished sub-agent — the evidence, next to the summary. */
+.tl-findings { margin: 2px 0 0 1.6em; padding: 0; list-style: none; font-family: monospace; font-size: 0.85em; opacity: 0.85; }

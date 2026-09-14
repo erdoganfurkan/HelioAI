@@ -42,6 +42,10 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   from the default directory computed before the variable was read — so the Docker
   volume held two trees. The dead `HELIOAI_WORKSPACE` / `workspace_dir` setting, read
   and consumed by nothing since storage became per-user, is gone.
+- **A sub-agent's measured values never reached the screen.** The `sub_agent_end`
+  event the lead re-emits carried the prose summary but dropped `findings` — the table
+  of values the run actually computed, the one part of the report with an origin. The
+  CLI, the notebook and the browser now list them under the sub-agent's line.
 
 ### Changed
 

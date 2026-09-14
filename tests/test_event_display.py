@@ -130,3 +130,34 @@ def test_unknown_tool_result_avoids_dumping_raw_json():
 
 def test_empty_result_does_not_crash():
     assert isinstance(describe_tool_result("x", ""), str)
+
+
+# ── findings ──────────────────────────────────────────────────────────────────
+
+
+def test_describe_findings_one_line_per_measured_value():
+    from helioai.core.event_display import describe_findings
+
+    lines = describe_findings(
+        {
+            "theta_bn_deg": {"value": 47.3, "units": "deg"},
+            "r": {"value": 2.59, "units": "", "min": 2.41, "max": 2.77},
+        }
+    )
+    assert lines == ["theta_bn_deg = 47.3 deg", "r = 2.59 [2.41, 2.77]"]
+
+
+def test_describe_findings_is_empty_when_nothing_was_measured():
+    from helioai.core.event_display import describe_findings
+
+    assert describe_findings({}) == []
+    assert describe_findings(None) == []
+
+
+def test_describe_findings_caps_a_long_table_and_says_so():
+    from helioai.core.event_display import describe_findings
+
+    table = {f"v{i}": {"value": i, "units": "nT"} for i in range(12)}
+    lines = describe_findings(table, limit=8)
+    assert len(lines) == 9
+    assert lines[-1] == "… and 4 more"

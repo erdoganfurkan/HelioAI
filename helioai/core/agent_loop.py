@@ -13,7 +13,7 @@ Event shapes:
   tool_call       {turn, name, arguments}
   tool_result     {turn, name, summary}
   sub_agent_start {task_id, role, description}
-  sub_agent_end   {task_id, role, summary, n_iterations, error}
+  sub_agent_end   {task_id, role, summary, n_iterations, error, findings}
   plan            {title, steps}
   skill_loaded    {name}
   reply           {text}
@@ -507,12 +507,17 @@ async def _stream_turn(
                                         "error": end_data.get("error"),
                                     }
                                 )
+                                # `findings` travels with the event: it is the table of
+                                # values the run actually measured, and the interfaces
+                                # had no other way to show it — the prose summary is
+                                # the model's account, the findings are the evidence.
                                 sub_end_event = {
                                     "task_id": tc.id,
                                     "role": sub_role,
                                     "summary": end_data.get("summary", "")[:200],
                                     "n_iterations": end_data.get("n_iterations", 0),
                                     "error": end_data.get("error"),
+                                    "findings": end_data.get("findings", {}),
                                 }
                             else:
                                 yield sub_ev

@@ -154,6 +154,8 @@ def _capped_output(text: str, pad: str, max_lines: int = 6) -> str:
 
 
 def _render_event(ev: dict) -> None:
+    from helioai.core.event_display import describe_findings
+
     name, data = ev["event"], ev["data"]
     nested = "sub_agent_ctx" in data
     pad = "    " if nested else "  "
@@ -181,6 +183,8 @@ def _render_event(ev: dict) -> None:
         summary = (data.get("summary") or "")[:80]
         icon = "✗" if data.get("error") else "✓"
         print(f"  \033[94m{icon} {role}: {data.get('error') or summary}\033[0m")
+        for line in describe_findings(data.get("findings")):
+            print(f"      \033[94m{line}\033[0m")
 
     elif name == "skill_loaded":
         print(f"{pad}\033[95m📖 skill: {data['name']}\033[0m")

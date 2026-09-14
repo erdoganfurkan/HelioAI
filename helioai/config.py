@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hmac
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
@@ -292,8 +292,9 @@ class Settings:
     """Root settings object.
 
     Imported as the module-level `settings` singleton and read everywhere; built
-    once at import by `_load()`, which fails fast when the selected provider has
-    no API key.
+    once at import by `_load()`. Credentials are not checked here — importing must
+    work with no key at all — but in `llm.factory.build_llm_client`, where the
+    selected provider is actually used.
     """
 
     data_dir: Path = field(default_factory=lambda: _DATA)
@@ -419,8 +420,9 @@ def _load() -> Settings:
     )
 
     if out_override:
-        for name in ("azure", "gemini", "groq", "ollama"):
-            getattr(s.llm, name).max_output_tokens = out_override
+        for f in fields(s.llm):
+            if f.name != "provider":
+                getattr(s.llm, f.name).max_output_tokens = out_override
 
     return s
 

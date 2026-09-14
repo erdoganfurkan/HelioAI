@@ -8,6 +8,14 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
+### Fixed
+
+- **`HELIOAI_MAX_OUTPUT_TOKENS` now reaches the `opencode` provider.** The override
+  iterated a hand-written list of providers that predated opencode, so the exact
+  setting the "model returned neither text nor a tool call" error tells you to raise
+  did nothing for the provider the README recommends. Every provider declared on
+  `LLMConfig` is now covered, including ones added later.
+
 ## [0.2.1] — 2026-08-14
 
 Documentation only — no behaviour change. Everything here was already true of the code in

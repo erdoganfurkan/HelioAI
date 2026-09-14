@@ -64,6 +64,7 @@ GROQ_API_KEY=your_key_here
 | `groq` | `llama-3.3-70b-versatile` | free tier, fast — good place to start |
 | `gemini` | `gemini-2.5-flash` | stronger reasoning, generous free quota |
 | `azure` | your deployment | enterprise deployments |
+| `opencode` | set `HELIOAI_OPENCODE_MODEL` | OpenCode's Zen gateway, flat-rate access to hosted reasoning models |
 | `ollama` | `qwen2.5:14b-instruct` | fully local, no API key |
 
 Any other OpenAI-compatible endpoint works too: a provider is a `base_url` entry in

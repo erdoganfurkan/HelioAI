@@ -24,8 +24,11 @@ from helioai.config import settings
 
 
 async def test_list_tools_count():
+    """Every registered tool, no more, no fewer — `>= 10` let a tool silently vanish."""
+    from helioai.tools.registry import registry
+
     result = await ms._list_tools(None, None)
-    assert len(result.tools) >= 10
+    assert len(result.tools) == len(registry.list_tool_defs())
 
 
 async def test_list_tools_contains_core():

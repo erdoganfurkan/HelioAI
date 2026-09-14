@@ -135,7 +135,7 @@ Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) 
 
 ```bash
 uv sync --extra dev
-.venv/bin/python -m pytest      # 865 tests, 80% coverage, no exclusions
+.venv/bin/python -m pytest      # the whole suite, coverage floor 70%, no exclusions
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
 ```
 

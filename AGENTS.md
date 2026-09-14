@@ -13,7 +13,7 @@ change works because it looks right.
 
 ```bash
 uv sync --extra dev
-.venv/bin/python -m pytest        # 818 tests, coverage floor 70%
+.venv/bin/python -m pytest        # the whole suite, coverage floor 70%
 .venv/bin/ruff format --check .
 .venv/bin/ruff check .
 ```

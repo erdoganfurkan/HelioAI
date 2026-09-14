@@ -62,6 +62,14 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the
   MCP SDK's streamable-HTTP client is typed on it) but only received it as a transitive
   dependency of `mcp`.
+- **Documentation drift, swept and then pinned.** `.env.example` gains
+  `HELIOAI_CATALOGS_DIR`, `HELIOAI_OLLAMA_HEADERS` and `HELIOAI_LOG_LEVEL`, which the code
+  read and nothing documented; a test now fails when any environment variable read
+  under `helioai/` is missing from it — or listed there and read nowhere. The pull
+  request template no longer recommends `uv run pytest`, which the contributing guide
+  forbids; the recipes guide lists `fill_values`; the installation guide lists
+  `opencode`; README and AGENTS.md stop quoting a test count that is stale the week
+  after it is written.
 
 ### Removed
 

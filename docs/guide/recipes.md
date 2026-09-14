@@ -33,6 +33,7 @@ model cannot quietly reimplement the method its own way.
 | `pitch_angle_dist` | Pitch angle distribution |
 | `superposed_epoch` | Superposed epoch (Chree) analysis |
 | `sep_onset_poisson_cusum` | SEP onset via Poisson-CUSUM |
+| `fill_values` | Fill-value blanking for scripts that run outside HelioAI, where `load_data()` has not done it |
 | `solar_mach` | Parker spiral connectivity (needs the `solarmach` extra) |
 
 ## Why "recipe-first" is enforced

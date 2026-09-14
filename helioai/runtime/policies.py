@@ -43,6 +43,10 @@ class Policy:
         provider: The provider this run's client talks to — for the usage rows, which
             bill per provider. None means the lead's configured one.
         model: The model, when the run was given one of its own (`HELIOAI_ROLE_MODELS`).
+        deferred: Tools whose definitions are withheld from the model until it asks for
+            them with `search_tools`, or calls one by name. Twenty-one definitions rode
+            on every call of a lead turn; the ten formulary and catalogue ones are used
+            in a minority of sessions and cost a third of that payload each time.
     """
 
     name: str
@@ -58,6 +62,7 @@ class Policy:
     bogus_retry: bool = True
     provider: str | None = None
     model: str | None = None
+    deferred: frozenset[str] = frozenset()
 
     @property
     def event_extra(self) -> dict:

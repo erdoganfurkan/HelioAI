@@ -3,6 +3,12 @@
 The agent has 17 tools. You never call them directly — you ask a question and it picks —
 but knowing what exists tells you what HelioAI can be asked for.
 
+Not all of them are shown to the model on every turn. The six plasma-physics tools and
+the four catalog tools are *deferred*: their definitions are withheld until the agent
+asks for them (`search_tools`) or calls one by name, which cuts the tool schemas re-sent
+with every model call from 21 to 11. Nothing changes for you — the agent still finds them
+when a question needs them.
+
 ## Data access
 
 | Tool | What it does |

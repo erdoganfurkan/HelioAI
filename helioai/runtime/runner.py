@@ -16,6 +16,7 @@ and ends with a `RunEnd` the wrapper turns into its own closing events — the l
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import nullcontext
@@ -24,7 +25,7 @@ from typing import Any
 
 from helioai.core.event_display import describe_tool_call
 from helioai.core.events import make
-from helioai.core.llm.base import LLMClient, Message, ToolCall
+from helioai.core.llm.base import LLMClient, Message, ToolCall, ToolDef
 from helioai.core.session import strip_orphan_tool_calls
 from helioai.core.tool_exec import (
     _history_tool_result,
@@ -78,6 +79,28 @@ def _zero_usage() -> dict:
     return {"prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "n_calls": 0}
 
 
+SEARCH_TOOLS_NAME = "search_tools"
+
+SEARCH_TOOLS_DEF = ToolDef(
+    name=SEARCH_TOOLS_NAME,
+    description=(
+        "Find and enable the specialised tools that are not listed in this turn's tool set "
+        "(plasma formulary, event catalogues). Describe what you need in a few words; the "
+        "matching tools become callable from the next turn."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "What the step needs, e.g. 'plasma beta', 'event catalog'.",
+            }
+        },
+        "required": ["query"],
+    },
+)
+
+
 @dataclass
 class Runner:
     """One run of the loop under one policy.
@@ -112,6 +135,7 @@ class Runner:
     artifacts: list[dict] = field(default_factory=list, init=False)
     usage: dict = field(default_factory=_zero_usage, init=False)
     turns: int = field(default=0, init=False)
+    revealed: set[str] = field(default_factory=set, init=False)
 
     async def run(self, history: list[Message]) -> AsyncIterator[dict | RunEnd]:
         """Drive the model over `history` until it answers, stops or hits the cap.
@@ -191,7 +215,17 @@ class Runner:
                 )
                 result, trailing = None, []
                 try:
-                    handler = self.intercept(tc, turn) if self.intercept else None
+                    if tc.name == SEARCH_TOOLS_NAME and policy.deferred:
+                        result = self._search_tools(tc)
+                    elif tc.name in policy.deferred and tc.name not in self.revealed:
+                        # The model named a deferred tool without asking for it: the name
+                        # was right, so it already knows the tool, and refusing would only
+                        # cost a turn. Revealed and run.
+                        self.revealed.add(tc.name)
+                        log.info("deferred_tool_called_directly", agent=policy.name, tool=tc.name)
+                    handler = (
+                        self.intercept(tc, turn) if self.intercept and result is None else None
+                    )
                     if handler is not None:
                         async for item in handler:
                             if isinstance(item, ToolResult):
@@ -241,7 +275,7 @@ class Runner:
         # exactly as the lead always did; a role asks for a tool on its first turn.
         if policy.tool_choice_first != "auto":
             kwargs["tool_choice"] = policy.tool_choice_first if first else "auto"
-        response = await self.llm.chat(compact_history(history), list(policy.tools), **kwargs)
+        response = await self.llm.chat(compact_history(history), self.visible_tools(), **kwargs)
         log.info(
             "llm_call_end",
             agent=policy.name,
@@ -256,6 +290,38 @@ class Runner:
         if self.on_llm_call is not None:
             self.on_llm_call(turn, response)
         return response
+
+    def visible_tools(self) -> list[ToolDef]:
+        """The definitions the model is shown this call: the policy's tools minus the
+        deferred ones it has not asked for, plus `search_tools` while any are withheld."""
+        policy = self.policy
+        withheld = policy.deferred - self.revealed
+        shown = [t for t in policy.tools if t.name not in withheld]
+        if withheld:
+            shown.append(SEARCH_TOOLS_DEF)
+        return shown
+
+    def _search_tools(self, tc: ToolCall) -> ToolResult:
+        query = str((tc.arguments or {}).get("query") or "").lower()
+        words = [w for w in re.findall(r"[a-z0-9_]+", query) if len(w) > 2]
+        deferred = [t for t in self.policy.tools if t.name in self.policy.deferred]
+        matches = [
+            t
+            for t in deferred
+            if any(w in t.name.lower() or w in t.description.lower() for w in words)
+        ]
+        # A query that matches nothing still means "I need one of these": all of them
+        # are revealed rather than sending the model on a second guess.
+        chosen = matches or deferred
+        self.revealed.update(t.name for t in chosen)
+        return ToolResult.from_raw(
+            SEARCH_TOOLS_NAME,
+            {
+                "enabled": [t.name for t in chosen],
+                "tools": [{"name": t.name, "description": t.description} for t in chosen],
+                "note": "these tools are callable from your next turn",
+            },
+        )
 
     async def _dispatch(self, tc: ToolCall, started: dict) -> ToolResult:
         if tc.id in started:

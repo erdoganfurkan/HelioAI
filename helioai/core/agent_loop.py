@@ -64,6 +64,7 @@ You explore and analyze data from 70+ space missions (MMS, Solar Orbiter, Cluste
 - `get_timeseries` persists the data and returns a `dataset` key. Download each parameter ONCE — batch all the downloads you need in a single turn, never re-download the same parameter+interval — then go straight to `run_python` and read them with `load_data()`.
 
 ## Tools (arguments in each schema)
+The plasma-physics and catalog tools are not listed in every turn's tool set: they appear once you ask for them with `search_tools(query)` or call one of them by name.
 - Discovery: `search_parameters` (semantic search; pass `queries=[...]` to resolve several at once), `list_missions`.
 - Data: `get_timeseries`.
 - Plasma physics (direct, no code): `plasma_beta`, `gyrofrequency`, `debye_length`, `alfven_speed`, `inertial_length`, `power_spectrum`.
@@ -274,6 +275,25 @@ _INTERNAL_TOOLS: list[ToolDef] = [
 
 _INTERNAL_TOOL_NAMES: frozenset[str] = frozenset(t.name for t in _INTERNAL_TOOLS)
 
+# Withheld from the model until asked for: the six formulary wrappers and the four
+# catalogue tools are used in a minority of sessions and their definitions were a third
+# of the 3 800 tokens re-sent on every call of a lead turn (measured 2026-09-14: 21
+# definitions, 15 050 characters; 11 and 8 449 without these).
+_DEFERRED_TOOLS: frozenset[str] = frozenset(
+    {
+        "plasma_beta",
+        "gyrofrequency",
+        "debye_length",
+        "alfven_speed",
+        "inertial_length",
+        "power_spectrum",
+        "list_catalogs",
+        "get_catalog",
+        "get_events_timeseries",
+        "save_catalog",
+    }
+)
+
 
 def _dispatch_internal_tool(name: str, arguments: dict) -> ToolResult:
     """Run one of the lead's own tools — skills and the plan — and type the result.
@@ -402,6 +422,7 @@ async def _stream_turn(
         max_turns=settings.agent.max_iterations,
         comment_replies=True,
         stop_on_empty_reply=True,
+        deferred=_DEFERRED_TOOLS,
     )
     runner = Runner(
         policy,

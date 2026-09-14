@@ -126,6 +126,12 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   budget, whether the first turn must call a tool. The two public generators are thin
   wrappers around it and every interface sees exactly the events it saw, in the same
   order — the loop tests and the journal golden did not change.
+- **Fewer tool definitions per model call.** Twenty-one tool schemas — about 3 800
+  tokens — rode on every call of a lead turn. The six plasma-physics tools and the four
+  catalog tools are used in a minority of sessions; their definitions are now withheld
+  until the agent asks for them with `search_tools` or calls one by name, which leaves
+  eleven schemas (about 2 100 tokens) on an ordinary turn. The lead's prompt gains one
+  sentence saying so.
 - **A delegated role can run on its own model.** `HELIOAI_ROLE_MODELS=parameter_hunter=
   groq:llama-3.3-70b-versatile,librarian=groq` gives a role a provider and a model of its
   own; a `parameter_hunter` resolving ids from search results does not need the lead's

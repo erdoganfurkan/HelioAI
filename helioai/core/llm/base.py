@@ -155,6 +155,12 @@ class Message:
             turns from history, so a synthetic message must keep the user role to
             be seen at all — this field is what lets the replay and the notebook
             export tell it from a question. Persisted by `SessionStore`.
+        name: For `tool` messages, the tool that produced the result. The wire
+            formats carry only the call id, so every reader that needed to know
+            which tool a result came from sniffed the JSON's shape — `load_recipe`
+            was recognised by having `name`, `code` and `metadata` keys at once.
+            Recorded here instead, and persisted, so a reader asks the message.
+            Not sent to any provider.
     """
 
     role: Literal["system", "user", "assistant", "tool"]
@@ -162,6 +168,7 @@ class Message:
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
     origin: str | None = None
+    name: str | None = None
     # Telemetry about the response, not part of the conversation: `SessionStore`
     # deliberately does not persist these, so a reloaded history reports no cost.
     prompt_tokens: int = 0

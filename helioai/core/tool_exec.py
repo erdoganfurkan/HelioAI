@@ -169,14 +169,18 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
     return out[:max_chars]
 
 
-def _is_recipe_source(result_text: str) -> bool:
-    """Whether a tool result is the payload `load_recipe` returns.
+def _is_recipe_source(message) -> bool:
+    """Whether a tool message is the payload `load_recipe` returns.
 
-    Tool messages do not carry the tool's name, so the shape identifies it: `name`,
-    `code` and `metadata` together are produced by no other tool.
+    Asked of the message's `name` first. Histories persisted before that field existed
+    carry none, so for them the shape still identifies it: `name`, `code` and `metadata`
+    together are produced by no other tool.
     """
+    name = getattr(message, "name", None)
+    if name is not None:
+        return name == "load_recipe"
     try:
-        data = json.loads(result_text)
+        data = json.loads(message.content)
     except (ValueError, TypeError):
         return False
     return isinstance(data, dict) and all(k in data for k in ("name", "code", "metadata"))
@@ -219,7 +223,7 @@ def compact_history(messages: list, keep_full: int = 2) -> list:
     stale = set(tool_idx[:-keep_full])
     return [
         replace(m, content=_summarize_tool_result(m.content, max_chars=_STALE_RESULT_CHARS))
-        if i in stale and m.content and not _is_recipe_source(m.content)
+        if i in stale and m.content and not _is_recipe_source(m)
         else m
         for i, m in enumerate(messages)
     ]

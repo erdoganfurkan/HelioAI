@@ -206,6 +206,53 @@ def test_a_loaded_recipe_survives_compaction():
     assert out[1].content == recipe
 
 
+def test_a_recipe_is_recognised_by_its_tool_name_first():
+    """Tool messages now carry the tool's name; a recipe is `name == "load_recipe"`,
+    whatever its payload looks like. Histories persisted before the field existed have
+    no name and still fall back to the shape (the test above)."""
+    named_recipe = Message(role="tool", tool_call_id="1", name="load_recipe", content="{}")
+    named_other = Message(
+        role="tool",
+        tool_call_id="2",
+        name="run_python",
+        content=json.dumps({"name": "x", "code": "y", "metadata": {}}),
+    )
+    assert te._is_recipe_source(named_recipe)
+    assert not te._is_recipe_source(named_other)
+
+
+def test_both_loops_record_the_tool_name_on_history_messages(monkeypatch, tmp_path):
+    import asyncio
+
+    from helioai.core import agent_loop
+    from helioai.core.llm.base import ToolCall
+    from helioai.core.session import SessionStore
+
+    store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr(agent_loop, "store", store)
+    responses = [
+        Message(
+            role="assistant", tool_calls=[ToolCall(id="c1", name="list_recipes", arguments={})]
+        ),
+        Message(role="assistant", content="done"),
+    ]
+
+    class _LLM:
+        async def chat(self, messages, tools, **k):
+            return responses.pop(0)
+
+    async def run():
+        async for _ in agent_loop.stream_chat(_LLM(), "web", "s1", "go", restricted=False):
+            pass
+
+    asyncio.run(run())
+    tool_messages = [m for m in store.get_or_create("web", "s1") if m.role == "tool"]
+    assert [m.name for m in tool_messages] == ["list_recipes"]
+    assert (
+        SessionStore(tmp_path / "sessions.db").get_or_create("web", "s1")[2].name == "list_recipes"
+    )
+
+
 def test_compaction_keeps_the_traceback_of_a_failed_run():
     """Losing stderr two turns later is why one typo was retried three times."""
     payload = json.dumps(

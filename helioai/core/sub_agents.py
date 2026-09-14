@@ -472,6 +472,7 @@ async def stream_subagent(
                     Message(
                         role="tool",
                         tool_call_id=tc.id,
+                        name=tc.name,
                         content=_history_tool_result(tc.name, result),
                     )
                 )

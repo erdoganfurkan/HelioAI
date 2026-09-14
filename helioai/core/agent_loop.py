@@ -577,6 +577,7 @@ async def _stream_turn(
                     Message(
                         role="tool",
                         tool_call_id=tc.id,
+                        name=tc.name,
                         content=_history_tool_result(tc.name, result),
                     )
                 )

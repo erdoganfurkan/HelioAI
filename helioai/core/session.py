@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_calls   TEXT,
     tool_call_id TEXT,
     origin       TEXT,
+    name         TEXT,
     FOREIGN KEY (user_id, session_id)
         REFERENCES sessions(user_id, session_id) ON DELETE CASCADE
 );
@@ -51,6 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_seq
 _MIGRATIONS = (
     "ALTER TABLE sessions ADD COLUMN workspace_dir TEXT",
     "ALTER TABLE messages ADD COLUMN origin TEXT",
+    "ALTER TABLE messages ADD COLUMN name TEXT",
 )
 
 
@@ -180,7 +182,7 @@ class SessionStore:
     def _load(self, user_id: str, session_id: str) -> list[Message]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT role, content, tool_calls, tool_call_id, origin "
+                "SELECT role, content, tool_calls, tool_call_id, origin, name "
                 "FROM messages WHERE user_id = ? AND session_id = ? ORDER BY seq",
                 (user_id, session_id),
             ).fetchall()
@@ -191,8 +193,9 @@ class SessionStore:
                 tool_calls=_load_tool_calls(tool_calls),
                 tool_call_id=tool_call_id,
                 origin=origin,
+                name=name,
             )
-            for role, content, tool_calls, tool_call_id, origin in rows
+            for role, content, tool_calls, tool_call_id, origin, name in rows
         ]
 
     def save(self, user_id: str, session_id: str, history: list[Message]) -> None:
@@ -214,7 +217,7 @@ class SessionStore:
             )
             conn.executemany(
                 "INSERT INTO messages(user_id, session_id, seq, role, content, tool_calls, "
-                "tool_call_id, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "tool_call_id, origin, name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         user_id,
@@ -225,6 +228,7 @@ class SessionStore:
                         _dump_tool_calls(m.tool_calls),
                         m.tool_call_id,
                         m.origin,
+                        m.name,
                     )
                     for i, m in enumerate(history)
                 ],

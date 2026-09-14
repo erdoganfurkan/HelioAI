@@ -131,8 +131,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   default directory to the configured one, never overwrites, and can be re-run. The
   `search_parameters` error names the legacy copy when it exists, so an upgraded
   install is not sent into an hour-long rebuild.
-- The session database gains a `messages.origin` column, added automatically the
-  first time an existing database is opened.
+- The session database gains `messages.origin` and `messages.name` columns, added
+  automatically the first time an existing database is opened. `name` records which
+  tool produced a `tool` message; readers no longer have to recognise a tool by the
+  shape of its JSON (a loaded recipe was identified by having `name`, `code` and
+  `metadata` keys at once).
 
 ## [0.2.1] — 2026-08-14
 

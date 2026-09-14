@@ -141,8 +141,8 @@ registry.register(
             },
             "timeout": {
                 "type": "number",
-                "description": "Max execution time in seconds (default 30).",
-                "default": 30.0,
+                "description": "Max execution time in seconds (default 60).",
+                "default": 60.0,
             },
         },
         "required": ["code"],

@@ -15,6 +15,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   setting the "model returned neither text nor a tool call" error tells you to raise
   did nothing for the provider the README recommends. Every provider declared on
   `LLMConfig` is now covered, including ones added later.
+- **`run_python` advertised a 30 s default timeout while its signature said 60 s.**
+  The signature was raised in 0.2.0 for cold Python starts; the schema the model reads
+  was not. The registration tests now check that every schema default, `required`
+  list and public parameter agrees with the function it describes, so the two cannot
+  drift apart again.
 
 ## [0.2.1] — 2026-08-14
 

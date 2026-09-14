@@ -6,6 +6,7 @@ Figures from the sandbox are served via /figure?path=<abs_path>.
 
 from __future__ import annotations
 
+import hmac
 import json
 import shutil
 from contextlib import asynccontextmanager
@@ -48,9 +49,13 @@ async def require_user(x_helio_token: str | None = Header(default=None)) -> str:
     users = settings.web_auth.users
     if not users:
         return _DEFAULT_USER
-    if not x_helio_token or x_helio_token not in users:
-        raise HTTPException(status_code=401, detail="Invalid or missing token")
-    return users[x_helio_token]
+    # Compared token by token in constant time, like the dev token and the MCP bearer:
+    # a dict lookup leaks how much of a guess matched through its timing.
+    if x_helio_token:
+        for token, user_id in users.items():
+            if hmac.compare_digest(token, x_helio_token):
+                return user_id
+    raise HTTPException(status_code=401, detail="Invalid or missing token")
 
 
 def _profile_path(user_id: str) -> Path:
@@ -82,6 +87,51 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="HelioAI", docs_url=None, redoc_url=None, lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+# Everything the page needs is served from this origin — the markdown and syntax
+# highlighting libraries are vendored under /static — so inline scripts injected
+# through a tool result would have nowhere to run even if DOMPurify let one through.
+# `unsafe-inline` for styles only: the UI sets a few style attributes from JS.
+_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'"
+)
+
+
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", _CSP)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    return response
+
+
+def harden_for_host(app: FastAPI, host: str) -> FastAPI:
+    """Add the middleware a given bind address calls for, and return the app.
+
+    Kept apart from `serve_web` so a test can build exactly what uvicorn will serve:
+    added inside `serve_web`, the host guard was never on the `app` the TestClient
+    imported, and the DNS-rebinding defence went untested for a year.
+
+    Args:
+        app: The FastAPI application.
+        host: The address about to be bound.
+
+    Returns:
+        The same app, so the call reads as an expression.
+    """
+    if host in _LOOPBACK_HOSTS:
+        # A loopback bind is not a boundary: any web page can resolve its own domain
+        # to 127.0.0.1 and reach this server (DNS rebinding). Pinning Host costs
+        # nothing here and CORS does not cover it.
+        from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(_LOOPBACK_HOSTS))
+    else:
+        log.warning("web_exposed_beyond_loopback", host=host)
+    return app
 
 
 class _ChatRequest(BaseModel):
@@ -498,16 +548,9 @@ def serve_web(host: str = "127.0.0.1", port: int = 7890) -> None:
         port: TCP port.
     """
     import uvicorn
-    from starlette.middleware.trustedhost import TrustedHostMiddleware
 
     from helioai.workspace import cleanup_old_runs
 
-    if host in {"127.0.0.1", "localhost", "::1"}:
-        # A loopback bind is not a boundary: any web page can resolve its own
-        # domain to 127.0.0.1 and reach this server (DNS rebinding). Pinning Host
-        # costs nothing here and CORS does not cover it.
-        app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
-    else:
-        log.warning("web_exposed_beyond_loopback", host=host)
+    harden_for_host(app, host)
     cleanup_old_runs()
     uvicorn.run(app, host=host, port=port)

@@ -879,3 +879,70 @@ def test_session_messages_show_an_automated_correction_as_a_system_note(monkeypa
     assert [m["role"] for m in msgs] == ["user", "assistant", "system", "assistant"]
     assert msgs[2]["origin"] == "correction"
     assert all("AUTOMATED CORRECTION" not in m["content"] for m in msgs if m["role"] == "user")
+
+
+# ── hardening that used to be untestable ───────────────────────────────────────
+
+
+def test_valid_token_resolves_its_user_and_a_prefix_does_not(auth_client):
+    assert auth_client.get("/api/sessions", headers={"X-Helio-Token": "tok-v"}).status_code == 200
+    assert auth_client.get("/api/sessions", headers={"X-Helio-Token": "tok-"}).status_code == 401
+    assert auth_client.get("/api/sessions", headers={"X-Helio-Token": "tok-vv"}).status_code == 401
+
+
+def test_tokens_are_compared_in_constant_time(auth_client, monkeypatch):
+    """`token in users` is a dict lookup whose timing depends on the match; the check
+    goes through hmac.compare_digest like the dev token and the MCP bearer."""
+    import hmac as hmac_module
+
+    import helioai.interfaces.web.app as web_app
+
+    seen: list[tuple[str, str]] = []
+    real = hmac_module.compare_digest
+
+    def spy(a, b):
+        seen.append((a, b))
+        return real(a, b)
+
+    monkeypatch.setattr(web_app.hmac, "compare_digest", spy)
+    auth_client.get("/api/sessions", headers={"X-Helio-Token": "tok-a"})
+    assert ("tok-a", "tok-a") in seen
+
+
+def test_every_response_carries_a_content_security_policy(web_client):
+    r = web_client.get("/health")
+    assert "default-src 'self'" in r.headers["content-security-policy"]
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
+def test_loopback_bind_pins_the_host_header(monkeypatch):
+    """The DNS-rebinding guard was added inside serve_web, on an app the TestClient
+    never saw; harden_for_host builds exactly what uvicorn serves."""
+    from fastapi import FastAPI
+
+    from helioai.interfaces.web.app import harden_for_host
+
+    probe = FastAPI()
+
+    @probe.get("/ping")
+    async def ping():
+        return {"ok": True}
+
+    client = TestClient(harden_for_host(probe, "127.0.0.1"), raise_server_exceptions=False)
+    assert client.get("/ping", headers={"Host": "localhost"}).status_code == 200
+    assert client.get("/ping", headers={"Host": "evil.example"}).status_code == 400
+
+
+def test_public_bind_does_not_pin_the_host(monkeypatch):
+    from fastapi import FastAPI
+
+    from helioai.interfaces.web.app import harden_for_host
+
+    probe = FastAPI()
+
+    @probe.get("/ping")
+    async def ping():
+        return {"ok": True}
+
+    client = TestClient(harden_for_host(probe, "0.0.0.0"), raise_server_exceptions=False)
+    assert client.get("/ping", headers={"Host": "helio.lab.example"}).status_code == 200

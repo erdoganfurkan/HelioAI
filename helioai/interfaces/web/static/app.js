@@ -358,7 +358,6 @@ function renderPlan(view, data) {
 }
 
 function renderArtifact(view, data) {
-  console.log('[HelioAI] artifact event:', data);
   if (data.kind === 'image' && data.figure_paths && data.figure_paths.length > 0) {
     data.figure_paths.forEach(path => {
       const url = `/figure?path=${encodeURIComponent(path)}`;

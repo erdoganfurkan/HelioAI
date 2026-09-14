@@ -70,6 +70,12 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   forbids; the recipes guide lists `fill_values`; the installation guide lists
   `opencode`; README and AGENTS.md stop quoting a test count that is stale the week
   after it is written.
+- **Web hygiene.** Nominative tokens are compared in constant time (`hmac.compare_digest`,
+  as the dev token and the MCP bearer already were); every response carries a
+  `Content-Security-Policy` restricted to the server's own origin and
+  `X-Content-Type-Options: nosniff`; the Host-header guard against DNS rebinding is
+  built by `harden_for_host`, so the test client exercises what uvicorn serves; the
+  browser console no longer receives every artifact's absolute server path.
 
 ### Removed
 

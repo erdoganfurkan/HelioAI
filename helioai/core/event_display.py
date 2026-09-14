@@ -185,3 +185,39 @@ def describe_tool_result(name: str, result: str) -> str:
         if isinstance(v, (str, int, float, bool)) and str(v) and len(str(v)) <= 60
     ]
     return _clip(" · ".join(bits[:4])) if bits else "ok"
+
+
+def describe_verdict(data: dict) -> tuple[str, list[str]]:
+    """One line of counts and one line per claim worth a look, for a `verdict` event.
+
+    The claims the model named are judged by name against the ledger; a contradicted
+    one is the strongest signal this system has — the value was computed, and the answer
+    states another — so it is spelled out with both numbers. Unsourced claims are listed
+    with the source the model gave them (`literature`, `asserted`, or an export the
+    session never wrote), matched ones only counted.
+
+    Args:
+        data: The event payload.
+
+    Returns:
+        The summary line and the detail lines, without any styling.
+    """
+    summary = (
+        f"claims — {data.get('matched', 0)} backed, {data.get('contradicted', 0)} contradicted, "
+        f"{data.get('unsourced', 0)} unsourced"
+    )
+    lines: list[str] = []
+    for c in data.get("claims") or []:
+        stated = f"{c.get('value')}{' ' + c['units'] if c.get('units') else ''}"
+        if c.get("status") == "contradicted":
+            recorded = (
+                f"{c.get('ledger')}{' ' + c['ledger_units'] if c.get('ledger_units') else ''}"
+            )
+            lines.append(
+                f"contradicted: {c.get('name')} stated {stated}, the session computed {recorded}"
+            )
+        elif c.get("status") == "unsourced":
+            note = f" ({c['note']})" if c.get("note") else ""
+            source = c.get("source") or "asserted"
+            lines.append(f"unsourced: {c.get('name')} = {stated} — source: {source}{note}")
+    return summary, lines[:8]

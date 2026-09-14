@@ -287,6 +287,30 @@ function renderEvent(view, ev) {
   } else if (event === 'provenance') {
     renderProvenance(view, data);
 
+  } else if (event === 'verdict') {
+    // The claims the answer named, judged by name against the ledger: a contradiction
+    // is the strongest signal there is, so it opens the list; matched ones are counted.
+    const summary = `⚖ claims — ${data.matched || 0} backed, ${data.contradicted || 0} contradicted, ${data.unsourced || 0} unsourced`;
+    const row = appendTlEvent(view, data.contradicted ? '⚠' : '✓', summary, data.contradicted ? 'tl-issue' : 'tl-ok');
+    const flagged = (data.claims || []).filter(c => c.status !== 'matched');
+    if (flagged.length) {
+      const box = el('details', 'provenance-details');
+      box.append(el('summary', null, `${flagged.length} claim${flagged.length > 1 ? 's' : ''} to check`));
+      const ul = el('ul');
+      for (const c of flagged) {
+        const stated = `${c.value}${c.units ? ' ' + c.units : ''}`;
+        const text = c.status === 'contradicted'
+          ? `${c.name} stated ${stated}, the session computed ${c.ledger}${c.ledger_units ? ' ' + c.ledger_units : ''}`
+          : `${c.name} = ${stated} — source: ${c.source || 'asserted'}${c.note ? ' (' + c.note + ')' : ''}`;
+        const li = el('li');
+        li.append(el('span', 'provenance-status', c.status));
+        li.append(document.createTextNode(' ' + text));
+        ul.append(li);
+      }
+      box.append(ul);
+      row.append(box);
+    }
+
   } else if (event === 'invalid_ids') {
     // A sub-agent quoting parameter ids that exist in no catalogue is the most
     // damaging thing it can produce, so this one is a banner, not a timeline line.

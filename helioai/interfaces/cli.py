@@ -260,6 +260,15 @@ def _render_event(ev: dict) -> None:
             origin = f" (session computed {d['name']})" if d.get("name") else ""
             print(f"{pad}  \033[{colour}m{d['status']}: {d['text']}{origin}\033[0m")
 
+    elif name == "verdict":
+        from helioai.core.event_display import describe_verdict
+
+        summary, lines = describe_verdict(data)
+        colour = "91" if data.get("contradicted") else "90"
+        print(f"{pad}\033[{colour}m⚖ {summary}\033[0m")
+        for line in lines:
+            print(f"{pad}  \033[{colour}m{line}\033[0m")
+
     elif name == "invalid_ids":
         print(f"\n{pad}\033[91m⚠ ids not in the catalogue — do not use:\033[0m")
         for pid in data.get("ids") or []:

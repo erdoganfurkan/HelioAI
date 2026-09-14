@@ -10,6 +10,8 @@ The one loop, and the policies that make it the lead or a role.
 
 ::: helioai.runtime.context
 
+::: helioai.runtime.validator
+
 ## Agent loop
 
 ::: helioai.core.agent_loop

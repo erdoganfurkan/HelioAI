@@ -37,6 +37,18 @@ KINDS: dict[str, tuple[str, ...]] = {
     "plan": ("title", "steps"),
     "figure_review": ("turn", "text"),
     "provenance": ("matched", "contradicted", "derived", "unsourced", "details"),
+    # The one judgement on an answer that named its numbers (`final_answer`): each claim
+    # placed against the ledger by name, plus the id, recipe and figure checks the
+    # other kinds report one by one. Emitted only when there are claims to judge.
+    "verdict": (
+        "matched",
+        "contradicted",
+        "unsourced",
+        "unknown_ids",
+        "recipe_flags",
+        "figure_reviews",
+        "claims",
+    ),
     "invalid_ids": ("ids",),
     "recipe_bypassed": ("recipes",),
     "sub_agent_start": ("task_id", "role", "description"),
@@ -57,7 +69,17 @@ ARTIFACT_KINDS: dict[str, tuple[str, ...]] = {
 
 # Kinds the lead emits and a sub-agent never does, and the reverse.
 LEAD_ONLY: frozenset[str] = frozenset(
-    {"user", "reply_delta", "reply", "plan", "provenance", "sub_agent_start", "error", "done"}
+    {
+        "user",
+        "reply_delta",
+        "reply",
+        "plan",
+        "provenance",
+        "verdict",
+        "sub_agent_start",
+        "error",
+        "done",
+    }
 )
 
 # Kinds the journal leaves out: transient by nature, and fully covered by another kind.

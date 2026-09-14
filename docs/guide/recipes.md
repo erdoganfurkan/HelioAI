@@ -100,6 +100,14 @@ same number to the checker:
 export("B_downstream", Bd, units="nT")
 ```
 
+When the agent closes with `final_answer` and names its numbers — the export each one was
+computed as, or `literature` / `asserted` for a value it did not compute — a second line,
+`⚖ claims`, judges them **by name** rather than by finding them in the prose: `57.2 deg`
+states a recorded `57.16 deg`, `0.0101 uT` states `10.077 nT`, and any run of the session
+that produced the value sources it. A named scalar the session computed that holds another
+value is reported as *contradicted*, with both numbers; a claim marked `literature` or
+`asserted` is listed as *unsourced* and never contradicted.
+
 Three things it deliberately does not do:
 
 - **It annotates, it never blocks.** A number that is absent from the ledger is flagged, not

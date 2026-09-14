@@ -134,6 +134,19 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   claims ride on the `reply` event and into the journal, ready to be judged by name
   rather than found by regex. A plain text reply remains accepted. The lead's prompt
   gains one paragraph saying when to use it.
+- **One verdict on the answer.** The lead's reply was judged from four places — the
+  catalogue ids, the recipe bypass, the numbers in the prose, the figures — each with its
+  own event and none aware of the others. `runtime.validator` runs them in one call, and
+  adds the judgement the claims make possible: each number `final_answer` named is placed
+  against the provenance ledger **by name**, with a unit-aware tolerance (`57.2 deg`
+  states a recorded `57.16 deg`, `0.0101 uT` states `10.077 nT`, a mean quoted within one
+  standard deviation of a series is not a different number) and the rule that any run
+  which produced the value sources it. A named scalar the session computed that holds
+  another value is `contradicted`; a claim the model marked `literature` or `asserted`
+  never is. The result is a `verdict` event — counts up front, every claim behind them —
+  journaled and rendered by the CLI, the notebook and the browser; it is emitted only when
+  the answer named its numbers, and the existing `invalid_ids`, `recipe_bypassed` and
+  `provenance` events keep flowing for the prose.
 - **The answer streams.** The lead's text is shown as the model writes it — token by
   token in the CLI and in the browser, where a live bubble is re-rendered as Markdown
   once the reply is complete; the notebook keeps rendering the finished answer. Every

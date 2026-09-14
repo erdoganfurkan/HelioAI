@@ -188,6 +188,12 @@ def _render_jupyter_event(ev: dict) -> None:
             lines.append(f"- {d['status']}: `{d['text']}`{origin}")
         display(Markdown("\n".join(lines)))
 
+    elif name == "verdict":
+        from helioai.core.event_display import describe_verdict
+
+        summary, lines = describe_verdict(data)
+        display(Markdown("\n".join([f"**⚖ {summary}**", *(f"- {line}" for line in lines)])))
+
     elif name == "invalid_ids":
         ids = "\n".join(f"- `{i}`" for i in data.get("ids") or [])
         display(

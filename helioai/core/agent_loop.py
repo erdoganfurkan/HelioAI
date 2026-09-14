@@ -47,6 +47,7 @@ from helioai.logging_config import get_logger
 from helioai.runtime.context import RunContext
 from helioai.runtime.policies import Policy
 from helioai.runtime.runner import RunEnd, Runner
+from helioai.runtime.validator import validate
 from helioai.tools.registry import registry
 from helioai.tools.results import ToolResult
 
@@ -440,6 +441,7 @@ async def _stream_turn(
     )
     try:
         end: RunEnd | None = None
+        figure_reviews: list[str] = []
         async with aclosing(runner.run(history)) as run:
             async for item in run:
                 if isinstance(item, RunEnd):
@@ -449,6 +451,8 @@ async def _stream_turn(
                 if item["event"] == "reply":
                     for ev in _provenance_events(item["data"]["text"], ctx.session_dir):
                         yield ev
+                elif item["event"] == "figure_review":
+                    figure_reviews.append(item["data"]["text"])
         assert end is not None
 
         if end.capped:
@@ -481,18 +485,29 @@ async def _stream_turn(
             return
 
         # The lead does its own physics often enough that leaving its answer unchecked
-        # was the hole, not an edge case: the same catalogue and recipe checks a
-        # sub-agent's answer gets, against what this run exported.
-        final_text, bogus, bypassed = check_answer(end.final_text or "", history, end.artifacts)
+        # was the hole, not an edge case: one validator judges the ids, the recipes, the
+        # numbers in the prose and — when the model named them — the claims by name.
+        final_text, verdict = validate(
+            end.final_text or "",
+            end.claims,
+            history=history,
+            artifacts=end.artifacts,
+            session_dir=ctx.session_dir,
+            figure_reviews=figure_reviews,
+        )
         yield make("reply", text=final_text, **({"claims": end.claims} if end.claims else {}))
-        if bogus:
-            log.warning("lead_invented_ids", ids=bogus)
-            yield make("invalid_ids", ids=bogus)
-        if bypassed:
-            log.warning("lead_recipe_bypassed", recipes=bypassed)
-            yield make("recipe_bypassed", recipes=bypassed)
-        for ev in _provenance_events(final_text, ctx.session_dir):
-            yield ev
+        if verdict.unknown_ids:
+            log.warning("lead_invented_ids", ids=verdict.unknown_ids)
+            yield make("invalid_ids", ids=verdict.unknown_ids)
+        if verdict.recipe_flags:
+            log.warning("lead_recipe_bypassed", recipes=verdict.recipe_flags)
+            yield make("recipe_bypassed", recipes=verdict.recipe_flags)
+        if verdict.prose:
+            yield make("provenance", **verdict.prose)
+        if verdict.has_claims:
+            if verdict.contradicted:
+                log.warning("lead_claims_contradicted", claims=verdict.contradicted)
+            yield make("verdict", **verdict.as_event())
         yield make("done", n_iterations=end.turns)
 
     except asyncio.CancelledError:

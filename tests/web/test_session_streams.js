@@ -46,8 +46,10 @@ const JOURNAL = [
   { event: 'tool_call', data: { turn: 1, name: 'load_recipe', arguments: {}, display: 'theta_bn' } },
   { event: 'tool_result', data: { turn: 1, name: 'load_recipe', summary: '{}', display: 'name theta_bn' } },
   { event: 'plan', data: { title: 'Replayed plan', steps: [{ description: 'load', tool: 'load_recipe' }] } },
-  { event: 'reply', data: { text: 'Replayed answer' } },
+  { event: 'reply', data: { text: 'Replayed answer', claims: [{ name: 'theta_bn', value: 62.7, units: 'deg', source: 'theta_bn' }] } },
   { event: 'provenance', data: { matched: 1, contradicted: 0, derived: 0, unsourced: 0, details: [] } },
+  { event: 'verdict', data: { matched: 0, contradicted: 1, unsourced: 0, unknown_ids: [], recipe_flags: [], figure_reviews: [],
+    claims: [{ status: 'contradicted', name: 'theta_bn', value: 62.7, units: 'deg', source: 'theta_bn', ledger: 57.16, ledger_units: 'deg' }] } },
   { event: 'done', data: { n_iterations: 1 } },
 ];
 
@@ -141,6 +143,8 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   assert.ok(chatArea.textContent.includes('Replayed answer'), 'the reply is rendered');
   assert.ok(chatArea.textContent.includes('Replayed plan'), 'the plan survives a reload');
   assert.ok(document.getElementById('ad-body').textContent.includes('load_recipe'), 'the tool trace is in the dock');
+  assert.ok(document.getElementById('ad-body').textContent.includes('theta_bn stated 62.7 deg, the session computed 57.16 deg'),
+    'the verdict on the claims is replayed with both numbers');
   assert.equal(chatArea.querySelectorAll('.msg-user').length, 1, 'one bubble per user event on replay');
 
   console.log('OK web session streams');

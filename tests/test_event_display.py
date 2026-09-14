@@ -161,3 +161,64 @@ def test_describe_findings_caps_a_long_table_and_says_so():
     lines = describe_findings(table, limit=8)
     assert len(lines) == 9
     assert lines[-1] == "… and 4 more"
+
+
+# ── verdict ───────────────────────────────────────────────────────────────────
+
+
+def test_describe_verdict_spells_out_a_contradiction_with_both_numbers():
+    from helioai.core.event_display import describe_verdict
+
+    summary, lines = describe_verdict(
+        {
+            "matched": 2,
+            "contradicted": 1,
+            "unsourced": 1,
+            "claims": [
+                {
+                    "status": "contradicted",
+                    "name": "theta_bn",
+                    "value": 62.7,
+                    "units": "deg",
+                    "source": "theta_bn",
+                    "ledger": 57.16,
+                    "ledger_units": "deg",
+                },
+                {
+                    "status": "unsourced",
+                    "name": "Dst",
+                    "value": -223,
+                    "units": "nT",
+                    "source": "literature",
+                },
+                {
+                    "status": "matched",
+                    "name": "r_B",
+                    "value": 2.5,
+                    "units": "",
+                    "source": "compression_ratio",
+                },
+                {
+                    "status": "matched",
+                    "name": "B_up",
+                    "value": 10.1,
+                    "units": "nT",
+                    "source": "Bmag_up",
+                },
+            ],
+        }
+    )
+    assert "2 backed" in summary and "1 contradicted" in summary and "1 unsourced" in summary
+    assert lines[0].startswith("contradicted: theta_bn stated 62.7 deg")
+    assert "57.16 deg" in lines[0]
+    assert lines[1] == "unsourced: Dst = -223 nT — source: literature"
+    assert len(lines) == 2, "matched claims are counted, not listed"
+
+
+def test_describe_verdict_with_every_claim_backed_is_one_line():
+    from helioai.core.event_display import describe_verdict
+
+    summary, lines = describe_verdict(
+        {"matched": 3, "contradicted": 0, "unsourced": 0, "claims": []}
+    )
+    assert summary.startswith("claims — 3 backed") and lines == []

@@ -551,6 +551,37 @@ def serve_web(host: str = "127.0.0.1", port: int = 7890) -> None:
 
     from helioai.workspace import cleanup_old_runs
 
+    refuse_unauthenticated_public_bind(host)
     harden_for_host(app, host)
     cleanup_old_runs()
     uvicorn.run(app, host=host, port=port)
+
+
+def refuse_unauthenticated_public_bind(host: str) -> None:
+    """Exit rather than serve `run_python` to a network with no one authenticated.
+
+    The same rule `helioai-mcp --http` applies to a bind without a token: a public
+    address with no `HELIOAI_USERS` is a deployment error, and a warning someone might
+    read after the fact is not a boundary. `HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC=1` is
+    the explicit opt-out for a container that binds 0.0.0.0 behind a loopback publish.
+
+    Args:
+        host: The address about to be bound.
+
+    Raises:
+        SystemExit: On a non-loopback host with neither users nor the opt-out.
+    """
+    if host in _LOOPBACK_HOSTS or settings.web_auth.users:
+        return
+    if settings.web_auth.allow_unauthenticated_public:
+        log.warning("web_public_unauthenticated_by_choice", host=host)
+        return
+    log.error(
+        "web_refused_without_auth",
+        host=host,
+        detail=(
+            "set HELIOAI_USERS, bind to loopback, or set "
+            "HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC=1 behind a loopback port publish"
+        ),
+    )
+    raise SystemExit(1)

@@ -59,6 +59,13 @@ it to a network without putting authentication in front of it**, and do not run
 it on a host where the fallback sandbox path is in use. A reachable
 `run_python` endpoint without isolation is remote code execution.
 
+Since 0.3.0 the server enforces the first half of that itself: `--host 0.0.0.0` (or
+any non-loopback address) with no `HELIOAI_USERS` configured is refused at startup,
+the same rule the MCP HTTP server applies to a missing token. The one legitimate
+exception is a container, which must bind `0.0.0.0` inside its network namespace
+while the host publishes the port on loopback — `docker/docker-compose.yml` sets
+`HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC=1` for that case and nothing else should.
+
 A loopback bind is not a security boundary on its own: any web page can point a
 hostname at `127.0.0.1` and reach a local server (DNS rebinding). `serve --web`
 therefore pins the `Host` header when it binds to loopback.

@@ -83,3 +83,10 @@ def test_without_override_nothing_moves(monkeypatch):
     assert s.rag.chroma_dir == s.data_dir / "chroma"
     assert s.catalogs.catalogs_dir == s.data_dir / "catalogs"
     assert s.profile.profile_path == s.data_dir / "profile.md"
+
+
+def test_public_unauthenticated_opt_out_defaults_off(monkeypatch):
+    monkeypatch.delenv("HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC", raising=False)
+    assert config._load().web_auth.allow_unauthenticated_public is False
+    monkeypatch.setenv("HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC", "1")
+    assert config._load().web_auth.allow_unauthenticated_public is True

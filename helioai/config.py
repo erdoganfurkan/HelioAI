@@ -288,6 +288,12 @@ class WebAuthConfig:
     # ponytail: env-driven map, fine for a handful of researchers; move to a DB
     # table if tokens must be added/revoked at runtime.
     users: dict[str, str] = field(default_factory=dict)
+    # `serve --web` refuses a non-loopback bind with no users configured, the way the
+    # MCP HTTP server refuses one without a token: run_python is arbitrary code
+    # execution. The one legitimate exception is a container, which must bind 0.0.0.0
+    # inside its own network namespace while the host publishes the port on loopback —
+    # docker-compose.yml sets HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC=1 for exactly that.
+    allow_unauthenticated_public: bool = False
 
 
 @dataclass
@@ -378,7 +384,11 @@ def _load() -> Settings:
 
     s = Settings(
         data_dir=data_dir,
-        web_auth=WebAuthConfig(users=web_users),
+        web_auth=WebAuthConfig(
+            users=web_users,
+            allow_unauthenticated_public=os.environ.get("HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC", "0")
+            not in ("0", "", "false"),
+        ),
         workspace=WorkspaceConfig(ttl_seconds=workspace_ttl),
         profile=ProfileConfig(profile_path=profile_path),
         recipes=RecipesConfig(recipes_dir=recipes_dir),

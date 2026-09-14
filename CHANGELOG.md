@@ -76,6 +76,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   `X-Content-Type-Options: nosniff`; the Host-header guard against DNS rebinding is
   built by `harden_for_host`, so the test client exercises what uvicorn serves; the
   browser console no longer receives every artifact's absolute server path.
+- **`serve --web` on a non-loopback address with no users configured now refuses to
+  start**, as `helioai-mcp --http` already did without a token: a bare
+  `docker run -p 7890:7890` published an unauthenticated `run_python` on every host
+  interface. `docker-compose.yml`, which publishes on loopback, carries the explicit
+  opt-out (`HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC=1`) a container needs to bind `0.0.0.0`.
 
 ### Removed
 

@@ -12,4 +12,9 @@ services:
       - ../data:/app/data
     env_file:
       - ../.env
+    environment:
+      # The container has to bind 0.0.0.0 inside its own network namespace; the port
+      # above is published on the host's loopback only, so this opt-out is safe here
+      # and nowhere else. Set HELIOAI_USERS in .env before widening the publish.
+      HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC: "1"
     restart: unless-stopped

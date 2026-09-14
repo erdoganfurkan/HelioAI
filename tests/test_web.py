@@ -946,3 +946,38 @@ def test_public_bind_does_not_pin_the_host(monkeypatch):
 
     client = TestClient(harden_for_host(probe, "0.0.0.0"), raise_server_exceptions=False)
     assert client.get("/ping", headers={"Host": "helio.lab.example"}).status_code == 200
+
+
+# ── a public bind without anyone authenticated is a deployment error ───────────
+
+
+def test_public_bind_without_users_refuses_to_start(monkeypatch):
+    from helioai.config import settings
+    from helioai.interfaces.web.app import refuse_unauthenticated_public_bind
+
+    monkeypatch.setattr(settings.web_auth, "users", {})
+    monkeypatch.setattr(settings.web_auth, "allow_unauthenticated_public", False)
+    with pytest.raises(SystemExit):
+        refuse_unauthenticated_public_bind("0.0.0.0")
+
+
+def test_public_bind_with_users_or_the_explicit_opt_out_starts(monkeypatch):
+    from helioai.config import settings
+    from helioai.interfaces.web.app import refuse_unauthenticated_public_bind
+
+    monkeypatch.setattr(settings.web_auth, "users", {"t": "u"})
+    refuse_unauthenticated_public_bind("0.0.0.0")
+
+    monkeypatch.setattr(settings.web_auth, "users", {})
+    monkeypatch.setattr(settings.web_auth, "allow_unauthenticated_public", True)
+    refuse_unauthenticated_public_bind("0.0.0.0")
+
+
+def test_loopback_bind_never_needs_users(monkeypatch):
+    from helioai.config import settings
+    from helioai.interfaces.web.app import refuse_unauthenticated_public_bind
+
+    monkeypatch.setattr(settings.web_auth, "users", {})
+    monkeypatch.setattr(settings.web_auth, "allow_unauthenticated_public", False)
+    for host in ("127.0.0.1", "localhost", "::1"):
+        refuse_unauthenticated_public_bind(host)

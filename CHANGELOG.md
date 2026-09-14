@@ -95,6 +95,18 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   and every `tool` message keeps the sequence it had. `run_python` stays sequential (it
   numbers its scripts from the disk), as do `task` and the internal tools.
 
+### Added
+
+- **The eleven shipped recipes have tests.** `tests/recipes/` rebuilds the sandbox
+  namespace from the same helper source the notebook export ships, runs every recipe
+  (its placeholders, demos and own `assert`s included), and checks each method on a
+  synthetic input whose answer is known: a constructed shock normal for `theta_bn`, a
+  cloud of known variances for `mvab`, a pure rotational discontinuity for the Walén
+  slope, mass conservation for the Rankine–Hugoniot speed, scaled copies for the
+  superposed-epoch median, a planar front for two-spacecraft timing. Until now a
+  regression in a recipe was invisible before a demo. Marked `recipes`; skip them with
+  `-m "not recipes"`.
+
 ### Removed
 
 - The cross-encoder reranking stage of parameter search — measured to degrade results

@@ -119,6 +119,9 @@ only-include = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "recipes: executes the shipped scientific recipes with synthetic inputs (-m 'not recipes' to skip)",
+]
 addopts = "--cov=helioai --cov-report=term-missing --cov-fail-under=70"
 
 [tool.coverage.run]

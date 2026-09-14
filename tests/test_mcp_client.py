@@ -70,14 +70,14 @@ async def test_discover_registers_prefixed_tool(toy_config, monkeypatch):
     names = await mcp_client.discover_and_register()
     assert names == ["toy_echo"]
     assert "toy_echo" in registry
-    out = await registry.call_tool("toy_echo", {"text": "hi"})
+    out = (await registry.call_tool("toy_echo", {"text": "hi"})).for_llm()
     assert out == "echo:hi"
 
 
 async def test_result_truncated(toy_config, monkeypatch):
     monkeypatch.setattr(mcp_client, "_session", _fake_session(_toy_server(big=True)))
     await mcp_client.discover_and_register()
-    out = await registry.call_tool("toy_echo", {"text": "hi"})
+    out = (await registry.call_tool("toy_echo", {"text": "hi"})).for_llm()
     assert len(out) < 10_000
     assert "truncated" in out
 
@@ -90,7 +90,7 @@ async def test_collision_skipped(toy_config, monkeypatch):
     monkeypatch.setattr(mcp_client, "_session", _fake_session(_toy_server()))
     names = await mcp_client.discover_and_register()
     assert names == []
-    assert await registry.call_tool("toy_echo", {}) == "original"
+    assert (await registry.call_tool("toy_echo", {})).for_llm() == "original"
 
 
 async def test_invalid_json_noop(monkeypatch):
@@ -143,5 +143,5 @@ async def test_real_stdio_roundtrip(monkeypatch, tmp_path):
     monkeypatch.setattr(settings.mcp, "servers_json", __import__("json").dumps(spec))
     names = await mcp_client.discover_and_register()
     assert names == ["stdio_shout"]
-    out = await registry.call_tool("stdio_shout", {"text": "hello"})
+    out = (await registry.call_tool("stdio_shout", {"text": "hello"})).for_llm()
     assert out == "HELLO"

@@ -15,6 +15,7 @@ import json
 import pytest
 
 from helioai.core.llm.base import Message, ToolCall
+from helioai.tools.results import ToolResult
 
 
 def _exports_result(session_dir, exports):
@@ -47,7 +48,7 @@ async def test_lead_flags_a_recipe_it_never_loaded(monkeypatch, tmp_path, fake_l
     }
 
     async def fake_call_tool(name, arguments, trusted=None):
-        return _exports_result(tmp_path, exports)
+        return ToolResult.from_raw(name, _exports_result(tmp_path, exports))
 
     monkeypatch.setattr(agent_loop.registry, "call_tool", fake_call_tool)
 
@@ -93,7 +94,9 @@ async def test_lead_flags_a_recipe_it_loaded_but_never_called(
     exports = {"theta_bn": {"mean": 54.85, "min": 54.85, "max": 54.85, "units": "deg"}}
 
     async def fake_call_tool(name, arguments, trusted=None):
-        return recipe if name == "load_recipe" else _exports_result(tmp_path, exports)
+        return ToolResult.from_raw(
+            name, recipe if name == "load_recipe" else _exports_result(tmp_path, exports)
+        )
 
     monkeypatch.setattr(agent_loop.registry, "call_tool", fake_call_tool)
 

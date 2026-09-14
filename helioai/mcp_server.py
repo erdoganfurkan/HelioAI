@@ -19,7 +19,6 @@ import base64
 import contextlib
 import hmac
 import io
-import json
 import sys
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -115,26 +114,10 @@ def _session_id(ctx: ServerRequestContext | None) -> str:
         return _PROCESS_SESSION
 
 
-def _is_error(result: str) -> bool:
-    """Whether a registry result is a failure.
-
-    `registry.call_tool` never raises: an unknown tool, a rejected private argument and
-    any exception all come back as a JSON object carrying `error`, and several tools
-    report their own failures the same way. Reading that back is the only signal there
-    is, and clients drive retries and their own error display off `isError` — returning
-    False unconditionally reported every one of those as a success.
-    """
-    try:
-        payload = json.loads(result)
-    except (TypeError, ValueError):
-        return False
-    return isinstance(payload, dict) and "error" in payload
-
-
 FIGURE_MAX_PX = 768
 
 
-def _figure_content(result: str) -> list[ImageContent]:
+def _figure_content(payload: object) -> list[ImageContent]:
     """Attach the figures a tool produced, downscaled, to its result.
 
     The sandbox returns `figure_paths` — paths on the server's filesystem. That is
@@ -147,10 +130,6 @@ def _figure_content(result: str) -> list[ImageContent]:
     thumbnail says. A figure that cannot be read is skipped rather than failing the
     call — it already succeeded.
     """
-    try:
-        payload = json.loads(result)
-    except (TypeError, ValueError):
-        return []
     if not isinstance(payload, dict):
         return []
 
@@ -188,9 +167,14 @@ async def _call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -
     finally:
         workspace.reset_session(session_token)
         workspace.reset_user(user_token)
+    # `isError` drives the client's retries and error display; `registry.call_tool`
+    # never raises, so the failed result is the only signal there is. A dict payload
+    # also travels as structured content, which clients may read instead of parsing
+    # the text.
     return CallToolResult(
-        content=[TextContent(type="text", text=result), *_figure_content(result)],
-        is_error=_is_error(result),
+        content=[TextContent(type="text", text=result.for_llm()), *_figure_content(result.payload)],
+        structured_content=result.payload if isinstance(result.payload, dict) else None,
+        is_error=not result.ok,
     )
 
 

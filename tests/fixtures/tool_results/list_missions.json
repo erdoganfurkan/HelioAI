@@ -1,0 +1,5 @@
+{
+ "tool": "list_missions",
+ "arguments": {},
+ "raw": "{\"providers\": [\"amda\", \"cda\", \"csa\", \"ssc\", \"uiowaephtool\"], \"note\": \"Use search_parameters to find specific parameters. Common provider prefixes: amda/, cdaweb/, csa/, ssc/\"}"
+}

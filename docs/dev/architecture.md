@@ -25,6 +25,7 @@ helioai/
 │       └── factory.py        build_llm_client + the provider table
 ├── tools/
 │   ├── registry.py         ToolRegistry — JSON dispatch to async functions
+│   ├── results.py          ToolResult — a call's payload and the text the model reads
 │   ├── setup.py            registers all 17 tools at import
 │   ├── rag.py              hybrid BM25 + dense retrieval, fused by RRF
 │   ├── speasy_tools.py     search, download, data-quality scan
@@ -65,6 +66,11 @@ async def plasma_beta(B_nT: float, n_cm3: float, T_eV: float) -> dict: ...
 `call_tool` always awaits, so every tool must be `async`. Arguments starting with `_` are
 rejected from model-supplied input — framework-injected parameters travel through a
 separate `trusted` channel so generated code cannot spoof them.
+
+Every call returns a `ToolResult` (`tools/results.py`): the payload the tool produced,
+parsed once, and `for_llm()`, the exact text appended to the history. Readers — artifact
+extraction, the figure review, the MCP server's `isError` — work on the payload; nothing
+downstream re-parses the model's text to learn what a tool returned.
 
 ## Storage
 

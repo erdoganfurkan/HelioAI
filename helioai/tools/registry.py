@@ -2,17 +2,18 @@
 
 The agent loop calls `registry.call_tool(name, args)` and never imports
 tool modules directly, which keeps the dependency surface small and makes
-sub-agent tool whitelisting trivial.
+sub-agent tool whitelisting trivial. Every call comes back as a `ToolResult`
+(`tools/results.py`): the payload once, the model's text once.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
 from helioai.core.llm.base import ToolDef
+from helioai.tools.results import ToolResult
 
 
 @dataclass
@@ -78,27 +79,33 @@ class ToolRegistry:
 
     async def call_tool(
         self, name: str, arguments: dict | None, *, trusted: dict | None = None
-    ) -> str:
-        """Invoke a tool and return its JSON-serialized result string.
+    ) -> ToolResult:
+        """Invoke a tool and return its result, typed.
 
-        `arguments` is caller-supplied (LLM/MCP) and may not carry private
-        `_*` keys. `trusted` is framework-injected (e.g. the sandbox output
-        dir) and bypasses that guard.
+        Never raises: an unknown tool, a rejected private argument and any exception
+        the tool lets out all come back as a failed `ToolResult`, whose `for_llm()` is
+        the `{"error": ...}` line this method used to return as a string.
+
+        Args:
+            name: Registered tool name.
+            arguments: Caller-supplied (LLM/MCP) arguments; may not carry private `_*`
+                keys.
+            trusted: Framework-injected arguments (the sandbox output directory) that
+                bypass that guard.
+
+        Returns:
+            The tool's payload and the exact text the model will read.
         """
         if name not in self._tools:
-            return json.dumps({"error": f"unknown tool {name!r}"})
+            return ToolResult.failure(name, f"unknown tool {name!r}")
         if arguments and any(k.startswith("_") for k in arguments):
             bad = sorted(k for k in arguments if k.startswith("_"))
-            return json.dumps({"error": f"rejected private argument(s): {bad}"})
+            return ToolResult.failure(name, f"rejected private argument(s): {bad}")
         try:
             result = await self._tools[name].func(**{**(arguments or {}), **(trusted or {})})
-            if isinstance(result, str):
-                return result
-            return json.dumps(result, ensure_ascii=False, default=str)
         except Exception as e:
-            # `str(TimeoutError())` is "", and every reader downstream tests the error
-            # field for truth — a tool that never ran was displayed as "ok".
-            return json.dumps({"error": str(e) or type(e).__name__})
+            return ToolResult.failure(name, str(e) or type(e).__name__)
+        return ToolResult.from_raw(name, result)
 
     def is_read_only(self, name: str) -> bool:
         """Whether the tool leaves the user's world unchanged. Unknown names count as not."""

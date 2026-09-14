@@ -20,6 +20,7 @@ import pytest
 import helioai.tools.setup  # noqa: F401  — populates the registry; without it it is empty
 from helioai.core import sub_agents
 from helioai.core.llm.base import LLMClient, Message, ToolCall
+from helioai.tools.results import ToolResult
 
 
 class ScriptedLLM(LLMClient):
@@ -61,7 +62,7 @@ def stub_registry(monkeypatch):
 
     async def fake_call_tool(name, arguments, *, trusted=None):
         invoked.append(name)
-        return results.get(name, json.dumps({"ok": True}))
+        return ToolResult.from_raw(name, results.get(name, json.dumps({"ok": True})))
 
     monkeypatch.setattr(sub_agents.registry, "call_tool", fake_call_tool)
     return invoked, results

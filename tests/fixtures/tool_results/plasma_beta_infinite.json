@@ -1,0 +1,9 @@
+{
+ "tool": "plasma_beta",
+ "arguments": {
+  "B_nT": 0.0,
+  "n_cm3": 10.0,
+  "T_eV": 20.0
+ },
+ "raw": "{\"beta\": Infinity, \"unit\": \"dimensionless\", \"regime\": \"pressure-dominated (β ≫ 1) — typical ionosphere / dense plasma\", \"inputs\": {\"B_nT\": 0.0, \"n_cm3\": 10.0, \"T_eV\": 20.0}}"
+}

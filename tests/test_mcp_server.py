@@ -85,6 +85,21 @@ async def test_call_tool_plasma_beta_correct_value():
     assert body["beta"] > 0
 
 
+async def test_call_tool_carries_the_payload_as_structured_content():
+    """A client that supports `structuredContent` reads the object instead of parsing
+    the text; the two must be the same result, and a failure has `isError` set."""
+    params = CallToolRequestParams(
+        name="plasma_beta", arguments={"B_nT": 5.0, "n_cm3": 10.0, "T_eV": 10.0}
+    )
+    result = await ms._call_tool(None, params)
+    assert result.structured_content == json.loads(result.content[0].text)
+    assert result.is_error is False
+
+    failed = await ms._call_tool(None, CallToolRequestParams(name="does_not_exist", arguments={}))
+    assert failed.is_error is True
+    assert failed.structured_content["error"] == json.loads(failed.content[0].text)["error"]
+
+
 async def test_call_tool_gyrofrequency_proton():
     result = await ms._call_tool(
         None, CallToolRequestParams(name="gyrofrequency", arguments={"B_nT": 10.0})
@@ -456,8 +471,8 @@ async def test_tool_without_a_figure_returns_text_only():
 
 def test_unreadable_figure_is_skipped_not_raised():
     """A figure that cannot be read must not fail a call that already succeeded."""
-    assert ms._figure_content(json.dumps({"figure_paths": ["/nope/missing.png"]})) == []
+    assert ms._figure_content({"figure_paths": ["/nope/missing.png"]}) == []
 
 
-def test_figure_content_ignores_non_json_results():
-    assert ms._figure_content("not json at all") == []
+def test_figure_content_ignores_non_dict_payloads():
+    assert ms._figure_content("a remote tool's plain text") == []

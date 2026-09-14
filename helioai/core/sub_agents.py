@@ -9,7 +9,6 @@ The events a sub-agent yields are the non-lead-only kinds of `core/events.py`.
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -34,6 +33,7 @@ from helioai.core.tool_exec import (
 from helioai.core.vision import maybe_review
 from helioai.logging_config import get_logger
 from helioai.tools.registry import registry
+from helioai.tools.results import ToolResult
 
 log = get_logger(__name__)
 
@@ -446,10 +446,9 @@ async def stream_subagent(
 
                 if tc.name not in allowed:
                     log.warning("subagent_tool_denied", role=role, tool=tc.name)
-                    result = json.dumps(
-                        {
-                            "error": f"tool {tc.name!r} not available to {role!r}. Allowed: {sorted(allowed)}"
-                        }
+                    result = ToolResult.failure(
+                        tc.name,
+                        f"tool {tc.name!r} not available to {role!r}. Allowed: {sorted(allowed)}",
                     )
                 elif tc.id in started:
                     result = await started[tc.id]
@@ -483,7 +482,7 @@ async def stream_subagent(
                         role="tool",
                         tool_call_id=tc.id,
                         name=tc.name,
-                        content=_history_tool_result(tc.name, result),
+                        content=_history_tool_result(tc.name, result.for_llm()),
                     )
                 )
         else:

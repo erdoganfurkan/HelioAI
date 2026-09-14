@@ -413,8 +413,9 @@ async def test_registry_rejects_private_args() -> None:
         return kwargs
 
     out = await reg.call_tool("echo", {"x": 1, "_plot_dir": "/etc"})
-    assert "rejected private argument" in out
-    assert "_plot_dir" in out
+    assert not out.ok
+    assert "rejected private argument" in out.error
+    assert "_plot_dir" in out.error
 
 
 async def test_registry_allows_trusted_private_args() -> None:
@@ -427,8 +428,8 @@ async def test_registry_allows_trusted_private_args() -> None:
         return kwargs
 
     out = await reg.call_tool("echo", {"x": 1}, trusted={"_plot_dir": "/safe"})
-    assert "rejected private argument" not in out
-    assert "/safe" in out
+    assert out.ok
+    assert out.payload == {"x": 1, "_plot_dir": "/safe"}
 
 
 async def test_physics_helpers_available_in_sandbox() -> None:

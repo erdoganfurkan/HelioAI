@@ -1,0 +1,7 @@
+{
+ "tool": "run_python",
+ "arguments": {
+  "code": "import numpy as np\nimport matplotlib.pyplot as plt\nx = np.linspace(0, 1, 50)\nexport('theta_bn_deg', 57.5, 'deg')\nexport('b_up', np.array([1.5, -2.25, 3.0]), 'nT')\nplt.plot(x, x**2); plt.title('θ_Bn test'); plt.show()\nprint('done — θ = 57.5°')\n"
+ },
+ "raw": "{\"stdout\": \"done — θ = 57.5°\", \"stderr\": null, \"figure_paths\": [\"/tmp/scratch/users/capture/workspace/fixtures/fig_0_0.png\"], \"n_figures\": 1, \"exports\": {\"theta_bn_deg\": {\"units\": \"deg\", \"shape\": [], \"dtype\": \"float64\", \"min\": 57.5, \"max\": 57.5, \"mean\": 57.5, \"std\": 0.0, \"n_finite\": 1, \"n_nan\": 0, \"sample\": [57.5]}, \"b_up\": {\"units\": \"nT\", \"shape\": [3], \"dtype\": \"float64\", \"min\": -2.25, \"max\": 3.0, \"mean\": 0.75, \"std\": 2.207940216581962, \"n_finite\": 3, \"n_nan\": 0, \"sample\": [1.5, -2.25, 3.0]}}, \"cards\": [], \"code_path\": \"/tmp/scratch/users/capture/workspace/fixtures/code_0.py\", \"n_lines\": 7}"
+}

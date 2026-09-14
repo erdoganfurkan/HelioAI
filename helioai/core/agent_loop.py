@@ -45,6 +45,7 @@ from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
 from helioai.core.vision import maybe_review
 from helioai.logging_config import get_logger
 from helioai.tools.registry import registry
+from helioai.tools.results import ToolResult
 
 log = get_logger(__name__)
 
@@ -263,25 +264,32 @@ _INTERNAL_TOOLS: list[ToolDef] = [
 _INTERNAL_TOOL_NAMES: frozenset[str] = frozenset(t.name for t in _INTERNAL_TOOLS)
 
 
-def _dispatch_internal_tool(name: str, arguments: dict) -> str:
+def _dispatch_internal_tool(name: str, arguments: dict) -> ToolResult:
+    """Run one of the lead's own tools — skills and the plan — and type the result.
+
+    The payloads are serialised with `json.dumps` defaults, as they always were, and
+    wrapped with `from_raw` so the model keeps reading exactly that text.
+    """
     args = arguments or {}
     try:
         if name == "list_skills":
-            return json.dumps({"index": load_skills_index(), "names": list_skill_names()})
-        if name == "load_skill":
+            text = json.dumps({"index": load_skills_index(), "names": list_skill_names()})
+        elif name == "load_skill":
             skill = (args.get("name") or "").strip()
-            return json.dumps({"name": skill, "body": load_skill_body(skill)})
-        if name == "present_plan":
-            return json.dumps(
+            text = json.dumps({"name": skill, "body": load_skill_body(skill)})
+        elif name == "present_plan":
+            text = json.dumps(
                 {
                     "status": "presented",
                     "title": args.get("title", ""),
                     "steps": args.get("steps", []),
                 }
             )
+        else:
+            return ToolResult.failure(name, f"unknown internal tool {name!r}")
     except SkillError as e:
-        return json.dumps({"error": str(e)})
-    return json.dumps({"error": f"unknown internal tool {name!r}"})
+        return ToolResult.failure(name, str(e))
+    return ToolResult.from_raw(name, text)
 
 
 @dataclass
@@ -502,17 +510,20 @@ async def _stream_turn(
                         ):
                             if sub_ev["event"] == "sub_agent_end":
                                 end_data = sub_ev["data"]
-                                result = json.dumps(
-                                    {
-                                        # First, deliberately: keys at the tail are the ones
-                                        # _summarize_tool_result drops when a stale result is
-                                        # trimmed, and the measured values must outlive the prose.
-                                        "findings": end_data.get("findings", {}),
-                                        "summary": end_data.get("summary", ""),
-                                        "n_iterations": end_data.get("n_iterations", 0),
-                                        "artifacts": end_data.get("artifacts", []),
-                                        "error": end_data.get("error"),
-                                    }
+                                result = ToolResult.from_raw(
+                                    TASK_TOOL_NAME,
+                                    json.dumps(
+                                        {
+                                            # First, deliberately: keys at the tail are the ones
+                                            # _summarize_tool_result drops when a stale result is
+                                            # trimmed, and the measured values must outlive the prose.
+                                            "findings": end_data.get("findings", {}),
+                                            "summary": end_data.get("summary", ""),
+                                            "n_iterations": end_data.get("n_iterations", 0),
+                                            "artifacts": end_data.get("artifacts", []),
+                                            "error": end_data.get("error"),
+                                        }
+                                    ),
                                 )
                                 # `findings` travels with the event: it is the table of
                                 # values the run actually measured, and the interfaces
@@ -550,7 +561,7 @@ async def _stream_turn(
                         )
                 except Exception as e:
                     log.exception("tool_call_failed", turn=turn, tool=tc.name)
-                    result = json.dumps({"error": str(e)})
+                    result = ToolResult.failure(tc.name, str(e) or type(e).__name__)
                     if tc.name == TASK_TOOL_NAME:
                         sub_end_event = {
                             "task_id": tc.id,
@@ -570,25 +581,21 @@ async def _stream_turn(
                     yield ev
                 if sub_end_event is not None:
                     yield {"event": "sub_agent_end", "data": sub_end_event}
-                if tc.name == "present_plan":
-                    try:
-                        plan = json.loads(result)
-                        yield {
-                            "event": "plan",
-                            "data": {
-                                "title": plan.get("title", ""),
-                                "steps": plan.get("steps", []),
-                            },
-                        }
-                    except (ValueError, TypeError):
-                        pass
+                if tc.name == "present_plan" and isinstance(result.payload, dict):
+                    yield {
+                        "event": "plan",
+                        "data": {
+                            "title": result.payload.get("title", ""),
+                            "steps": result.payload.get("steps", []),
+                        },
+                    }
 
                 history.append(
                     Message(
                         role="tool",
                         tool_call_id=tc.id,
                         name=tc.name,
-                        content=_history_tool_result(tc.name, result),
+                        content=_history_tool_result(tc.name, result.for_llm()),
                     )
                 )
 

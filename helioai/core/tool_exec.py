@@ -22,6 +22,7 @@ from pathlib import Path
 from helioai import provenance
 from helioai.core.event_display import describe_tool_result, finding_str
 from helioai.core.llm.base import ToolCall
+from helioai.tools.results import ToolResult
 
 # Tools whose results contain large lists (per_event_stats, sample rows) that would
 # flood the LLM context. All other tools pass through untouched so the LLM can reason
@@ -230,14 +231,17 @@ def compact_history(messages: list, keep_full: int = 2) -> list:
     ]
 
 
-def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
-    """Extract renderable artifacts from tool results (plots, parameter cards)."""
-    try:
-        data = json.loads(result_text)
-    except (ValueError, TypeError):
+def _extract_artifact(tool_name: str, payload: object) -> list[dict]:
+    """Extract renderable artifacts from a tool's payload (plots, parameter cards).
+
+    Args:
+        tool_name: The tool that produced it.
+        payload: `ToolResult.payload` — read as the dict it is; anything else has no
+            artifacts. The JSON text used to be parsed here, a second time.
+    """
+    if not isinstance(payload, dict):
         return []
-    if not isinstance(data, dict):
-        return []
+    data = payload
     if "error" in data:
         # A failed run leaves the offending script on disk. Surfacing it is the whole
         # point when something broke — hiding it left the user watching a bare
@@ -356,12 +360,8 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
     return artifacts
 
 
-def _code_path(result_text: str) -> str:
-    try:
-        data = json.loads(result_text)
-        return data.get("code_path") or "" if isinstance(data, dict) else ""
-    except (ValueError, TypeError):
-        return ""
+def _code_path(payload: object) -> str:
+    return (payload.get("code_path") or "") if isinstance(payload, dict) else ""
 
 
 def inject_run_python_args(name: str, *, no_network: bool = False) -> dict:
@@ -415,8 +415,9 @@ def start_tool_calls(
         allowed: A sub-agent's whitelist; None for the lead, who may call anything.
 
     Returns:
-        `{tool_call.id: task}` for the calls that were started. `registry.call_tool`
-        never raises — a failure is an error string — so awaiting a task is safe.
+        `{tool_call.id: task}` for the calls that were started; each task resolves to
+        a `ToolResult`. `registry.call_tool` never raises — a failure is a failed
+        result — so awaiting a task is safe.
     """
     from helioai.tools.registry import registry
 
@@ -440,7 +441,7 @@ def cancel_pending(started: dict[str, asyncio.Task]) -> None:
 
 def emit_post_tool_events(
     name: str,
-    result: str,
+    result: ToolResult,
     *,
     tool_result_extra: dict | None = None,
     common_extra: dict | None = None,
@@ -452,7 +453,8 @@ def emit_post_tool_events(
 
     Args:
         name: The tool that just ran.
-        result: Its raw result string, parsed here for artifacts.
+        result: Its result; the payload is read for artifacts, the model's text for
+            the summary the event carries.
         tool_result_extra: Merged into the `tool_result` event data, e.g. `{turn}`.
         common_extra: Merged into `skill_loaded` and `artifact` event data, e.g.
             `{sub_agent_ctx}` when a sub-agent is the caller.
@@ -463,40 +465,38 @@ def emit_post_tool_events(
     """
     tool_result_extra = tool_result_extra or {}
     common_extra = common_extra or {}
+    text = result.for_llm()
+    payload = result.payload
 
     yield {
         "event": "tool_result",
         "data": {
             "name": name,
-            "summary": _summarize_tool_result(result),
+            "summary": _summarize_tool_result(text),
             # `summary` is written for the model and stays untouched. `display` is the
             # same event told to a person, computed here so the CLI, the Jupyter magic
             # and the browser show identical words without three copies of the logic.
-            "display": describe_tool_result(name, result),
+            "display": describe_tool_result(name, text),
             **tool_result_extra,
         },
     }
 
-    if name == "load_skill":
-        try:
-            payload = json.loads(result)
-            if payload.get("body") and not payload.get("error"):
-                yield {
-                    "event": "skill_loaded",
-                    "data": {
-                        "name": payload.get("name", ""),
-                        **common_extra,
-                    },
-                }
-        except (ValueError, TypeError):
-            pass
+    if name == "load_skill" and isinstance(payload, dict):
+        if payload.get("body") and not payload.get("error"):
+            yield {
+                "event": "skill_loaded",
+                "data": {
+                    "name": payload.get("name", ""),
+                    **common_extra,
+                },
+            }
 
-    for art in _extract_artifact(name, result):
+    for art in _extract_artifact(name, payload):
         if art.get("kind") == "exports":
             ctx = common_extra.get("sub_agent_ctx") or {}
             provenance.record(
                 art.get("values") or {},
-                code_path=_code_path(result),
+                code_path=_code_path(payload),
                 agent=ctx.get("role") or "lead",
                 task_id=ctx.get("task_id"),
                 turn=tool_result_extra.get("turn"),

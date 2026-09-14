@@ -10,7 +10,6 @@ module pins the wiring itself.
 from __future__ import annotations
 
 import inspect
-import json
 
 import pytest
 
@@ -194,5 +193,6 @@ async def test_an_exception_without_a_message_is_still_reported_as_an_error():
         raise TimeoutError()
 
     result = await reg.call_tool("boom", {})
-    assert json.loads(result)["error"] == "TimeoutError"
-    assert describe_tool_result("boom", result).lower().startswith("error")
+    assert not result.ok
+    assert result.error == "TimeoutError"
+    assert describe_tool_result("boom", result.for_llm()).lower().startswith("error")

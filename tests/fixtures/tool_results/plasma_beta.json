@@ -1,0 +1,9 @@
+{
+ "tool": "plasma_beta",
+ "arguments": {
+  "B_nT": 5.0,
+  "n_cm3": 10.0,
+  "T_eV": 20.0
+ },
+ "raw": "{\"beta\": 3.221367, \"unit\": \"dimensionless\", \"regime\": \"high-β plasma (β ~ 1-10) — typical magnetosheath / plasma sheet\", \"inputs\": {\"B_nT\": 5.0, \"n_cm3\": 10.0, \"T_eV\": 20.0}}"
+}

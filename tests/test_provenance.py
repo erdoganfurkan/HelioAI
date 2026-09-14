@@ -4,10 +4,12 @@ import pytest
 
 from helioai import provenance
 from helioai.core.tool_exec import emit_post_tool_events
+from helioai.tools.results import ToolResult
 
 
 def _run_python_result(session_dir, run_idx, exports):
-    return json.dumps(
+    return ToolResult.from_raw(
+        "run_python",
         {
             "stdout": "",
             "figure_paths": [],
@@ -15,7 +17,7 @@ def _run_python_result(session_dir, run_idx, exports):
             "cards": [],
             "code_path": str(session_dir / f"code_{run_idx}.py"),
             "n_lines": 3,
-        }
+        },
     )
 
 

@@ -118,6 +118,13 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Added
 
+- **A tool call returns a typed result.** `registry.call_tool` used to serialise every
+  tool's dict to JSON on the spot, and five readers downstream — the history, the artifact
+  extractor, the figure review, the MCP server, the event display — each parsed that text
+  back to learn what the tool had returned. `ToolResult` (`tools/results.py`) carries the
+  payload once and `for_llm()`, the text the model reads, once; sixteen results captured
+  from live calls pin that text byte for byte, so the model reads exactly what it read
+  before. MCP clients now also receive a dict payload as `structuredContent`.
 - **The eleven shipped recipes have tests.** `tests/recipes/` rebuilds the sandbox
   namespace from the same helper source the notebook export ships, runs every recipe
   (its placeholders, demos and own `assert`s included), and checks each method on a

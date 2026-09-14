@@ -16,6 +16,7 @@ from helioai.core.tool_exec import (
     emit_post_tool_events,
     inject_run_python_args,
 )
+from helioai.tools.results import ToolResult
 
 # ──────────────────────────────── inject_run_python_args ────────────────────
 
@@ -43,7 +44,13 @@ def test_inject_noop_for_other_tools() -> None:
 
 def test_emit_tool_result_carries_extra() -> None:
     result = json.dumps({"results": [1, 2, 3]})
-    events = list(emit_post_tool_events("search_parameters", result, tool_result_extra={"turn": 2}))
+    events = list(
+        emit_post_tool_events(
+            "search_parameters",
+            ToolResult.from_raw("search_parameters", result),
+            tool_result_extra={"turn": 2},
+        )
+    )
     assert events[0]["event"] == "tool_result"
     assert events[0]["data"]["turn"] == 2
     assert events[0]["data"]["name"] == "search_parameters"
@@ -57,7 +64,11 @@ def test_emit_run_python_image_artifact() -> None:
             "exports": {},
         }
     )
-    events = list(emit_post_tool_events("run_python", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "run_python", ToolResult.from_raw("run_python", result), tool_result_extra={"turn": 1}
+        )
+    )
     artifacts = [e for e in events if e["event"] == "artifact"]
     assert len(artifacts) == 1
     assert artifacts[0]["data"]["kind"] == "image"
@@ -69,7 +80,11 @@ def test_emit_run_python_exports_artifact() -> None:
     # values never leave run_python's own result and the lead has no numbers to quote.
     exports = {"compression_ratio_density": {"shape": [], "mean": 2.37, "sample": [2.37]}}
     result = json.dumps({"stdout": "", "figure_paths": [], "exports": exports})
-    events = list(emit_post_tool_events("run_python", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "run_python", ToolResult.from_raw("run_python", result), tool_result_extra={"turn": 1}
+        )
+    )
     artifacts = [e["data"] for e in events if e["event"] == "artifact"]
     assert [a["kind"] for a in artifacts] == ["exports"]
     assert artifacts[0]["values"] == exports
@@ -81,7 +96,7 @@ def test_emit_common_extra_on_artifact() -> None:
     events = list(
         emit_post_tool_events(
             "run_python",
-            result,
+            ToolResult.from_raw("run_python", result),
             tool_result_extra={"turn": 1, "sub_agent_ctx": ctx},
             common_extra={"sub_agent_ctx": ctx},
         )
@@ -92,7 +107,11 @@ def test_emit_common_extra_on_artifact() -> None:
 
 def test_emit_skill_loaded_for_load_skill() -> None:
     result = json.dumps({"name": "plotting", "body": "# procedure"})
-    events = list(emit_post_tool_events("load_skill", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "load_skill", ToolResult.from_raw("load_skill", result), tool_result_extra={"turn": 1}
+        )
+    )
     skill_events = [e for e in events if e["event"] == "skill_loaded"]
     assert len(skill_events) == 1
     assert skill_events[0]["data"]["name"] == "plotting"
@@ -106,7 +125,11 @@ def test_emit_recipe_used_artifact() -> None:
             "metadata": {"reference": "Schwartz 1998", "description": "Shock normal angle."},
         }
     )
-    events = list(emit_post_tool_events("load_recipe", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "load_recipe", ToolResult.from_raw("load_recipe", result), tool_result_extra={"turn": 1}
+        )
+    )
     artifacts = [e for e in events if e["event"] == "artifact"]
     assert len(artifacts) == 1
     assert artifacts[0]["data"]["kind"] == "recipe_used"
@@ -129,7 +152,11 @@ def test_emit_method_used_card_becomes_recipe_artifact() -> None:
             ],
         }
     )
-    events = list(emit_post_tool_events("run_python", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "run_python", ToolResult.from_raw("run_python", result), tool_result_extra={"turn": 1}
+        )
+    )
     recipes = [
         e for e in events if e["event"] == "artifact" and e["data"].get("kind") == "recipe_used"
     ]
@@ -140,7 +167,11 @@ def test_emit_method_used_card_becomes_recipe_artifact() -> None:
 
 def test_emit_no_skill_loaded_on_error() -> None:
     result = json.dumps({"error": "no such skill"})
-    events = list(emit_post_tool_events("load_skill", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "load_skill", ToolResult.from_raw("load_skill", result), tool_result_extra={"turn": 1}
+        )
+    )
     assert not [e for e in events if e["event"] == "skill_loaded"]
 
 
@@ -148,7 +179,9 @@ def test_emit_event_order() -> None:
     result = json.dumps({"name": "plotting", "body": "x", "figure_paths": ["/tmp/f.png"]})
     events = [
         e["event"]
-        for e in emit_post_tool_events("load_skill", result, tool_result_extra={"turn": 1})
+        for e in emit_post_tool_events(
+            "load_skill", ToolResult.from_raw("load_skill", result), tool_result_extra={"turn": 1}
+        )
     ]
     assert events[0] == "tool_result"
     assert events.index("tool_result") < events.index("skill_loaded")
@@ -270,9 +303,11 @@ def test_compaction_keeps_the_traceback_of_a_failed_run():
 
 
 def test_failed_run_python_still_yields_the_code_artifact():
-    payload = json.dumps(
-        {"error": "ZeroDivisionError: division by zero", "code_path": "/w/code_1.py", "n_lines": 12}
-    )
+    payload = {
+        "error": "ZeroDivisionError: division by zero",
+        "code_path": "/w/code_1.py",
+        "n_lines": 12,
+    }
     arts = _extract_artifact("run_python", payload)
     assert [a["kind"] for a in arts] == ["code"]
     assert arts[0]["failed"] is True
@@ -280,7 +315,7 @@ def test_failed_run_python_still_yields_the_code_artifact():
 
 
 def test_other_tools_emit_nothing_on_error():
-    arts = _extract_artifact("get_timeseries", json.dumps({"error": "no data"}))
+    arts = _extract_artifact("get_timeseries", {"error": "no data"})
     assert arts == []
 
 
@@ -486,7 +521,7 @@ async def test_start_tool_calls_overlaps_registry_tools(three_slow_tools):
     results = [await started[tc.id] for tc in calls]
     elapsed = time.monotonic() - t0
 
-    assert [r for r in results] == [
+    assert [r.for_llm() for r in results] == [
         '{"tool": "slow_a"}',
         '{"tool": "slow_b"}',
         '{"tool": "slow_c"}',

@@ -204,7 +204,14 @@ class WorkspaceConfig:
 
 @dataclass
 class ProfileConfig:
-    """Location of the user profile injected into the system prompt."""
+    """Legacy location of the single-user profile, kept for `helioai migrate-storage`.
+
+    The agent reads `users/<user>/profile.md` (`workspace.user_home`) since storage
+    became per user; `helioai profile`, `%helioai_profile` and the web UI all edit that
+    file. Nothing injects this path any more, so `HELIOAI_PROFILE` — which only moved
+    it — was a knob that did nothing, and is gone. The path stays as the place the
+    migration looks for a profile written by an older install.
+    """
 
     profile_path: Path = field(default_factory=lambda: _DATA / "profile.md")
 
@@ -374,7 +381,6 @@ def _load() -> Settings:
     # catalogues and the profile in the default tree: a Docker volume held two trees.
     data_dir = Path(os.environ.get("HELIOAI_DATA_DIR", str(_DATA)))
     workspace_ttl = int(os.environ.get("HELIOAI_WORKSPACE_TTL_S", str(86400 * 7)))
-    profile_path = Path(os.environ.get("HELIOAI_PROFILE", str(data_dir / "profile.md")))
     recipes_dir = Path(os.environ.get("HELIOAI_RECIPES_DIR", str(_PKG_RECIPES)))
     catalogs_dir = Path(os.environ.get("HELIOAI_CATALOGS_DIR", str(data_dir / "catalogs")))
     hybrid_enabled = os.environ.get("HELIOAI_RAG_HYBRID", "1") != "0"
@@ -390,7 +396,7 @@ def _load() -> Settings:
             not in ("0", "", "false"),
         ),
         workspace=WorkspaceConfig(ttl_seconds=workspace_ttl),
-        profile=ProfileConfig(profile_path=profile_path),
+        profile=ProfileConfig(profile_path=data_dir / "profile.md"),
         recipes=RecipesConfig(recipes_dir=recipes_dir),
         catalogs=CatalogsConfig(catalogs_dir=catalogs_dir),
         literature=LiteratureConfig(ads_token=os.environ.get("ADS_API_TOKEN", "")),

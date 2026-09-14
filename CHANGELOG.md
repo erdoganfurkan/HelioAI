@@ -158,6 +158,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   and disabled for a year (`RAGConfig` keeps the measurement in its docstring); the
   `rerank_*` settings go with it. Also gone: `run_subagent` (no callers) and the
   `data_preview` artifact renderers in the three interfaces (no emitter).
+- **`HELIOAI_PROFILE`.** It moved a file the agent stopped reading when storage became
+  per user: the profile injected into the prompt is `users/<user>/profile.md`, which
+  `helioai profile`, `%helioai_profile` and the web UI all edit. The variable was
+  documented as "injected into the system prompt" and did nothing. A profile written
+  by an older install is still picked up by `helioai migrate-storage`.
 
 ### Changed
 

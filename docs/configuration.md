@@ -42,7 +42,6 @@ provider's key is checked when a client is built.
 |---|---|---|
 | `HELIOAI_DATA_DIR` | `<repo>/data` from a clone, `$XDG_DATA_HOME/helioai` installed | Root of everything HelioAI writes: index, session store, per-user workspaces, catalogues, profile. Set it and run `helioai migrate-storage` once when upgrading an install that already set it. |
 | `HELIOAI_SESSION_DB` | `<data_dir>/sessions.db` | The SQLite session store. |
-| `HELIOAI_PROFILE` | `<data_dir>/profile.md` | Default user profile injected into the system prompt. |
 | `HELIOAI_CATALOGS_DIR` | `<data_dir>/catalogs` | Saved event catalogues (speasy JSON). |
 | `HELIOAI_RECIPES_DIR` | the copy inside the package | Your own recipe set instead of the shipped one. |
 | `HELIOAI_WORKSPACE_TTL_S` | `604800` (7 days) | Age after which a session's workspace directory is deleted at startup. |

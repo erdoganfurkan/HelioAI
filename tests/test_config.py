@@ -57,8 +57,7 @@ def test_data_dir_override_drives_every_derived_path(monkeypatch, tmp_path):
     module-level default computed before the variable was read — so a Docker volume
     ended up holding two trees."""
     monkeypatch.setenv("HELIOAI_DATA_DIR", str(tmp_path / "elsewhere"))
-    for var in ("HELIOAI_PROFILE", "HELIOAI_CATALOGS_DIR"):
-        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("HELIOAI_CATALOGS_DIR", raising=False)
     s = config._load()
     root = tmp_path / "elsewhere"
     assert s.data_dir == root
@@ -69,12 +68,22 @@ def test_data_dir_override_drives_every_derived_path(monkeypatch, tmp_path):
 
 def test_explicit_path_overrides_still_win_over_the_derivation(monkeypatch, tmp_path):
     monkeypatch.setenv("HELIOAI_DATA_DIR", str(tmp_path / "d"))
-    monkeypatch.setenv("HELIOAI_PROFILE", str(tmp_path / "me.md"))
     monkeypatch.setenv("HELIOAI_CATALOGS_DIR", str(tmp_path / "cats"))
     s = config._load()
-    assert s.profile.profile_path == tmp_path / "me.md"
     assert s.catalogs.catalogs_dir == tmp_path / "cats"
     assert s.rag.chroma_dir == tmp_path / "d" / "chroma"
+
+
+def test_the_profile_env_var_is_gone_and_the_legacy_path_follows_data_dir(monkeypatch, tmp_path):
+    """`HELIOAI_PROFILE` moved a file the agent stopped reading when storage became per
+    user (`_load_user_profile` reads `users/<u>/profile.md`); the CLI, the magic and the
+    web UI were repointed there in August. The variable was documented as "injected into
+    the system prompt" and did nothing. `profile_path` survives only as the place
+    `migrate-storage` looks for a single-user profile written by an older install."""
+    monkeypatch.setenv("HELIOAI_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("HELIOAI_PROFILE", str(tmp_path / "me.md"))
+    s = config._load()
+    assert s.profile.profile_path == tmp_path / "d" / "profile.md"
 
 
 def test_without_override_nothing_moves(monkeypatch):

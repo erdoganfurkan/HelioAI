@@ -59,8 +59,7 @@ def test_data_dir_override_moves_the_index_too(monkeypatch, tmp_path):
     monkeypatch.setenv("HELIOAI_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("HELIOAI_LLM_PROVIDER", "groq")
     monkeypatch.setenv("GROQ_API_KEY", "probe")
-    for var in ("HELIOAI_PROFILE", "HELIOAI_CATALOGS_DIR"):
-        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("HELIOAI_CATALOGS_DIR", raising=False)
 
     s = config._load()
 

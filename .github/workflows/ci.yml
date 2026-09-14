@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Two pushes to one PR in quick succession ran the whole matrix twice; the docs
+# workflow already cancelled the stale run, this one did not.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -121,3 +127,30 @@ jobs:
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
+
+  docker:
+    # The image is what SECURITY.md tells people to deploy, and nothing built it in CI.
+    # `helioai doctor --json` is the smoke test: it reports whether bubblewrap is
+    # functional *inside the container* — the claim SECURITY.md makes — and exits
+    # non-zero only on the checks that are expected to fail here (no key, no index),
+    # so the job asserts on the sandbox line rather than on the exit code.
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -f docker/Dockerfile -t helioai:ci .
+      - name: Run helioai doctor inside the image
+        run: |
+          docker run --rm --entrypoint helioai helioai:ci doctor --json > doctor.json || true
+          python3 - << 'PYEOF'
+          import json
+          report = json.load(open("doctor.json"))
+          for c in report:
+              print(f"{c['status']:5} {c['name']}: {c['detail']}")
+          checks = {c["name"]: c for c in report}
+          assert checks["python"]["status"] == "ok", checks["python"]
+          assert checks["helioai"]["status"] == "ok", checks["helioai"]
+          print("sandbox inside the container:", checks["sandbox"]["detail"])
+          PYEOF
+

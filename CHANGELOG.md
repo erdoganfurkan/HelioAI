@@ -131,6 +131,10 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 - **A configuration reference** (`docs/configuration.md`): every environment variable,
   its default and its effect, grouped by provider / agent / storage / serving. A test
   fails when the code reads a variable the page does not list.
+- **CI builds the Docker image** and runs `helioai doctor --json` inside it, printing
+  whether bubblewrap is functional in the container — the claim `SECURITY.md` makes and
+  nothing verified. Stale CI runs of a pull request are cancelled; Dependabot watches
+  the lock, the actions and the base image weekly.
 
 ### Removed
 

@@ -1,0 +1,19 @@
+# Weekly, grouped, so a dependency bump is one PR to read rather than twelve.
+# Runtime floors stay `>=` per PHEP 3; these PRs move the lock and the actions.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-dependencies:
+        patterns: ["*"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"

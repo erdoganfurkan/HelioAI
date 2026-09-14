@@ -8,6 +8,8 @@ The one loop, and the policies that make it the lead or a role.
 
 ::: helioai.runtime.policies
 
+::: helioai.runtime.context
+
 ## Agent loop
 
 ::: helioai.core.agent_loop

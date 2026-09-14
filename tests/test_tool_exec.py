@@ -14,11 +14,11 @@ from helioai.core.tool_exec import (
     _summarize_tool_result,
     compact_history,
     emit_post_tool_events,
-    inject_run_python_args,
+    trusted_args,
 )
 from helioai.tools.results import ToolResult
 
-# ──────────────────────────────── inject_run_python_args ────────────────────
+# ──────────────────────────────── trusted_args ────────────────────
 
 
 def test_inject_only_for_run_python(monkeypatch) -> None:
@@ -31,12 +31,47 @@ def test_inject_only_for_run_python(monkeypatch) -> None:
     monkeypatch.setattr(ws, "get_next_run_idx", lambda d: 3)
 
     # Returns only the trusted args, passed to call_tool(..., trusted=...).
-    out = inject_run_python_args("run_python")
+    out = trusted_args("run_python")
     assert out == {"_plot_dir": str(ws_dir), "_run_idx": 3}
 
 
-def test_inject_noop_for_other_tools() -> None:
-    assert inject_run_python_args("get_timeseries") == {}
+def test_inject_noop_for_tools_that_write_nothing() -> None:
+    assert trusted_args("list_missions") == {}
+    assert trusted_args("search_parameters") == {}
+
+
+def test_trusted_args_come_from_the_run_context_for_every_writing_tool(tmp_path) -> None:
+    """The four tools that write receive their directories from the context the runner
+    was given, not from whatever the workspace contextvars happen to point at — a tool
+    called from a test or over MCP writes where its caller said and nowhere else."""
+    from helioai.runtime.context import RunContext
+
+    ctx = RunContext.for_session("alice", "s1", label="shock_s1", no_network=True)
+    assert trusted_args("run_python", ctx) == {
+        "_plot_dir": str(ctx.session_dir),
+        "_run_idx": 0,
+        "_no_net": True,
+    }
+    assert trusted_args("get_timeseries", ctx) == {"_data_dir": str(ctx.session_dir / "data")}
+    assert trusted_args("get_events_timeseries", ctx) == {
+        "_data_dir": str(ctx.session_dir / "data")
+    }
+    assert trusted_args("save_catalog", ctx) == {"_catalogs_dir": str(ctx.catalogs_dir)}
+    assert trusted_args("list_missions", ctx) == {}
+    assert ctx.session_dir.is_relative_to(tmp_path / "users" / "alice" / "workspace")
+    assert ctx.catalogs_dir == tmp_path / "users" / "alice" / "catalogs"
+
+
+def test_trusted_args_without_a_context_read_the_bound_one_or_stay_empty() -> None:
+    """Callers that predate contexts still get the bound session's directories; with
+    nothing bound the data tools get nothing and fall back inside the datastore."""
+    from helioai.runtime.context import RunContext
+
+    assert trusted_args("get_timeseries") == {}
+    ctx = RunContext.for_session("bob", "s2")
+    with ctx.bound():
+        assert trusted_args("get_timeseries") == {"_data_dir": str(ctx.data_dir)}
+        assert trusted_args("save_catalog") == {"_catalogs_dir": str(ctx.catalogs_dir)}
 
 
 # ──────────────────────────────── emit_post_tool_events ─────────────────────
@@ -319,16 +354,16 @@ def test_other_tools_emit_nothing_on_error():
     assert arts == []
 
 
-def test_inject_run_python_args_no_network() -> None:
-    from helioai.core.tool_exec import inject_run_python_args
+def test_trusted_args_no_network() -> None:
+    from helioai.core.tool_exec import trusted_args
 
-    args_default = inject_run_python_args("run_python")
+    args_default = trusted_args("run_python")
     assert "_no_net" not in args_default
 
-    args_no_net = inject_run_python_args("run_python", no_network=True)
+    args_no_net = trusted_args("run_python", no_network=True)
     assert args_no_net.get("_no_net") is True
 
-    assert inject_run_python_args("other_tool", no_network=True) == {}
+    assert trusted_args("other_tool", no_network=True) == {}
 
 
 # ── host paths must not reach the model ────────────────────────────────────────

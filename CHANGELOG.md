@@ -126,6 +126,14 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   budget, whether the first turn must call a tool. The two public generators are thin
   wrappers around it and every interface sees exactly the events it saw, in the same
   order — the loop tests and the journal golden did not change.
+- **A run knows where it writes.** Who is running, in which session and into which
+  directory used to live in three contextvars set by each loop, by the MCP server and by
+  nobody in a test, and read back from inside the tools — a sub-agent worked only because
+  the lead had bound the label first, and a tool called directly wrote under the default
+  user. `runtime.RunContext` carries those facts; the runner binds them in one place, and
+  the four tools that write (`run_python`, `get_timeseries`, `get_events_timeseries`,
+  `save_catalog`) receive their directories from it as trusted arguments the model cannot
+  supply. Each MCP connection gets a context of its own.
 - **A session replays from its journal.** Every event a turn yields — the question that
   opened it, each tool call and result, the plan, the figures, the provenance verdict,
   the sub-agent trace — is appended to an `events` table before it reaches the screen.

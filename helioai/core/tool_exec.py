@@ -18,6 +18,7 @@ import re
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from helioai import provenance
 from helioai.core.event_display import describe_tool_result, finding_str
@@ -25,6 +26,9 @@ from helioai.core.events import artifact, make
 from helioai.core.llm.base import ToolCall
 from helioai.tools.registry import ToolRegistry
 from helioai.tools.results import ToolResult
+
+if TYPE_CHECKING:
+    from helioai.runtime.context import RunContext
 
 # Tools whose results contain large lists (per_event_stats, sample rows) that would
 # flood the LLM context. All other tools pass through untouched so the LLM can reason
@@ -367,29 +371,48 @@ def _code_path(payload: object) -> str:
     return (payload.get("code_path") or "") if isinstance(payload, dict) else ""
 
 
-def inject_run_python_args(name: str, *, no_network: bool = False) -> dict:
-    """Trusted per-run sandbox args (_plot_dir/_run_idx/_no_net) for run_python.
+def trusted_args(name: str, ctx: RunContext | None = None, *, no_network: bool = False) -> dict:
+    """The framework-injected arguments of the tools that write to disk.
 
-    Passed via `call_tool(..., trusted=...)` so they bypass the private-arg
-    guard that rejects LLM/MCP-supplied `_*` overrides. Empty for any other tool.
+    Passed via `call_tool(..., trusted=...)`, so they bypass the private-argument guard
+    that rejects model- or MCP-supplied `_*` overrides. `run_python` gets its workspace,
+    run index and network flag; `get_timeseries` and `get_events_timeseries` the
+    session's data directory; `save_catalog` the user's catalogue directory. Every other
+    tool gets nothing. Reading them off the context rather than off the workspace
+    contextvars is what lets a tool called from a test, or over MCP, write where its
+    caller said and nowhere else.
 
     Args:
-        name: Tool about to be called. Anything but `run_python` gets nothing.
-        no_network: Whether to deny the sandbox a network namespace.
+        name: Tool about to be called.
+        ctx: The run's context. None falls back to the bound contextvars, the way the
+            loops resolved the session before contexts existed.
+        no_network: Deny the sandbox a network namespace; `ctx.no_network` also does.
 
     Returns:
-        The trusted argument dict, empty for every other tool.
+        The trusted argument dict, empty for a tool that writes nothing.
     """
-    if name != "run_python":
+    if name not in _WRITING_TOOLS:
         return {}
+    if ctx is None:
+        from helioai.runtime.context import RunContext
+
+        ctx = RunContext.current()
+    if name == "save_catalog":
+        return {"_catalogs_dir": str(ctx.catalogs_dir)} if ctx else {}
+    if name in ("get_timeseries", "get_events_timeseries"):
+        return {"_data_dir": str(ctx.data_dir)} if ctx else {}
     import helioai.workspace as _ws
 
-    sdir = _ws.get_session_dir()
-    ridx = _ws.get_next_run_idx(sdir)
-    args = {"_plot_dir": str(sdir), "_run_idx": ridx}
-    if no_network:
+    sdir = ctx.session_dir if ctx else _ws.get_session_dir()
+    args = {"_plot_dir": str(sdir), "_run_idx": _ws.get_next_run_idx(sdir)}
+    if no_network or (ctx is not None and ctx.no_network):
         args["_no_net"] = True
     return args
+
+
+_WRITING_TOOLS: frozenset[str] = frozenset(
+    {"run_python", "get_timeseries", "get_events_timeseries", "save_catalog"}
+)
 
 
 # Tools that must run one at a time within a turn: run_python numbers its scripts from
@@ -402,6 +425,7 @@ def start_tool_calls(
     *,
     allowed: set[str] | frozenset[str] | None = None,
     registry: ToolRegistry | None = None,
+    ctx: RunContext | None = None,
 ) -> dict[str, asyncio.Task]:
     """Start every parallel-safe registry call of a turn at once, keyed by call id.
 
@@ -420,6 +444,8 @@ def start_tool_calls(
         tool_calls: The assistant's tool calls for this turn.
         allowed: A sub-agent's whitelist; None for the lead, who may call anything.
         registry: Where the calls are dispatched; the process-wide registry by default.
+        ctx: The run's context, from which the data tools get their directory as a
+            trusted argument — the same `trusted_args` the sequential path passes.
 
     Returns:
         `{tool_call.id: task}` for the calls that were started; each task resolves to
@@ -437,7 +463,9 @@ def start_tool_calls(
             continue
         if allowed is not None and tc.name not in allowed:
             continue
-        started[tc.id] = asyncio.create_task(registry.call_tool(tc.name, tc.arguments))
+        started[tc.id] = asyncio.create_task(
+            registry.call_tool(tc.name, tc.arguments, trusted=trusted_args(tc.name, ctx))
+        )
     return started
 
 

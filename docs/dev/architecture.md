@@ -11,7 +11,8 @@ helioai/
 ├── mcp_server.py           MCP stdio + streamable HTTP
 ├── runtime/
 │   ├── runner.py           Runner(policy).run(history) — the one agent loop
-│   └── policies.py         Policy — what makes a run the lead or a delegated role
+│   ├── policies.py         Policy — what makes a run the lead or a delegated role
+│   └── context.py          RunContext — who runs, in which session, writing where
 ├── core/
 │   ├── agent_loop.py       stream_chat — the lead: its policy, the task/skill tools, persistence
 │   ├── sub_agents.py       stream_subagent — the roles: a policy each, a whitelist, a report
@@ -60,6 +61,13 @@ checks; a role's (`stream_subagent`) shows and allows only its whitelist, must c
 on its first turn, and reports `findings`, `summary` and `usage` back to the lead instead
 of persisting anything. The two loops used to be copies of each other and drifted the way
 copies do; the wrappers are now a few dozen lines each.
+
+A run carries a `runtime.RunContext` — user, session, session directory, agent, network
+flag. The runner binds it to the workspace contextvars for the duration of the run (the
+one place they are set), and the four tools that write — `run_python`, `get_timeseries`,
+`get_events_timeseries`, `save_catalog` — receive their directories from it as trusted
+arguments (`tool_exec.trusted_args`), so a tool called over MCP or from a test writes
+where its caller said. The contextvars remain the hot path for everything that only reads.
 
 ## Registry
 

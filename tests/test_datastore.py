@@ -571,7 +571,7 @@ def test_saved_timeseries_records_missing_pct(tmp_path, monkeypatch):
 
     import helioai.datastore as ds
 
-    monkeypatch.setattr(ds, "_session_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(ds, "_session_data_dir", lambda data_dir=None: tmp_path)
     values = np.array([1.0, np.nan, 3.0, np.nan])
 
     saved = ds.save_timeseries(

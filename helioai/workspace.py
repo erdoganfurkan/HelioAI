@@ -185,6 +185,27 @@ def make_session_label(first_message: str, session_id: str) -> str:
     return f"{slug[:25]}_{safe_id(session_id)[:6]}"
 
 
+def session_dir_for(user: str, session_id: str, label: str | None = None) -> Path:
+    """The workspace directory of a session, from its ids rather than from the ambience.
+
+    The same rule `get_session_dir` applies to the bound contextvars — the label when
+    the session has one, the id otherwise — so a `RunContext` built from ids and a
+    caller reading the contextvars land in the same directory.
+
+    Args:
+        user: Owner of the session.
+        session_id: The conversation.
+        label: Its human-readable directory name, when already minted.
+
+    Returns:
+        The directory, created if missing.
+    """
+    root = user_home(user) / "workspace"
+    d = root / safe_id(label or session_id)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def get_session_dir() -> Path:
     """Return the workspace directory for the current session.
 

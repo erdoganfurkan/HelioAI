@@ -299,7 +299,7 @@ def _list_catalogs_sync(
 
     # Append local/ catalogs (direct disk read, bypasses TTL cache)
     try:
-        for p in sorted(_catalogs_dir().glob("*.json")):
+        for p in sorted(_catalogs_dir_of_bound_user().glob("*.json")):
             data = json.loads(p.read_text(encoding="utf-8"))
             nb = len(data.get("events", []))
             entries.append(
@@ -520,6 +520,7 @@ async def get_events_timeseries(
     start: str,
     stop: str,
     max_events: int = 50,
+    _data_dir: str | None = None,
 ) -> dict:
     """Download a parameter for every event in a catalog window (superposed epoch).
 
@@ -535,6 +536,8 @@ async def get_events_timeseries(
         start:      ISO 8601 start — restrict to events beginning after this time.
         stop:       ISO 8601 stop  — restrict to events beginning before this time.
         max_events: cap on events to download (default 20 — each is one speasy call slot).
+        _data_dir: injected by the runtime (`tool_exec.trusted_args`) — the session's data
+            directory the collection is persisted in. Not exposed in the LLM tool schema.
 
     Returns per-event statistics and saves the raw data to the workspace for run_python.
 
@@ -552,6 +555,7 @@ async def get_events_timeseries(
         start=start,
         stop=stop,
         max_events=max_events,
+        _data_dir=_data_dir,
     )
 
 
@@ -561,6 +565,7 @@ def _get_events_timeseries_sync(
     start: str,
     stop: str,
     max_events: int = 50,
+    _data_dir: str | None = None,
 ) -> dict:
     """Synchronous body of `get_events_timeseries`, run off the event loop by its wrapper."""
     spz = _get_spz()
@@ -692,6 +697,7 @@ def _get_events_timeseries_sync(
         param_id=param_id,
         units=units,
         source="get_events_timeseries",
+        data_dir=Path(_data_dir) if _data_dir else None,
     )
 
     result: dict = {
@@ -738,7 +744,7 @@ _LOCAL_NAME_RE = re.compile(r"^[a-z0-9_\-]{1,40}$")
 _MAX_EVENTS_LOCAL = 5000
 
 
-def _catalogs_dir() -> Path:
+def _catalogs_dir_of_bound_user() -> Path:
     from helioai.workspace import current_user, user_home
 
     d = user_home(current_user()) / "catalogs"
@@ -750,7 +756,7 @@ def _load_local_catalog(name: str):
     """Load a local catalog from JSON and reconstruct a speasy Catalog."""
     from speasy.products import Catalog, Event
 
-    path = _catalogs_dir() / f"{name}.json"
+    path = _catalogs_dir_of_bound_user() / f"{name}.json"
     if not path.exists():
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -792,6 +798,7 @@ async def save_catalog(
     name: str,
     events: list[dict],
     description: str = "",
+    _catalogs_dir: str | None = None,
 ) -> dict:
     """Save a list of events as a local catalog under the local/<name> prefix.
 
@@ -799,6 +806,8 @@ async def save_catalog(
         name:        Catalog name — lowercase letters, digits, hyphens, underscores (1-40 chars).
         events:      List of dicts with 'start' and 'stop' ISO 8601 strings plus optional extra keys.
         description: Short description (optional).
+        _catalogs_dir: injected by the runtime (`tool_exec.trusted_args`) — the user's
+            catalogue directory. Not exposed in the LLM tool schema.
 
     Returns {"catalog_id": "local/<name>", "nb_events": N, "note": "..."}.
     Overwrites an existing catalog with the same name.
@@ -810,13 +819,20 @@ async def save_catalog(
         ...                      "note": "St. Patrick's Day storm shock"}])
         {'catalog_id': 'local/my-shocks', 'nb_events': 1, 'overwritten': False, 'note': '...'}
     """
-    return await run_blocking(_save_catalog_sync, name=name, events=events, description=description)
+    return await run_blocking(
+        _save_catalog_sync,
+        name=name,
+        events=events,
+        description=description,
+        _catalogs_dir=_catalogs_dir,
+    )
 
 
 def _save_catalog_sync(
     name: str,
     events: list[dict],
     description: str = "",
+    _catalogs_dir: str | None = None,
 ) -> dict:
     """Synchronous body of `save_catalog`, run off the event loop by its wrapper."""
     if not _LOCAL_NAME_RE.fullmatch(name):
@@ -850,7 +866,9 @@ def _save_catalog_sync(
         "created": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "events": validated,
     }
-    path = _catalogs_dir() / f"{name}.json"
+    target = Path(_catalogs_dir) if _catalogs_dir else _catalogs_dir_of_bound_user()
+    target.mkdir(parents=True, exist_ok=True)
+    path = target / f"{name}.json"
     overwritten = path.exists()
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator, Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,12 +31,13 @@ from helioai.core.tool_exec import (
     cancel_pending,
     compact_history,
     emit_post_tool_events,
-    inject_run_python_args,
     start_tool_calls,
+    trusted_args,
     unknown_id_correction,
 )
 from helioai.core.vision import maybe_review
 from helioai.logging_config import get_logger
+from helioai.runtime.context import RunContext
 from helioai.runtime.policies import Policy
 from helioai.tools import registry as _registry_module
 from helioai.tools.registry import ToolRegistry
@@ -93,6 +95,10 @@ class Runner:
         registry: Where tool calls are dispatched. The process-wide registry unless a
             caller hands in another — the wrappers pass their own module's reference,
             which is what the tests that stub a registry patch.
+        ctx: Who runs, in which session, writing where. Bound to the workspace
+            contextvars for the whole run — the one place they are set — and the source
+            of the directories the writing tools receive as trusted arguments. None
+            leaves the ambient bindings alone, for a caller that manages its own.
         artifacts, usage, turns: Progress so far, readable while the run is in flight
             and after it raised — a role that blew up still reports what it measured.
     """
@@ -102,6 +108,7 @@ class Runner:
     intercept: Intercept | None = None
     on_llm_call: OnLLMCall | None = None
     registry: ToolRegistry = field(default_factory=lambda: _registry_module.registry)
+    ctx: RunContext | None = None
     artifacts: list[dict] = field(default_factory=list, init=False)
     usage: dict = field(default_factory=_zero_usage, init=False)
     turns: int = field(default=0, init=False)
@@ -117,104 +124,113 @@ class Runner:
         Yields:
             Event dicts, then one `RunEnd`.
         """
+        with self.ctx.bound() if self.ctx is not None else nullcontext():
+            started: dict = {}
+            try:
+                async for item in self._turns(history, started):
+                    yield item
+            finally:
+                cancel_pending(started)
+
+    async def _turns(self, history: list[Message], started: dict) -> AsyncIterator[dict | RunEnd]:
         policy = self.policy
         extra = policy.event_extra
         retried_bogus_ids = False
-        started: dict = {}
-        try:
-            for i in range(policy.max_turns):
-                turn = self.turns = i + 1
-                history[:] = strip_orphan_tool_calls(history)
-                response = await self._call_model(history, turn, first=(i == 0))
-                history.append(response)
+        for i in range(policy.max_turns):
+            turn = self.turns = i + 1
+            history[:] = strip_orphan_tool_calls(history)
+            response = await self._call_model(history, turn, first=(i == 0))
+            history.append(response)
 
-                if not response.tool_calls:
-                    final_text = response.content or ""
-                    if policy.stop_on_empty_reply and not final_text.strip():
-                        yield self._end("", empty=True)
-                        return
-                    if policy.bogus_retry and not retried_bogus_ids:
-                        from helioai.tools.rag import extract_ids, unknown_ids
-
-                        bogus = unknown_ids(extract_ids(final_text))
-                        if bogus:
-                            retried_bogus_ids = True
-                            log.warning(
-                                "invented_ids_retry", agent=policy.name, ids=bogus, turn=turn
-                            )
-                            history.append(
-                                Message(
-                                    role="user",
-                                    content=unknown_id_correction(bogus),
-                                    origin="correction",
-                                )
-                            )
-                            continue
-                    yield self._end(final_text)
+            if not response.tool_calls:
+                final_text = response.content or ""
+                if policy.stop_on_empty_reply and not final_text.strip():
+                    yield self._end("", empty=True)
                     return
+                if policy.bogus_retry and not retried_bogus_ids:
+                    from helioai.tools.rag import extract_ids, unknown_ids
 
-                if policy.comment_replies and response.content and response.content.strip():
-                    yield make("reply", text=response.content)
-
-                started = start_tool_calls(
-                    response.tool_calls, allowed=policy.allowed, registry=self.registry
-                )
-                for tc in response.tool_calls:
-                    log.info("tool_call_issued", agent=policy.name, turn=turn, tool=tc.name)
-                    yield make(
-                        "tool_call",
-                        turn=turn,
-                        name=tc.name,
-                        arguments=tc.arguments,
-                        display=describe_tool_call(tc.name, tc.arguments),
-                        **extra,
-                    )
-                    result, trailing = None, []
-                    try:
-                        handler = self.intercept(tc, turn) if self.intercept else None
-                        if handler is not None:
-                            async for item in handler:
-                                if isinstance(item, ToolResult):
-                                    result = item
-                                elif result is None:
-                                    yield item
-                                else:
-                                    trailing.append(item)
-                        if result is None:
-                            result = await self._dispatch(tc, started)
-                    except Exception as e:
-                        log.exception(
-                            "tool_call_failed", agent=policy.name, turn=turn, tool=tc.name
-                        )
-                        result = ToolResult.failure(tc.name, str(e) or type(e).__name__)
-
-                    result, figure_verdict = await maybe_review(tc.name, result)
-                    if figure_verdict:
-                        yield make("figure_review", turn=turn, text=figure_verdict, **extra)
-                    for ev in emit_post_tool_events(
-                        tc.name,
-                        result,
-                        tool_result_extra={"turn": turn, **extra},
-                        common_extra=extra,
-                    ):
-                        if ev["event"] == "artifact":
-                            self.artifacts.append(
-                                {k: v for k, v in ev["data"].items() if k != "sub_agent_ctx"}
+                    bogus = unknown_ids(extract_ids(final_text))
+                    if bogus:
+                        retried_bogus_ids = True
+                        log.warning("invented_ids_retry", agent=policy.name, ids=bogus, turn=turn)
+                        history.append(
+                            Message(
+                                role="user",
+                                content=unknown_id_correction(bogus),
+                                origin="correction",
                             )
-                        yield ev
-                    for ev in trailing:
-                        yield ev
-                    history.append(
-                        Message(
-                            role="tool",
-                            tool_call_id=tc.id,
-                            name=tc.name,
-                            content=_history_tool_result(tc.name, result.for_llm()),
                         )
+                        continue
+                yield self._end(final_text)
+                return
+
+            if policy.comment_replies and response.content and response.content.strip():
+                yield make("reply", text=response.content)
+
+            # The dict is shared with `run`, whose `finally` cancels whatever is left in
+            # it: cleared and refilled rather than rebound, so it stays the same object.
+            started.clear()
+            started.update(
+                start_tool_calls(
+                    response.tool_calls,
+                    allowed=policy.allowed,
+                    registry=self.registry,
+                    ctx=self.ctx,
+                )
+            )
+            for tc in response.tool_calls:
+                log.info("tool_call_issued", agent=policy.name, turn=turn, tool=tc.name)
+                yield make(
+                    "tool_call",
+                    turn=turn,
+                    name=tc.name,
+                    arguments=tc.arguments,
+                    display=describe_tool_call(tc.name, tc.arguments),
+                    **extra,
+                )
+                result, trailing = None, []
+                try:
+                    handler = self.intercept(tc, turn) if self.intercept else None
+                    if handler is not None:
+                        async for item in handler:
+                            if isinstance(item, ToolResult):
+                                result = item
+                            elif result is None:
+                                yield item
+                            else:
+                                trailing.append(item)
+                    if result is None:
+                        result = await self._dispatch(tc, started)
+                except Exception as e:
+                    log.exception("tool_call_failed", agent=policy.name, turn=turn, tool=tc.name)
+                    result = ToolResult.failure(tc.name, str(e) or type(e).__name__)
+
+                result, figure_verdict = await maybe_review(tc.name, result)
+                if figure_verdict:
+                    yield make("figure_review", turn=turn, text=figure_verdict, **extra)
+                for ev in emit_post_tool_events(
+                    tc.name,
+                    result,
+                    tool_result_extra={"turn": turn, **extra},
+                    common_extra=extra,
+                ):
+                    if ev["event"] == "artifact":
+                        self.artifacts.append(
+                            {k: v for k, v in ev["data"].items() if k != "sub_agent_ctx"}
+                        )
+                    yield ev
+                for ev in trailing:
+                    yield ev
+                history.append(
+                    Message(
+                        role="tool",
+                        tool_call_id=tc.id,
+                        name=tc.name,
+                        content=_history_tool_result(tc.name, result.for_llm()),
                     )
-            yield self._end(None, capped=True)
-        finally:
-            cancel_pending(started)
+                )
+        yield self._end(None, capped=True)
 
     async def _call_model(self, history: list[Message], turn: int, *, first: bool) -> Message:
         policy = self.policy
@@ -244,7 +260,7 @@ class Runner:
     async def _dispatch(self, tc: ToolCall, started: dict) -> ToolResult:
         if tc.id in started:
             return await started[tc.id]
-        trusted = inject_run_python_args(tc.name, no_network=self.policy.sandbox_no_network)
+        trusted = trusted_args(tc.name, self.ctx, no_network=self.policy.sandbox_no_network)
         return await self.registry.call_tool(tc.name, tc.arguments, trusted=trusted)
 
     def _end(self, final_text: str | None, *, capped: bool = False, empty: bool = False) -> RunEnd:

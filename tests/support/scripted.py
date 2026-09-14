@@ -91,6 +91,8 @@ class ScriptedRegistry:
     Attributes:
         invoked: The tool names called, in order.
         calls: `(name, arguments)` pairs, in order.
+        trusted: The framework-injected arguments of each call, in order — what the
+            runner derived from its context for the tools that write.
     """
 
     def __init__(self, results: dict[str, Any] | None = None) -> None:
@@ -98,6 +100,7 @@ class ScriptedRegistry:
         self._by_call: dict[tuple[str, str], Any] = {}
         self.invoked: list[str] = []
         self.calls: list[tuple[str, dict]] = []
+        self.trusted: list[dict] = []
 
     def script(self, name: str, result: Any, arguments: dict | None = None) -> None:
         """Add or replace one scripted result; with `arguments`, only for that call."""
@@ -123,6 +126,7 @@ class ScriptedRegistry:
     ) -> ToolResult:
         self.invoked.append(name)
         self.calls.append((name, dict(arguments or {})))
+        self.trusted.append(dict(trusted or {}))
         scripted = self._by_call.get((name, _args_key(arguments)), self._by_name.get(name))
         if scripted is None:
             scripted = {"ok": True}

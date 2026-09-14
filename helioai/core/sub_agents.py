@@ -15,6 +15,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from dataclasses import dataclass
+from pathlib import Path
 
 import structlog
 
@@ -26,6 +27,7 @@ from helioai.core.tool_exec import (
     check_answer,
 )
 from helioai.logging_config import get_logger
+from helioai.runtime.context import RunContext
 from helioai.runtime.policies import Policy
 from helioai.runtime.runner import RunEnd, Runner, _zero_usage
 from helioai.tools.registry import registry
@@ -212,7 +214,7 @@ def task_tool_def() -> ToolDef:
     )
 
 
-def _with_inventory(description: str) -> str:
+def _with_inventory(description: str, session_dir: Path | None = None) -> str:
     """Prepend the session's already-downloaded datasets to a sub-agent's task.
 
     The files are reachable — a sub-agent shares the lead's session directory, so
@@ -222,12 +224,20 @@ def _with_inventory(description: str) -> str:
     reach it with load_data(name)" impossible to follow.
 
     Silent on failure: a missing or unreadable manifest must not stop the task.
+
+    Args:
+        description: The task, in the lead's words.
+        session_dir: The lead's session directory, from its context; None reads the
+            bound session, for callers that predate contexts.
     """
     try:
-        import helioai.workspace as _ws
         from helioai.datastore import read_manifest
 
-        datasets = read_manifest(_ws.get_session_dir()).get("datasets", {})
+        if session_dir is None:
+            import helioai.workspace as _ws
+
+            session_dir = _ws.get_session_dir()
+        datasets = read_manifest(session_dir).get("datasets", {})
     except Exception as e:  # noqa: BLE001 — an inventory is a convenience, never a gate
         log.debug("subagent_inventory_failed", error=str(e))
         return description
@@ -301,6 +311,7 @@ async def stream_subagent(
     user_id: str,
     llm_client: LLMClient,
     task_id: str | None = None,
+    context: RunContext | None = None,
 ) -> AsyncIterator[dict]:
     """Async generator that runs a sub-agent and yields progress events.
 
@@ -326,6 +337,9 @@ async def stream_subagent(
         llm_client: Provider client, shared with the lead.
         task_id: Correlation id echoed in every event, so a caller running
             several sub-agents can tell their streams apart.
+        context: The lead's run context; the sub-agent runs under a child of it, in the
+            same session directory. None derives one from the ids and the bound label,
+            for callers that predate contexts.
 
     Yields:
         Progress events, then a final `sub_agent_end`.
@@ -335,12 +349,10 @@ async def stream_subagent(
     if task_id is None:
         task_id = uuid.uuid4().hex[:8]
     ctx = {"role": role, "task_id": task_id}
-
-    # The user has to be bound too, not just the session: `_root()` resolves the workspace
-    # under `current_user()`, which defaults to "web". It works today only because the lead
-    # already bound it, so a sub-agent started out of band wrote to the wrong user's files.
-    _ws_token = _ws.set_session(parent_session_id)
-    _user_token = _ws.set_user(user_id) if user_id else None
+    if context is None:
+        context = RunContext.for_session(
+            user_id or _ws.current_user(), parent_session_id, label=_ws._current_label.get()
+        )
 
     if role not in AGENT_ROLES:
         known = ", ".join(sorted(AGENT_ROLES))
@@ -382,7 +394,9 @@ async def stream_subagent(
             max_turns=role_cfg.max_turns,
         )
 
-        history: list[Message] = [Message(role="user", content=_with_inventory(description))]
+        history: list[Message] = [
+            Message(role="user", content=_with_inventory(description, context.session_dir))
+        ]
         policy = Policy(
             name=role,
             system_prompt=system_prompt,
@@ -397,6 +411,7 @@ async def stream_subagent(
             policy,
             llm_client,
             registry=registry,
+            ctx=context.child(agent=role, task_id=task_id, no_network=role_cfg.sandbox_no_network),
             intercept=functools.partial(_deny_outside_whitelist, role=role, allowed=allowed),
         )
         t0 = time.monotonic()
@@ -462,9 +477,6 @@ async def stream_subagent(
         )
 
     finally:
-        _ws.reset_session(_ws_token)
-        if _user_token is not None:
-            _ws.reset_user(_user_token)
         structlog.contextvars.unbind_contextvars("parent_session_id", "sub_role", "sub_task_id")
 
 

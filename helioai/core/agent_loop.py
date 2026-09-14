@@ -21,6 +21,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from helioai.config import settings
 from helioai.core.events import make
@@ -38,11 +39,12 @@ from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
     check_answer,
     compact_history,
     emit_post_tool_events,
-    inject_run_python_args,
     start_tool_calls,
+    trusted_args,
     unknown_id_correction,
 )
 from helioai.logging_config import get_logger
+from helioai.runtime.context import RunContext
 from helioai.runtime.policies import Policy
 from helioai.runtime.runner import RunEnd, Runner
 from helioai.tools.registry import registry
@@ -161,17 +163,25 @@ def _read_profile(path_str: str, mtime: float) -> str:
         return ""
 
 
-def _provenance_events(text: str):
+def _provenance_events(text: str, session_dir: Path | None = None):
     """Yield the `provenance` event for a reply, or nothing at all.
 
     Annotation, never a gate: the reply is already out before this runs, and a failure
     here must cost the user nothing.
+
+    Args:
+        text: The reply to confront with the session's ledger.
+        session_dir: Where that ledger lives — the run's context names it; None reads
+            the bound session, for callers that predate contexts.
     """
     try:
-        import helioai.workspace as _ws
         from helioai.core.provenance_check import check_reply
 
-        payload = check_reply(text or "", _ws.get_session_dir())
+        if session_dir is None:
+            import helioai.workspace as _ws
+
+            session_dir = _ws.get_session_dir()
+        payload = check_reply(text or "", session_dir)
         if payload:
             yield make("provenance", **payload)
     except Exception:
@@ -367,20 +377,15 @@ async def _stream_turn(
 ) -> AsyncIterator[dict]:
     import helioai.workspace as _ws
 
-    _ws_token = _ws.set_session(session_id)
-    _user_token = _ws.set_user(user_id)
-
     history = store.get_or_create(user_id, session_id)
     history.append(Message(role="user", content=user_text))
 
-    existing_dir = store.get_workspace_dir(user_id, session_id)
-    if existing_dir:
-        _label_token = _ws.set_label(existing_dir)
-    else:
+    label = store.get_workspace_dir(user_id, session_id)
+    if not label:
         label = _ws.make_session_label(user_text, session_id)
         store.save(user_id, session_id, history)
         store.set_workspace_dir(user_id, session_id, label)
-        _label_token = _ws.set_label(label)
+    ctx = RunContext.for_session(user_id, session_id, label=label)
 
     tools = tuple(registry.list_tool_defs() + _INTERNAL_TOOLS + [task_tool_def()])
     log.info("agent_tools_listed", count=len(tools), tools=[t.name for t in tools])
@@ -402,9 +407,8 @@ async def _stream_turn(
         policy,
         llm_client,
         registry=registry,
-        intercept=functools.partial(
-            _lead_intercept, user_id=user_id, session_id=session_id, llm_client=llm_client
-        ),
+        ctx=ctx,
+        intercept=functools.partial(_lead_intercept, ctx=ctx, llm_client=llm_client),
         on_llm_call=functools.partial(_record_lead_usage, user_id, session_id),
     )
     try:
@@ -416,7 +420,7 @@ async def _stream_turn(
                     break
                 yield item
                 if item["event"] == "reply":
-                    for ev in _provenance_events(item["data"]["text"]):
+                    for ev in _provenance_events(item["data"]["text"], ctx.session_dir):
                         yield ev
         assert end is not None
 
@@ -460,7 +464,7 @@ async def _stream_turn(
         if bypassed:
             log.warning("lead_recipe_bypassed", recipes=bypassed)
             yield make("recipe_bypassed", recipes=bypassed)
-        for ev in _provenance_events(final_text):
+        for ev in _provenance_events(final_text, ctx.session_dir):
             yield ev
         yield make("done", n_iterations=end.turns)
 
@@ -472,11 +476,6 @@ async def _stream_turn(
         log.exception("agent_loop_crashed", turn=runner.turns)
         store.save(user_id, session_id, strip_orphan_tool_calls(history))
         raise
-
-    finally:
-        _ws.reset_session(_ws_token)
-        _ws.reset_label(_label_token)
-        _ws.reset_user(_user_token)
 
 
 def _record_lead_usage(user_id: str, session_id: str, turn: int, response: Message) -> None:
@@ -493,7 +492,7 @@ def _record_lead_usage(user_id: str, session_id: str, turn: int, response: Messa
 
 
 def _lead_intercept(
-    tc: ToolCall, turn: int, *, user_id: str, session_id: str, llm_client: LLMClient
+    tc: ToolCall, turn: int, *, ctx: RunContext, llm_client: LLMClient
 ) -> AsyncIterator[dict | ToolResult] | None:
     """The two kinds of tool call the lead answers itself, before the registry.
 
@@ -503,7 +502,7 @@ def _lead_intercept(
     answered in-process; `present_plan` is followed by the `plan` event.
     """
     if tc.name == TASK_TOOL_NAME:
-        return _run_task(tc, turn, user_id=user_id, session_id=session_id, llm_client=llm_client)
+        return _run_task(tc, turn, ctx=ctx, llm_client=llm_client)
     if tc.name in _INTERNAL_TOOL_NAMES:
         return _run_internal(tc)
     return None
@@ -521,8 +520,9 @@ async def _run_internal(tc: ToolCall) -> AsyncIterator[dict | ToolResult]:
 
 
 async def _run_task(
-    tc: ToolCall, turn: int, *, user_id: str, session_id: str, llm_client: LLMClient
+    tc: ToolCall, turn: int, *, ctx: RunContext, llm_client: LLMClient
 ) -> AsyncIterator[dict | ToolResult]:
+    user_id, session_id = ctx.user_id, ctx.session_id
     args = tc.arguments or {}
     sub_role = args.get("agent_role", "")
     sub_desc = args.get("description", "")
@@ -537,6 +537,7 @@ async def _run_task(
             user_id=user_id,
             llm_client=llm_client,
             task_id=tc.id,
+            context=ctx,
         ):
             if sub_ev["event"] != "sub_agent_end":
                 yield sub_ev

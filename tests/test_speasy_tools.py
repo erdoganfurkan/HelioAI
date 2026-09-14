@@ -343,7 +343,7 @@ async def test_get_timeseries_persists_nan_not_the_sentinel(monkeypatch, tmp_pat
         )
     )
     monkeypatch.setitem(sys.modules, "speasy", fake_spz)
-    monkeypatch.setattr(ds, "_session_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(ds, "_session_data_dir", lambda data_dir=None: tmp_path)
 
     res = await st.get_timeseries("cda/WI_H1_SWE/V", "2015-03-17", "2015-03-17T00:05")
 

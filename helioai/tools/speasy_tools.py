@@ -8,6 +8,7 @@ of AMDA's download_timeseries and list_parameters.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from helioai.tools.offload import run_blocking, speasy_gate
 
@@ -71,6 +72,7 @@ async def get_timeseries(
     start: str,
     stop: str,
     max_points: int = 5000,
+    _data_dir: str | None = None,
 ) -> dict:
     """Download a time series from any speasy provider.
 
@@ -79,6 +81,8 @@ async def get_timeseries(
         start: ISO 8601 start time (e.g. '2024-01-01T00:00:00')
         stop:  ISO 8601 stop time
         max_points: max samples to return (downsampled if needed)
+        _data_dir: injected by the runtime (`tool_exec.trusted_args`) — the session's data
+            directory the download is persisted in. Not exposed in the LLM tool schema.
 
     The param_id should be in speasy format: "{provider}/{xmlid}"
     e.g. "amda/ace_epam_ca60_he", "cda/ACE_H0_MFI/BGSEc"
@@ -94,7 +98,12 @@ async def get_timeseries(
          'preview': '2010-01-01T00:00:09.000000000  -1.839, 2.308, 0.108\\n...', ...}
     """
     return await run_blocking(
-        _get_timeseries_sync, param_id=param_id, start=start, stop=stop, max_points=max_points
+        _get_timeseries_sync,
+        param_id=param_id,
+        start=start,
+        stop=stop,
+        max_points=max_points,
+        _data_dir=_data_dir,
     )
 
 
@@ -103,6 +112,7 @@ def _get_timeseries_sync(
     start: str,
     stop: str,
     max_points: int = 5000,
+    _data_dir: str | None = None,
 ) -> dict:
     """Synchronous body of `get_timeseries`, run off the event loop by its wrapper."""
     try:
@@ -113,7 +123,8 @@ def _get_timeseries_sync(
 
     from helioai.datastore import find_existing
 
-    cached = find_existing(param_id, start, stop)
+    data_dir = Path(_data_dir) if _data_dir else None
+    cached = find_existing(param_id, start, stop, data_dir=data_dir)
     if cached is not None:
         return {
             "dataset": cached,
@@ -201,6 +212,7 @@ def _get_timeseries_sync(
         start=start,
         stop=stop,
         columns=list(getattr(var, "columns", None) or []),
+        data_dir=data_dir,
         source="get_timeseries",
     )
 

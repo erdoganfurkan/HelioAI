@@ -97,11 +97,22 @@ def blank_fill(values: Any, fillval: Any = None) -> tuple[Any, Any | None]:
     return numeric, mask
 
 
-def _session_data_dir() -> Path | None:
+def _session_data_dir(data_dir: Path | None = None) -> Path | None:
+    """The directory a save lands in: the one the caller named, else the bound session's.
+
+    Every tool that writes receives its directory as a trusted argument (`RunContext`);
+    the fallback exists for direct callers and is logged, because a save that lands
+    wherever the ambient session happens to point is the failure it replaces.
+    """
+    if data_dir is not None:
+        d = Path(data_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        return d
     try:
         from helioai.workspace import get_session_dir
 
         sdir = get_session_dir()
+        log.warning("datastore: no data_dir given, resolved from the bound session: %s", sdir)
         d = sdir / DATA_SUBDIR
         d.mkdir(parents=True, exist_ok=True)
         return d
@@ -200,7 +211,7 @@ def read_manifest(session_dir: Path) -> dict:
     return _read_manifest_file(session_dir / DATA_SUBDIR)
 
 
-def find_existing(param_id: str, start: str, stop: str) -> str | None:
+def find_existing(param_id: str, start: str, stop: str, data_dir: Path | None = None) -> str | None:
     """Name of an already-persisted dataset for this exact param and window, or None.
 
     The same matching `_unique_name` uses to reuse a slot — but consulted *before* the
@@ -214,6 +225,7 @@ def find_existing(param_id: str, start: str, stop: str) -> str | None:
         param_id: Full speasy id, e.g. `cda/WI_H0_MFI/BGSM`.
         start: ISO start of the window, matched exactly.
         stop: ISO stop of the window, matched exactly.
+        data_dir: The session's data directory; None resolves the bound session.
 
     Returns:
         The dataset name to load, or None. The match is exact: an overlapping
@@ -221,7 +233,7 @@ def find_existing(param_id: str, start: str, stop: str) -> str | None:
         asked for would be silently wrong.
     """
     try:
-        data_dir = _session_data_dir()
+        data_dir = _session_data_dir(data_dir)
         if data_dir is None:
             return None
         for name, entry in _read_manifest_file(data_dir).get("datasets", {}).items():
@@ -266,6 +278,7 @@ def save_timeseries(
     stop: str,
     columns,
     source: str,
+    data_dir: Path | None = None,
 ) -> dict | None:
     """Persist a timeseries download as npz + a manifest entry.
 
@@ -279,6 +292,8 @@ def save_timeseries(
         stop: ISO window stop.
         columns (list[str]): Component names.
         source: Which tool produced the download.
+        data_dir: The session's data directory, as the run's context names it; None
+            resolves the bound session and says so in the log.
 
     Returns:
         {"dataset": <final name>} to reference in `load_data()`, or None when
@@ -289,7 +304,7 @@ def save_timeseries(
 
         import numpy as np
 
-        data_dir = _session_data_dir()
+        data_dir = _session_data_dir(data_dir)
         if data_dir is None:
             return None
 
@@ -346,6 +361,7 @@ def save_event_collection(
     param_id: str,
     units: str,
     source: str,
+    data_dir: Path | None = None,
 ) -> dict | None:
     """Persist a batch of per-event timeseries under one dataset name.
 
@@ -357,6 +373,7 @@ def save_event_collection(
         param_id: The parameter every event was sampled from.
         units: Units as the provider reports them.
         source: Provenance string carried into the manifest.
+        data_dir: The session's data directory; None resolves the bound session.
 
     Returns:
         `{"dataset": name}`, or None when nothing could be written.
@@ -366,7 +383,7 @@ def save_event_collection(
 
         import numpy as np
 
-        data_dir = _session_data_dir()
+        data_dir = _session_data_dir(data_dir)
         if data_dir is None:
             return None
 

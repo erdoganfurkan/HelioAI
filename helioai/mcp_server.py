@@ -54,11 +54,11 @@ from mcp.types import (
 
 import helioai
 import helioai.tools.setup  # noqa: F401 — registers all tools at import time
-from helioai import workspace
 from helioai.config import settings
 from helioai.core.skills_loader import SkillError, list_skills, load_skill
-from helioai.core.tool_exec import inject_run_python_args
+from helioai.core.tool_exec import trusted_args
 from helioai.logging_config import get_logger, setup_logging
+from helioai.runtime.context import RunContext
 from helioai.tools.recipes import list_recipes, load_recipe
 from helioai.tools.registry import registry
 
@@ -156,17 +156,15 @@ def _figure_content(payload: object) -> list[ImageContent]:
 
 
 async def _call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
-    user_token = workspace.set_user(MCP_USER)
-    session_token = workspace.set_session(_session_id(ctx))
-    try:
+    # One context per connection: the MCP user, and a session minted for the link, so
+    # two clients never share a code_0.py or see each other's downloads.
+    run_ctx = RunContext.for_session(MCP_USER, _session_id(ctx), agent="mcp")
+    with run_ctx.bound():
         result = await registry.call_tool(
             params.name,
             params.arguments or {},
-            trusted=inject_run_python_args(params.name),
+            trusted=trusted_args(params.name, run_ctx),
         )
-    finally:
-        workspace.reset_session(session_token)
-        workspace.reset_user(user_token)
     # `isError` drives the client's retries and error display; `registry.call_tool`
     # never raises, so the failed result is the only signal there is. A dict payload
     # also travels as structured content, which clients may read instead of parsing

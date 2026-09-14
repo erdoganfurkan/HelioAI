@@ -23,6 +23,7 @@ from helioai import provenance
 from helioai.core.event_display import describe_tool_result, finding_str
 from helioai.core.events import artifact, make
 from helioai.core.llm.base import ToolCall
+from helioai.tools.registry import ToolRegistry
 from helioai.tools.results import ToolResult
 
 # Tools whose results contain large lists (per_event_stats, sample rows) that would
@@ -397,7 +398,10 @@ _SEQUENTIAL_TOOLS: frozenset[str] = frozenset({"run_python"})
 
 
 def start_tool_calls(
-    tool_calls: list[ToolCall] | None, *, allowed: set[str] | None = None
+    tool_calls: list[ToolCall] | None,
+    *,
+    allowed: set[str] | frozenset[str] | None = None,
+    registry: ToolRegistry | None = None,
 ) -> dict[str, asyncio.Task]:
     """Start every parallel-safe registry call of a turn at once, keyed by call id.
 
@@ -415,13 +419,17 @@ def start_tool_calls(
     Args:
         tool_calls: The assistant's tool calls for this turn.
         allowed: A sub-agent's whitelist; None for the lead, who may call anything.
+        registry: Where the calls are dispatched; the process-wide registry by default.
 
     Returns:
         `{tool_call.id: task}` for the calls that were started; each task resolves to
         a `ToolResult`. `registry.call_tool` never raises — a failure is a failed
         result — so awaiting a task is safe.
     """
-    from helioai.tools.registry import registry
+    if registry is None:
+        from helioai.tools.registry import registry as _default
+
+        registry = _default
 
     started: dict[str, asyncio.Task] = {}
     for tc in tool_calls or []:

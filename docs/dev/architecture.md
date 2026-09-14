@@ -9,10 +9,13 @@ helioai/
 ├── export.py               session → standalone .ipynb
 ├── indexer.py              speasy catalogue → ChromaDB
 ├── mcp_server.py           MCP stdio + streamable HTTP
+├── runtime/
+│   ├── runner.py           Runner(policy).run(history) — the one agent loop
+│   └── policies.py         Policy — what makes a run the lead or a delegated role
 ├── core/
-│   ├── agent_loop.py       stream_chat — the lead agent
-│   ├── sub_agents.py       stream_subagent — delegation with tool whitelists
-│   ├── tool_exec.py        shared execution logic between the two loops
+│   ├── agent_loop.py       stream_chat — the lead: its policy, the task/skill tools, persistence
+│   ├── sub_agents.py       stream_subagent — the roles: a policy each, a whitelist, a report
+│   ├── tool_exec.py        tool-call mechanics the runner uses: summaries, artifacts, checks
 │   ├── session.py          SQLite history + event journal per (user_id, session_id)
 │   ├── skills_loader.py    markdown skills
 │   ├── vision.py           stateless figure review side-call
@@ -45,14 +48,18 @@ helioai/
 
 ## The agent loop
 
-`stream_chat` is an async generator. Each turn: send history plus tool definitions to the
-model, dispatch any tool calls through the registry, append results, repeat until the model
-answers with text or the iteration cap is hit. Every step yields an event, which is what
-lets all four interfaces render progress live from the same source.
+There is one loop, `runtime.Runner`. Each turn: send the compacted history plus tool
+definitions to the model, start the turn's tool calls together, dispatch each in the
+model's order, review the figures, emit the events, append the results, repeat until the
+model answers with text or the turn budget is hit. Every step yields an event, which is
+what lets all four interfaces render progress live from the same source.
 
-`sub_agents.stream_subagent` runs the same shape with a restricted tool set and its own
-turn cap. The two loops share `tool_exec.py` rather than duplicating dispatch — they were
-duplicated once, and a signature change updated one and not the other.
+What varies is a `runtime.Policy`: the lead's (`stream_chat`) shows every tool plus the
+`task` and skill tools, thinks aloud, persists the history and closes with the answer
+checks; a role's (`stream_subagent`) shows and allows only its whitelist, must call a tool
+on its first turn, and reports `findings`, `summary` and `usage` back to the lead instead
+of persisting anything. The two loops used to be copies of each other and drifted the way
+copies do; the wrappers are now a few dozen lines each.
 
 ## Registry
 

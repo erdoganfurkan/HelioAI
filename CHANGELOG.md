@@ -118,6 +118,14 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Added
 
+- **One agent loop.** `stream_chat` (the lead) and `stream_subagent` (a delegated role)
+  were two copies of the same loop — call the model, start the tool calls, review the
+  figures, emit the events, append the results — and drifted the way copies do. The loop
+  now exists once, `runtime.Runner`, driven by a `runtime.Policy` that says what makes a
+  run the lead or a role: the prompt, the tools shown and the tools allowed, the turn
+  budget, whether the first turn must call a tool. The two public generators are thin
+  wrappers around it and every interface sees exactly the events it saw, in the same
+  order — the loop tests and the journal golden did not change.
 - **A session replays from its journal.** Every event a turn yields — the question that
   opened it, each tool call and result, the plan, the figures, the provenance verdict,
   the sub-agent trace — is appended to an `events` table before it reaches the screen.

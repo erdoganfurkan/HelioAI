@@ -106,6 +106,18 @@ class ScriptedRegistry:
         else:
             self._by_call[(name, _args_key(arguments))] = result
 
+    def __contains__(self, name: str) -> bool:
+        return name in self._by_name or any(n == name for n, _ in self._by_call)
+
+    def list_tool_defs(self, only: set[str] | None = None) -> list[ToolDef]:
+        """One bare definition per scripted tool, so the registry can stand in whole."""
+        names = {n for n in self._by_name} | {n for n, _ in self._by_call}
+        if only is not None:
+            names &= set(only)
+        return [
+            ToolDef(name=n, description="", parameters={"type": "object"}) for n in sorted(names)
+        ]
+
     async def call_tool(
         self, name: str, arguments: dict | None, *, trusted: dict | None = None
     ) -> ToolResult:

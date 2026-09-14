@@ -18,14 +18,13 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
-import time
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from dataclasses import dataclass, field
 
 from helioai.config import settings
-from helioai.core.event_display import describe_tool_call
 from helioai.core.events import make
-from helioai.core.llm.base import LLMClient, Message, ToolDef
+from helioai.core.llm.base import LLMClient, Message, ToolCall, ToolDef
 from helioai.core.session import store, strip_orphan_tool_calls
 from helioai.core.skills_loader import SkillError, list_skill_names
 from helioai.core.skills_loader import load_index as load_skills_index
@@ -43,8 +42,9 @@ from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
     start_tool_calls,
     unknown_id_correction,
 )
-from helioai.core.vision import maybe_review
 from helioai.logging_config import get_logger
+from helioai.runtime.policies import Policy
+from helioai.runtime.runner import RunEnd, Runner
 from helioai.tools.registry import registry
 from helioai.tools.results import ToolResult
 
@@ -373,11 +373,6 @@ async def _stream_turn(
     history = store.get_or_create(user_id, session_id)
     history.append(Message(role="user", content=user_text))
 
-    # What this run exported, kept so the answer can be checked against the recipe shelf
-    # the same way a sub-agent's is. The lead does its own physics often enough that
-    # leaving it unchecked was the hole, not an edge case.
-    run_artifacts: list[dict] = []
-
     existing_dir = store.get_workspace_dir(user_id, session_id)
     if existing_dir:
         _label_token = _ws.set_label(existing_dir)
@@ -387,7 +382,7 @@ async def _stream_turn(
         store.set_workspace_dir(user_id, session_id, label)
         _label_token = _ws.set_label(label)
 
-    tools = registry.list_tool_defs() + _INTERNAL_TOOLS + [task_tool_def()]
+    tools = tuple(registry.list_tool_defs() + _INTERNAL_TOOLS + [task_tool_def()])
     log.info("agent_tools_listed", count=len(tools), tools=[t.name for t in tools])
 
     effective_prompt = build_lead_system_prompt(restricted)
@@ -395,231 +390,213 @@ async def _stream_turn(
     if profile:
         effective_prompt = f"{effective_prompt}\n\n## User profile\n{profile}"
 
-    retried_bogus_ids = False
-    started: dict = {}
+    policy = Policy(
+        name="lead",
+        system_prompt=effective_prompt,
+        tools=tools,
+        max_turns=settings.agent.max_iterations,
+        comment_replies=True,
+        stop_on_empty_reply=True,
+    )
+    runner = Runner(
+        policy,
+        llm_client,
+        registry=registry,
+        intercept=functools.partial(
+            _lead_intercept, user_id=user_id, session_id=session_id, llm_client=llm_client
+        ),
+        on_llm_call=functools.partial(_record_lead_usage, user_id, session_id),
+    )
     try:
-        for i in range(settings.agent.max_iterations):
-            turn = i + 1
-            log.info("llm_call_start", turn=turn, n_messages=len(history))
-            t0 = time.monotonic()
-            history[:] = strip_orphan_tool_calls(history)
-            response = await llm_client.chat(
-                compact_history(history), tools, system_prompt=effective_prompt
+        end: RunEnd | None = None
+        async with aclosing(runner.run(history)) as run:
+            async for item in run:
+                if isinstance(item, RunEnd):
+                    end = item
+                    break
+                yield item
+                if item["event"] == "reply":
+                    for ev in _provenance_events(item["data"]["text"]):
+                        yield ev
+        assert end is not None
+
+        if end.capped:
+            log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
+            store.save(user_id, session_id, history)
+            yield make(
+                "error", message=f"agent loop exceeded {settings.agent.max_iterations} iterations"
             )
-            log.info(
-                "llm_call_end",
-                turn=turn,
-                duration_ms=int((time.monotonic() - t0) * 1000),
-                has_tool_calls=bool(response.tool_calls),
-            )
-            store.record_usage(
-                user_id,
-                session_id,
-                turn=turn,
-                agent="lead",
-                provider=settings.llm.provider,
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
-                cached_tokens=response.cached_tokens,
-            )
-            history.append(response)
+            return
 
-            if not response.tool_calls:
-                store.save(user_id, session_id, history)
-                # No tool calls AND no text is a failed turn, not an answer. It was
-                # being yielded as an empty reply, so the caller saw the request
-                # simply produce nothing — silence indistinguishable from success.
-                # The usual cause is the output budget: on Azure, reasoning tokens
-                # are drawn from the same allowance, so a long generation can spend
-                # it entirely on reasoning and emit no content at all.
-                if not (response.content or "").strip():
-                    provider, cap = _active_output_budget()
-                    log.warning("empty_llm_response", turn=turn, provider=provider, cap=cap)
-                    yield make(
-                        "error",
-                        message=(
-                            "the model returned neither text nor a tool call. This is "
-                            "usually the output token budget running out — set "
-                            f"HELIOAI_MAX_OUTPUT_TOKENS above {cap} (the current "
-                            f"{provider} limit) and retry, or ask for a shorter answer."
-                        ),
-                    )
-                    yield make("done", n_iterations=turn)
-                    return
-                final_text, bogus, bypassed = check_answer(response.content, history, run_artifacts)
-                # Detecting a fabricated id and annotating the answer still ships the
-                # fabrication: the reply is already written. Spend one more turn instead,
-                # once, so the model can copy the real ids it was just handed.
-                if bogus and not retried_bogus_ids:
-                    retried_bogus_ids = True
-                    log.warning("lead_invented_ids_retry", ids=bogus, turn=turn)
-                    history.append(
-                        Message(
-                            role="user", content=unknown_id_correction(bogus), origin="correction"
-                        )
-                    )
-                    continue
-                yield make("reply", text=final_text)
-                if bogus:
-                    log.warning("lead_invented_ids", ids=bogus)
-                    yield make("invalid_ids", ids=bogus)
-                if bypassed:
-                    log.warning("lead_recipe_bypassed", recipes=bypassed)
-                    yield make("recipe_bypassed", recipes=bypassed)
-                for ev in _provenance_events(final_text):
-                    yield ev
-                yield make("done", n_iterations=turn)
-                return
-
-            if response.content and response.content.strip():
-                yield make("reply", text=response.content)
-                for ev in _provenance_events(response.content):
-                    yield ev
-
-            started = start_tool_calls(response.tool_calls)
-            for tc in response.tool_calls:
-                log.info("tool_call_issued", turn=turn, tool=tc.name)
-                yield make(
-                    "tool_call",
-                    turn=turn,
-                    name=tc.name,
-                    arguments=tc.arguments,
-                    display=describe_tool_call(tc.name, tc.arguments),
-                )
-
-                sub_end_event: dict | None = None
-                sub_role = ""
-
-                try:
-                    if tc.name == TASK_TOOL_NAME:
-                        args = tc.arguments or {}
-                        sub_role = args.get("agent_role", "")
-                        sub_desc = args.get("description", "")
-                        yield make(
-                            "sub_agent_start",
-                            task_id=tc.id,
-                            role=sub_role,
-                            description=sub_desc[:200],
-                        )
-                        async for sub_ev in stream_subagent(
-                            role=sub_role,
-                            description=sub_desc,
-                            parent_session_id=session_id,
-                            user_id=user_id,
-                            llm_client=llm_client,
-                            task_id=tc.id,
-                        ):
-                            if sub_ev["event"] == "sub_agent_end":
-                                end_data = sub_ev["data"]
-                                result = ToolResult.from_raw(
-                                    TASK_TOOL_NAME,
-                                    json.dumps(
-                                        {
-                                            # First, deliberately: keys at the tail are the ones
-                                            # _summarize_tool_result drops when a stale result is
-                                            # trimmed, and the measured values must outlive the prose.
-                                            "findings": end_data.get("findings", {}),
-                                            "summary": end_data.get("summary", ""),
-                                            "n_iterations": end_data.get("n_iterations", 0),
-                                            "artifacts": end_data.get("artifacts", []),
-                                            "error": end_data.get("error"),
-                                        }
-                                    ),
-                                )
-                                # `findings` travels with the event: it is the table of
-                                # values the run actually measured, and the interfaces
-                                # had no other way to show it — the prose summary is
-                                # the model's account, the findings are the evidence.
-                                usage = end_data.get("usage") or {}
-                                store.record_usage(
-                                    user_id,
-                                    session_id,
-                                    turn=turn,
-                                    agent=sub_role or "sub_agent",
-                                    provider=settings.llm.provider,
-                                    prompt_tokens=usage.get("prompt_tokens", 0),
-                                    completion_tokens=usage.get("completion_tokens", 0),
-                                    cached_tokens=usage.get("cached_tokens", 0),
-                                )
-                                sub_end_event = {
-                                    "task_id": tc.id,
-                                    "role": sub_role,
-                                    "summary": end_data.get("summary", "")[:200],
-                                    "n_iterations": end_data.get("n_iterations", 0),
-                                    "error": end_data.get("error"),
-                                    "findings": end_data.get("findings", {}),
-                                    "usage": usage,
-                                }
-                            else:
-                                yield sub_ev
-                    elif tc.name in _INTERNAL_TOOL_NAMES:
-                        result = _dispatch_internal_tool(tc.name, tc.arguments)
-                    elif tc.id in started:
-                        result = await started[tc.id]
-                    else:
-                        result = await registry.call_tool(
-                            tc.name, tc.arguments, trusted=inject_run_python_args(tc.name)
-                        )
-                except Exception as e:
-                    log.exception("tool_call_failed", turn=turn, tool=tc.name)
-                    result = ToolResult.failure(tc.name, str(e) or type(e).__name__)
-                    if tc.name == TASK_TOOL_NAME:
-                        sub_end_event = {
-                            "task_id": tc.id,
-                            "role": sub_role,
-                            "summary": "",
-                            "n_iterations": 0,
-                            "error": str(e),
-                            "findings": {},
-                            "usage": {},
-                        }
-
-                result, figure_verdict = await maybe_review(tc.name, result)
-                if figure_verdict:
-                    yield make("figure_review", turn=turn, text=figure_verdict)
-
-                for ev in emit_post_tool_events(tc.name, result, tool_result_extra={"turn": turn}):
-                    if ev["event"] == "artifact":
-                        run_artifacts.append(ev["data"])
-                    yield ev
-                if sub_end_event is not None:
-                    yield make("sub_agent_end", **sub_end_event)
-                if tc.name == "present_plan" and isinstance(result.payload, dict):
-                    yield make(
-                        "plan",
-                        title=result.payload.get("title", ""),
-                        steps=result.payload.get("steps", []),
-                    )
-
-                history.append(
-                    Message(
-                        role="tool",
-                        tool_call_id=tc.id,
-                        name=tc.name,
-                        content=_history_tool_result(tc.name, result.for_llm()),
-                    )
-                )
-
-        log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
         store.save(user_id, session_id, history)
-        yield make(
-            "error", message=f"agent loop exceeded {settings.agent.max_iterations} iterations"
-        )
+        if end.empty:
+            # No tool calls AND no text is a failed turn, not an answer. It was being
+            # yielded as an empty reply, so the caller saw the request simply produce
+            # nothing — silence indistinguishable from success. The usual cause is the
+            # output budget: on Azure, reasoning tokens are drawn from the same
+            # allowance, so a long generation can spend it entirely on reasoning.
+            provider, cap = _active_output_budget()
+            log.warning("empty_llm_response", turn=end.turns, provider=provider, cap=cap)
+            yield make(
+                "error",
+                message=(
+                    "the model returned neither text nor a tool call. This is "
+                    "usually the output token budget running out — set "
+                    f"HELIOAI_MAX_OUTPUT_TOKENS above {cap} (the current "
+                    f"{provider} limit) and retry, or ask for a shorter answer."
+                ),
+            )
+            yield make("done", n_iterations=end.turns)
+            return
+
+        # The lead does its own physics often enough that leaving its answer unchecked
+        # was the hole, not an edge case: the same catalogue and recipe checks a
+        # sub-agent's answer gets, against what this run exported.
+        final_text, bogus, bypassed = check_answer(end.final_text or "", history, end.artifacts)
+        yield make("reply", text=final_text)
+        if bogus:
+            log.warning("lead_invented_ids", ids=bogus)
+            yield make("invalid_ids", ids=bogus)
+        if bypassed:
+            log.warning("lead_recipe_bypassed", recipes=bypassed)
+            yield make("recipe_bypassed", recipes=bypassed)
+        for ev in _provenance_events(final_text):
+            yield ev
+        yield make("done", n_iterations=end.turns)
 
     except asyncio.CancelledError:
         store.save(user_id, session_id, strip_orphan_tool_calls(history))
         raise
 
     except Exception:
-        log.exception("agent_loop_crashed", turn=locals().get("turn"))
+        log.exception("agent_loop_crashed", turn=runner.turns)
         store.save(user_id, session_id, strip_orphan_tool_calls(history))
         raise
 
     finally:
-        cancel_pending(started)
         _ws.reset_session(_ws_token)
         _ws.reset_label(_label_token)
         _ws.reset_user(_user_token)
+
+
+def _record_lead_usage(user_id: str, session_id: str, turn: int, response: Message) -> None:
+    store.record_usage(
+        user_id,
+        session_id,
+        turn=turn,
+        agent="lead",
+        provider=settings.llm.provider,
+        prompt_tokens=response.prompt_tokens,
+        completion_tokens=response.completion_tokens,
+        cached_tokens=response.cached_tokens,
+    )
+
+
+def _lead_intercept(
+    tc: ToolCall, turn: int, *, user_id: str, session_id: str, llm_client: LLMClient
+) -> AsyncIterator[dict | ToolResult] | None:
+    """The two kinds of tool call the lead answers itself, before the registry.
+
+    `task` spawns a sub-agent and forwards its events as they happen; its result is the
+    sub-agent's report, and the `sub_agent_end` the interfaces render comes *after* the
+    result's own events, as it always did. The internal tools (skills, the plan) are
+    answered in-process; `present_plan` is followed by the `plan` event.
+    """
+    if tc.name == TASK_TOOL_NAME:
+        return _run_task(tc, turn, user_id=user_id, session_id=session_id, llm_client=llm_client)
+    if tc.name in _INTERNAL_TOOL_NAMES:
+        return _run_internal(tc)
+    return None
+
+
+async def _run_internal(tc: ToolCall) -> AsyncIterator[dict | ToolResult]:
+    result = _dispatch_internal_tool(tc.name, tc.arguments)
+    yield result
+    if tc.name == "present_plan" and isinstance(result.payload, dict):
+        yield make(
+            "plan",
+            title=result.payload.get("title", ""),
+            steps=result.payload.get("steps", []),
+        )
+
+
+async def _run_task(
+    tc: ToolCall, turn: int, *, user_id: str, session_id: str, llm_client: LLMClient
+) -> AsyncIterator[dict | ToolResult]:
+    args = tc.arguments or {}
+    sub_role = args.get("agent_role", "")
+    sub_desc = args.get("description", "")
+    yield make("sub_agent_start", task_id=tc.id, role=sub_role, description=sub_desc[:200])
+    result: ToolResult | None = None
+    sub_end_event: dict | None = None
+    try:
+        async for sub_ev in stream_subagent(
+            role=sub_role,
+            description=sub_desc,
+            parent_session_id=session_id,
+            user_id=user_id,
+            llm_client=llm_client,
+            task_id=tc.id,
+        ):
+            if sub_ev["event"] != "sub_agent_end":
+                yield sub_ev
+                continue
+            end_data = sub_ev["data"]
+            result = ToolResult.from_raw(
+                TASK_TOOL_NAME,
+                json.dumps(
+                    {
+                        # First, deliberately: keys at the tail are the ones
+                        # _summarize_tool_result drops when a stale result is
+                        # trimmed, and the measured values must outlive the prose.
+                        "findings": end_data.get("findings", {}),
+                        "summary": end_data.get("summary", ""),
+                        "n_iterations": end_data.get("n_iterations", 0),
+                        "artifacts": end_data.get("artifacts", []),
+                        "error": end_data.get("error"),
+                    }
+                ),
+            )
+            # `findings` travels with the event: it is the table of values the run
+            # actually measured, and the interfaces had no other way to show it — the
+            # prose summary is the model's account, the findings are the evidence.
+            usage = end_data.get("usage") or {}
+            store.record_usage(
+                user_id,
+                session_id,
+                turn=turn,
+                agent=sub_role or "sub_agent",
+                provider=settings.llm.provider,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                cached_tokens=usage.get("cached_tokens", 0),
+            )
+            sub_end_event = {
+                "task_id": tc.id,
+                "role": sub_role,
+                "summary": end_data.get("summary", "")[:200],
+                "n_iterations": end_data.get("n_iterations", 0),
+                "error": end_data.get("error"),
+                "findings": end_data.get("findings", {}),
+                "usage": usage,
+            }
+    except Exception as e:
+        log.exception("tool_call_failed", turn=turn, tool=tc.name)
+        result = ToolResult.failure(tc.name, str(e) or type(e).__name__)
+        sub_end_event = {
+            "task_id": tc.id,
+            "role": sub_role,
+            "summary": "",
+            "n_iterations": 0,
+            "error": str(e),
+            "findings": {},
+            "usage": {},
+        }
+    if result is None:
+        result = ToolResult.failure(tc.name, "sub-agent ended without a report")
+    yield result
+    if sub_end_event is not None:
+        yield make("sub_agent_end", **sub_end_event)
 
 
 async def chat(

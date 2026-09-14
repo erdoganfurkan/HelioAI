@@ -197,8 +197,10 @@ async def test_artifacts_are_collected_without_the_sub_agent_context(stub_regist
     Artifacts are re-accumulated with sub_agent_ctx stripped so the persisted
     shape matches what the lead agent produces.
     """
+    from helioai.runtime import runner as runtime_runner
+
     monkeypatch.setattr(
-        sub_agents,
+        runtime_runner,
         "emit_post_tool_events",
         lambda name, result, tool_result_extra=None, common_extra=None: [
             {

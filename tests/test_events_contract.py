@@ -24,6 +24,7 @@ EMITTERS = [
     ROOT / "core" / "agent_loop.py",
     ROOT / "core" / "sub_agents.py",
     ROOT / "core" / "tool_exec.py",
+    ROOT / "runtime" / "runner.py",
 ]
 CLI = ROOT / "interfaces" / "cli.py"
 JUPYTER = ROOT / "interfaces" / "jupyter_magic.py"

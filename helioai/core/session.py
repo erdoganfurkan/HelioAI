@@ -264,7 +264,7 @@ class SessionStore:
     ) -> None:
         """Append what one LLM call cost, as the provider reported it.
 
-        The counts have ridden on `Message` since 0.2.x and were dropped at save time,
+        The counts have ridden on `Message` for a while and were dropped at save time,
         so a session reloaded from disk reported no cost and nothing could say what a
         user had spent. Kept apart from `messages` on purpose: one row per call, never
         rewritten by `save`, so a compacted or reset history does not erase the bill.

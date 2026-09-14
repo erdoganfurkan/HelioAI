@@ -8,7 +8,7 @@ from the textbook definition and check the number that comes out, so a regressio
 the physics is caught here and not at a demo.
 
 What these tests do NOT assert is left deliberately open for the scientific review in
-the 0.3.0 plan: the Walén frame (mean-subtracted, not de Hoffmann-Teller), the
+the integration plan: the Walén frame (mean-subtracted, not de Hoffmann-Teller), the
 `pressure_balance` reference field, the SEA's interpolation across gaps.
 """
 

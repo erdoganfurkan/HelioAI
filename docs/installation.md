@@ -99,7 +99,7 @@ This downloads the speasy catalogue and indexes it into a local ChromaDB. It lan
 installed from PyPI. Override with `HELIOAI_DATA_DIR`: the index, the session store,
 the per-user workspaces, the saved catalogues and the profile all live under it.
 
-!!! note "Upgrading from 0.2.x with `HELIOAI_DATA_DIR` set"
+!!! note "Upgrading an install that already set `HELIOAI_DATA_DIR`"
     Earlier versions kept the index, the catalogues and the profile under the
     *default* data directory whatever the variable said. Run `helioai migrate-storage`
     once to move them; the `search_parameters` error also tells you when this applies.

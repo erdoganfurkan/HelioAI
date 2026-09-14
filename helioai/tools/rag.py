@@ -63,7 +63,7 @@ def _quiet_model_loading() -> None:
 def _index_missing_message() -> str:
     """Explain an absent index, naming a legacy copy when one exists.
 
-    Before 0.3.0 the index ignored `HELIOAI_DATA_DIR` and lived under the default data
+    Earlier versions ignored `HELIOAI_DATA_DIR` for the index, which lived under the default data
     directory; an install that set the variable finds its index gone after upgrading.
     Rebuilding takes the better part of an hour, moving takes a second — so the message
     points at the copy and at the command that moves it.

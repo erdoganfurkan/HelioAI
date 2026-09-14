@@ -270,7 +270,7 @@ def test_a_query_mentioning_help_is_still_a_query(monkeypatch):
 
 
 def _split_layout(tmp_path, monkeypatch):
-    """A pre-0.3.0 install with HELIOAI_DATA_DIR set: sessions under `configured/`,
+    """An older install with HELIOAI_DATA_DIR set: sessions under `configured/`,
     index / catalogues / profile under the default tree the variable did not reach."""
     import helioai.config as cfg
     from helioai.config import settings

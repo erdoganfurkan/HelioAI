@@ -632,7 +632,7 @@ def test_loading_the_encoder_does_not_draw_a_progress_bar(monkeypatch, tmp_path)
 
 
 def test_missing_index_message_points_at_a_legacy_copy(monkeypatch, tmp_path):
-    """Before 0.3.0 the index ignored HELIOAI_DATA_DIR; after upgrading, an install
+    """Earlier versions ignored HELIOAI_DATA_DIR for the index; after upgrading, an install
     that sets it sees no index where it now looks — while the old one is a `mv` away.
     The message must say so rather than send the user into an hour-long rebuild."""
     import helioai.config as cfg

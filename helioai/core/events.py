@@ -9,7 +9,7 @@ and did not). This module is the list the code and the tests are held to:
 when a kind appears in one and not the other.
 
 Payloads stay dicts for now — every interface consumes them as JSON — so this is a
-contract, not a type system. E1 of the 0.3.0 plan turns each kind into a dataclass
+contract, not a type system. The next step (E1 of the integration plan) turns each kind into a dataclass
 whose `to_dict()` is exactly today's shape.
 """
 

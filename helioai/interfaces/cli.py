@@ -408,7 +408,7 @@ def _migrate_split_data_dir() -> int:
     """Move `chroma/`, `catalogs/` and `profile.md` from the default data directory to
     the configured one, when `HELIOAI_DATA_DIR` points elsewhere.
 
-    Until 0.3.0 those three derived from the default directory whatever the variable
+    Earlier versions derived those three from the default directory whatever the variable
     said, so a Docker volume held sessions under `/app/data` and the index under
     `/app/data/helioai`. Each item moves only when the destination does not exist yet,
     which keeps the command re-runnable and never overwrites a rebuilt index.

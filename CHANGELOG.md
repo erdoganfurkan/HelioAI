@@ -81,6 +81,13 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   `docker run -p 7890:7890` published an unauthenticated `run_python` on every host
   interface. `docker-compose.yml`, which publishes on loopback, carries the explicit
   opt-out (`HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC=1`) a container needs to bind `0.0.0.0`.
+- **A download no longer freezes every other user.** The data tools are `async def`
+  because the registry awaits them, but speasy, ChromaDB, the embedding model and
+  `numpy.savez_compressed` are synchronous — called inline, a 60-second download stalled
+  the event loop, and with it every stream on the web and MCP servers. The seven data
+  tools now run their bodies in a worker thread (`asyncio.to_thread`, which carries the
+  session context with it), at most four speasy downloads at a time; the figure review
+  encodes its PNGs there too.
 
 ### Removed
 

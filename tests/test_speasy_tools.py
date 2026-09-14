@@ -506,3 +506,64 @@ def test_cadence_survives_a_non_numeric_variable():
     cadence, n_valid = _sample_cadence(times, np.array(["a", "b", "c", "d", "e"]))
     assert cadence == "1 min"
     assert n_valid == 5
+
+
+# ── the data tools run their library calls off the event loop ─────────────────
+
+
+async def test_a_slow_download_does_not_freeze_the_event_loop(monkeypatch):
+    """`get_timeseries` is `async def` but speasy is synchronous: called inline, a
+    download froze the loop — and every other user's stream on the web server — for
+    its whole duration. A ticker coroutine measures the longest gap between two of its
+    own ticks while a fake download sleeps half a second."""
+    import asyncio
+    import sys
+    import time
+    from unittest.mock import MagicMock
+
+    from helioai.tools.speasy_tools import get_timeseries
+
+    def slow_get_data(*a, **k):
+        time.sleep(0.5)
+        raise RuntimeError("no data, on purpose")
+
+    mock_spz = MagicMock()
+    mock_spz.get_data.side_effect = slow_get_data
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+    monkeypatch.setattr("helioai.tools.speasy_tools._coverage_check", lambda *a, **k: (None, None))
+
+    gaps: list[float] = []
+
+    async def ticker(stop: asyncio.Event):
+        last = time.monotonic()
+        while not stop.is_set():
+            await asyncio.sleep(0.01)
+            now = time.monotonic()
+            gaps.append(now - last)
+            last = now
+
+    stop = asyncio.Event()
+    tick = asyncio.create_task(ticker(stop))
+    result = await get_timeseries("amda/imf", "2015-03-17T00:00:00", "2015-03-17T01:00:00")
+    stop.set()
+    await tick
+
+    assert "error" in result
+    assert max(gaps) < 0.25, f"the loop stalled for {max(gaps):.2f}s during the download"
+
+
+async def test_the_worker_thread_sees_the_callers_session(monkeypatch, tmp_path):
+    """`to_thread` copies the context, so the download lands in the caller's session
+    directory. This is the property a raw executor would silently lose."""
+    import helioai.workspace as ws
+    from helioai.config import settings
+    from helioai.tools.offload import run_blocking
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    token = ws.set_label("ticker-session")
+    try:
+        expected = ws.get_session_dir()
+        seen = await run_blocking(ws.get_session_dir)
+    finally:
+        ws.reset_label(token)
+    assert seen == expected

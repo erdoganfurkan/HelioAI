@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from helioai.tools.offload import run_blocking, speasy_gate
+
 log = logging.getLogger(__name__)
 
 
@@ -281,6 +283,14 @@ async def list_catalogs(
           'nb_events': 2003, 'survey_start': '1975-01-08', 'survey_stop': '2022-10-21',
           'description': '...'}, ...]}
     """
+    return await run_blocking(_list_catalogs_sync, type=type, region=region)
+
+
+def _list_catalogs_sync(
+    type: str = "all",
+    region: str | None = None,
+) -> dict:
+    """Synchronous body of `list_catalogs`, run off the event loop by its wrapper."""
     spz = _get_spz()
     if spz is None:
         return {"error": "speasy is not installed"}
@@ -379,6 +389,32 @@ async def get_catalog(
          'returned': 5, 'columns': [...], 'sample': [{'start': ..., 'stop': ..., ...}, ...],
          'survey_start': '1975-01-08', 'survey_stop': '2022-10-21'}
     """
+    return await run_blocking(
+        _get_catalog_sync,
+        catalog_id=catalog_id,
+        start=start,
+        stop=stop,
+        max_events=max_events,
+        columns=columns,
+        where=where,
+        sort_by=sort_by,
+        descending=descending,
+        offset=offset,
+    )
+
+
+def _get_catalog_sync(
+    catalog_id: str,
+    start: str | None = None,
+    stop: str | None = None,
+    max_events: int = 10,
+    columns: list[str] | None = None,
+    where: dict | None = None,
+    sort_by: str | None = None,
+    descending: bool = False,
+    offset: int = 0,
+) -> dict:
+    """Synchronous body of `get_catalog`, run off the event loop by its wrapper."""
     spz = _get_spz()
     if spz is None:
         return {"error": "speasy is not installed"}
@@ -509,6 +545,24 @@ async def get_events_timeseries(
          {'event': 0, 'start': '2015-01-03T...', 'stop': '2015-01-04T...',
           'n_points': ..., ...}, ...], ...}
     """
+    return await run_blocking(
+        _get_events_timeseries_sync,
+        catalog_id=catalog_id,
+        param_id=param_id,
+        start=start,
+        stop=stop,
+        max_events=max_events,
+    )
+
+
+def _get_events_timeseries_sync(
+    catalog_id: str,
+    param_id: str,
+    start: str,
+    stop: str,
+    max_events: int = 50,
+) -> dict:
+    """Synchronous body of `get_events_timeseries`, run off the event loop by its wrapper."""
     spz = _get_spz()
     if spz is None:
         return {"error": "speasy is not installed"}
@@ -546,7 +600,8 @@ async def get_events_timeseries(
 
     # --- batch download: ONE speasy call for all events ---
     try:
-        timeseries_list = spz.get_data(param_id, selected)
+        with speasy_gate:
+            timeseries_list = spz.get_data(param_id, selected)
     except Exception as e:
         return {"error": f"speasy.get_data({param_id!r}, events) failed: {e}"}
 
@@ -728,7 +783,8 @@ def _resolve_catalog(catalog_id: str, spz):
     index = cats.get(uid) or tts.get(uid)
     if index is None:
         return None, None
-    cat = spz.get_data(index)
+    with speasy_gate:
+        cat = spz.get_data(index)
     return cat, index
 
 
@@ -754,6 +810,15 @@ async def save_catalog(
         ...                      "note": "St. Patrick's Day storm shock"}])
         {'catalog_id': 'local/my-shocks', 'nb_events': 1, 'overwritten': False, 'note': '...'}
     """
+    return await run_blocking(_save_catalog_sync, name=name, events=events, description=description)
+
+
+def _save_catalog_sync(
+    name: str,
+    events: list[dict],
+    description: str = "",
+) -> dict:
+    """Synchronous body of `save_catalog`, run off the event loop by its wrapper."""
     if not _LOCAL_NAME_RE.fullmatch(name):
         return {
             "error": (

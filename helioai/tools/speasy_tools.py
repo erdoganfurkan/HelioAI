@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 
+from helioai.tools.offload import run_blocking, speasy_gate
+
 log = logging.getLogger(__name__)
 
 
@@ -91,6 +93,18 @@ async def get_timeseries(
          'n_points': 1350, 'n_valid': 1350, 'quality': {'missing_pct': 0.0, ...},
          'preview': '2010-01-01T00:00:09.000000000  -1.839, 2.308, 0.108\\n...', ...}
     """
+    return await run_blocking(
+        _get_timeseries_sync, param_id=param_id, start=start, stop=stop, max_points=max_points
+    )
+
+
+def _get_timeseries_sync(
+    param_id: str,
+    start: str,
+    stop: str,
+    max_points: int = 5000,
+) -> dict:
+    """Synchronous body of `get_timeseries`, run off the event loop by its wrapper."""
     try:
         import numpy as np
         import speasy as spz
@@ -117,7 +131,8 @@ async def get_timeseries(
         return blocking
 
     try:
-        var = spz.get_data(param_id, start, stop)
+        with speasy_gate:
+            var = spz.get_data(param_id, start, stop)
     except Exception as e:
         log.warning("speasy.get_data failed: %s", e)
         # `str(e)` alone can be a bare "tuple index out of range", which tells the agent
@@ -296,7 +311,8 @@ def _coverage_check(
     if provider not in _PROVIDERS_WITH_RANGE:
         return None, None
     try:
-        rng = getattr(spz, provider).parameter_range(param_id.split("/", 1)[1])
+        with speasy_gate:
+            rng = getattr(spz, provider).parameter_range(param_id.split("/", 1)[1])
         if rng is None:
             return None, None
         # speasy's DateTimeRange exposes start_time/stop_time as tz-aware datetimes.
@@ -402,6 +418,11 @@ async def list_missions() -> dict:
         {'providers': ['amda', 'archive', 'cda', 'csa', 'ssc', 'uiowaephtool'],
          'note': 'Use search_parameters to find specific parameters. ...'}
     """
+    return await run_blocking(_list_missions_sync)
+
+
+def _list_missions_sync() -> dict:
+    """Synchronous body of `list_missions`, run off the event loop by its wrapper."""
     try:
         import speasy as spz
     except ImportError:
@@ -495,6 +516,26 @@ async def search_parameters(
                          'ACE/SWEPAM ... 1-Hour Level 2 Data ... Units: #/cc. ...',
           'coverage': '1998-02-04 → 2024-07-09'}, ...]}
     """
+    return await run_blocking(
+        _search_parameters_sync,
+        query=query,
+        top_k=top_k,
+        provider=provider,
+        queries=queries,
+        start=start,
+        stop=stop,
+    )
+
+
+def _search_parameters_sync(
+    query: str | None = None,
+    top_k: int = 5,
+    provider: str | None = None,
+    queries: list[str] | None = None,
+    start: str | None = None,
+    stop: str | None = None,
+) -> dict:
+    """Synchronous body of `search_parameters`, run off the event loop by its wrapper."""
     window = (start, stop) if start and stop else None
     if queries:
         try:

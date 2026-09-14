@@ -16,6 +16,7 @@ import json
 from helioai.config import settings
 from helioai.core.llm.base import close_sdk_client
 from helioai.logging_config import get_logger
+from helioai.tools.offload import run_blocking
 
 log = get_logger(__name__)
 
@@ -76,7 +77,7 @@ async def _review(figure_paths: list[str]) -> str | None:
             _warned_no_creds = True
         return None
     try:
-        images = [_png_b64(p) for p in figure_paths[:_MAX_FIGS]]
+        images = [await run_blocking(_png_b64, p) for p in figure_paths[:_MAX_FIGS]]
         verdict = await asyncio.wait_for(
             _call_vision(images, _PROMPT), timeout=settings.vision.timeout_s
         )
@@ -87,6 +88,7 @@ async def _review(figure_paths: list[str]) -> str | None:
 
 
 def _png_b64(path: str) -> str:
+    """Downscale and encode one figure. Synchronous PIL work — run through `run_blocking`."""
     from PIL import Image
 
     with Image.open(path) as im:

@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 
 from helioai.config import settings
 from helioai.core.event_display import describe_tool_call
+from helioai.core.events import make
 from helioai.core.llm.base import LLMClient, Message, ToolDef
 from helioai.core.session import store, strip_orphan_tool_calls
 from helioai.core.skills_loader import SkillError, list_skill_names
@@ -172,7 +173,7 @@ def _provenance_events(text: str):
 
         payload = check_reply(text or "", _ws.get_session_dir())
         if payload:
-            yield {"event": "provenance", "data": payload}
+            yield make("provenance", **payload)
     except Exception:
         log.debug("provenance_check_failed", exc_info=True)
 
@@ -428,18 +429,16 @@ async def _stream_turn(
                 if not (response.content or "").strip():
                     provider, cap = _active_output_budget()
                     log.warning("empty_llm_response", turn=turn, provider=provider, cap=cap)
-                    yield {
-                        "event": "error",
-                        "data": {
-                            "message": (
-                                "the model returned neither text nor a tool call. This is "
-                                "usually the output token budget running out — set "
-                                f"HELIOAI_MAX_OUTPUT_TOKENS above {cap} (the current "
-                                f"{provider} limit) and retry, or ask for a shorter answer."
-                            )
-                        },
-                    }
-                    yield {"event": "done", "data": {"n_iterations": turn}}
+                    yield make(
+                        "error",
+                        message=(
+                            "the model returned neither text nor a tool call. This is "
+                            "usually the output token budget running out — set "
+                            f"HELIOAI_MAX_OUTPUT_TOKENS above {cap} (the current "
+                            f"{provider} limit) and retry, or ask for a shorter answer."
+                        ),
+                    )
+                    yield make("done", n_iterations=turn)
                     return
                 final_text, bogus, bypassed = check_answer(response.content, history, run_artifacts)
                 # Detecting a fabricated id and annotating the answer still ships the
@@ -454,35 +453,33 @@ async def _stream_turn(
                         )
                     )
                     continue
-                yield {"event": "reply", "data": {"text": final_text}}
+                yield make("reply", text=final_text)
                 if bogus:
                     log.warning("lead_invented_ids", ids=bogus)
-                    yield {"event": "invalid_ids", "data": {"ids": bogus}}
+                    yield make("invalid_ids", ids=bogus)
                 if bypassed:
                     log.warning("lead_recipe_bypassed", recipes=bypassed)
-                    yield {"event": "recipe_bypassed", "data": {"recipes": bypassed}}
+                    yield make("recipe_bypassed", recipes=bypassed)
                 for ev in _provenance_events(final_text):
                     yield ev
-                yield {"event": "done", "data": {"n_iterations": turn}}
+                yield make("done", n_iterations=turn)
                 return
 
             if response.content and response.content.strip():
-                yield {"event": "reply", "data": {"text": response.content}}
+                yield make("reply", text=response.content)
                 for ev in _provenance_events(response.content):
                     yield ev
 
             started = start_tool_calls(response.tool_calls)
             for tc in response.tool_calls:
                 log.info("tool_call_issued", turn=turn, tool=tc.name)
-                yield {
-                    "event": "tool_call",
-                    "data": {
-                        "turn": turn,
-                        "name": tc.name,
-                        "arguments": tc.arguments,
-                        "display": describe_tool_call(tc.name, tc.arguments),
-                    },
-                }
+                yield make(
+                    "tool_call",
+                    turn=turn,
+                    name=tc.name,
+                    arguments=tc.arguments,
+                    display=describe_tool_call(tc.name, tc.arguments),
+                )
 
                 sub_end_event: dict | None = None
                 sub_role = ""
@@ -492,14 +489,12 @@ async def _stream_turn(
                         args = tc.arguments or {}
                         sub_role = args.get("agent_role", "")
                         sub_desc = args.get("description", "")
-                        yield {
-                            "event": "sub_agent_start",
-                            "data": {
-                                "task_id": tc.id,
-                                "role": sub_role,
-                                "description": sub_desc[:200],
-                            },
-                        }
+                        yield make(
+                            "sub_agent_start",
+                            task_id=tc.id,
+                            role=sub_role,
+                            description=sub_desc[:200],
+                        )
                         async for sub_ev in stream_subagent(
                             role=sub_role,
                             description=sub_desc,
@@ -569,26 +564,26 @@ async def _stream_turn(
                             "summary": "",
                             "n_iterations": 0,
                             "error": str(e),
+                            "findings": {},
+                            "usage": {},
                         }
 
                 result, figure_verdict = await maybe_review(tc.name, result)
                 if figure_verdict:
-                    yield {"event": "figure_review", "data": {"turn": turn, "text": figure_verdict}}
+                    yield make("figure_review", turn=turn, text=figure_verdict)
 
                 for ev in emit_post_tool_events(tc.name, result, tool_result_extra={"turn": turn}):
                     if ev["event"] == "artifact":
                         run_artifacts.append(ev["data"])
                     yield ev
                 if sub_end_event is not None:
-                    yield {"event": "sub_agent_end", "data": sub_end_event}
+                    yield make("sub_agent_end", **sub_end_event)
                 if tc.name == "present_plan" and isinstance(result.payload, dict):
-                    yield {
-                        "event": "plan",
-                        "data": {
-                            "title": result.payload.get("title", ""),
-                            "steps": result.payload.get("steps", []),
-                        },
-                    }
+                    yield make(
+                        "plan",
+                        title=result.payload.get("title", ""),
+                        steps=result.payload.get("steps", []),
+                    )
 
                 history.append(
                     Message(
@@ -601,10 +596,9 @@ async def _stream_turn(
 
         log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
         store.save(user_id, session_id, history)
-        yield {
-            "event": "error",
-            "data": {"message": f"agent loop exceeded {settings.agent.max_iterations} iterations"},
-        }
+        yield make(
+            "error", message=f"agent loop exceeded {settings.agent.max_iterations} iterations"
+        )
 
     except asyncio.CancelledError:
         store.save(user_id, session_id, strip_orphan_tool_calls(history))

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import structlog
 
 from helioai.core.event_display import describe_tool_call
+from helioai.core.events import make
 from helioai.core.llm.base import LLMClient, Message, ToolDef
 from helioai.core.skills_loader import SkillError
 from helioai.core.skills_loader import load_skill as load_skill_body
@@ -348,17 +349,17 @@ async def stream_subagent(
 
     if role not in AGENT_ROLES:
         known = ", ".join(sorted(AGENT_ROLES))
-        yield {
-            "event": "sub_agent_end",
-            "data": {
-                "task_id": task_id,
-                "role": role,
-                "summary": "",
-                "n_iterations": 0,
-                "error": f"unknown agent_role {role!r}. Known: {known}",
-                "artifacts": [],
-            },
-        }
+        yield make(
+            "sub_agent_end",
+            task_id=task_id,
+            role=role,
+            summary="",
+            n_iterations=0,
+            error=f"unknown agent_role {role!r}. Known: {known}",
+            artifacts=[],
+            findings={},
+            usage={},
+        )
         return
 
     role_cfg = AGENT_ROLES[role]
@@ -378,7 +379,7 @@ async def stream_subagent(
     try:
         system_prompt, skills_loaded = _build_system_prompt(role_cfg)
         for skill_name in skills_loaded:
-            yield {"event": "skill_loaded", "data": {"name": skill_name, "sub_agent_ctx": ctx}}
+            yield make("skill_loaded", name=skill_name, sub_agent_ctx=ctx)
 
         allowed = set(role_cfg.allowed_tools)
         tools = registry.list_tool_defs(only=allowed)
@@ -433,16 +434,14 @@ async def stream_subagent(
             started = start_tool_calls(response.tool_calls, allowed=allowed)
             for tc in response.tool_calls:
                 log.info("tool_call_issued", turn=n_iters, tool=tc.name, sub_role=role)
-                yield {
-                    "event": "tool_call",
-                    "data": {
-                        "turn": n_iters,
-                        "name": tc.name,
-                        "arguments": tc.arguments,
-                        "display": describe_tool_call(tc.name, tc.arguments),
-                        "sub_agent_ctx": ctx,
-                    },
-                }
+                yield make(
+                    "tool_call",
+                    turn=n_iters,
+                    name=tc.name,
+                    arguments=tc.arguments,
+                    display=describe_tool_call(tc.name, tc.arguments),
+                    sub_agent_ctx=ctx,
+                )
 
                 if tc.name not in allowed:
                     log.warning("subagent_tool_denied", role=role, tool=tc.name)
@@ -460,10 +459,9 @@ async def stream_subagent(
 
                 result, figure_verdict = await maybe_review(tc.name, result)
                 if figure_verdict:
-                    yield {
-                        "event": "figure_review",
-                        "data": {"turn": n_iters, "text": figure_verdict, "sub_agent_ctx": ctx},
-                    }
+                    yield make(
+                        "figure_review", turn=n_iters, text=figure_verdict, sub_agent_ctx=ctx
+                    )
 
                 for ev in emit_post_tool_events(
                     tc.name,
@@ -501,47 +499,37 @@ async def stream_subagent(
         final_text, bogus, bypassed_recipes = check_answer(final_text, history, artifacts)
         if bogus:
             log.warning("subagent_invented_ids", role=role, ids=bogus)
-            yield {
-                "event": "invalid_ids",
-                "data": {"ids": bogus, "sub_agent_ctx": ctx},
-            }
+            yield make("invalid_ids", ids=bogus, sub_agent_ctx=ctx)
 
         if bypassed_recipes:
             log.warning("subagent_recipe_bypassed", role=role, recipes=bypassed_recipes)
-            yield {
-                "event": "recipe_bypassed",
-                "data": {"recipes": bypassed_recipes, "sub_agent_ctx": ctx},
-            }
+            yield make("recipe_bypassed", recipes=bypassed_recipes, sub_agent_ctx=ctx)
 
-        yield {
-            "event": "sub_agent_end",
-            "data": {
-                "task_id": task_id,
-                "role": role,
-                "findings": _findings(artifacts),
-                "summary": final_text,
-                "n_iterations": n_iters,
-                "error": final_text if capped else None,
-                "artifacts": artifacts,
-                "usage": usage,
-            },
-        }
+        yield make(
+            "sub_agent_end",
+            task_id=task_id,
+            role=role,
+            findings=_findings(artifacts),
+            summary=final_text,
+            n_iterations=n_iters,
+            error=final_text if capped else None,
+            artifacts=artifacts,
+            usage=usage,
+        )
 
     except Exception as e:
         log.exception("subagent_error", role=role, task_id=task_id)
-        yield {
-            "event": "sub_agent_end",
-            "data": {
-                "task_id": task_id,
-                "role": role,
-                "findings": _findings(artifacts),
-                "summary": "",
-                "n_iterations": n_iters,
-                "error": str(e),
-                "artifacts": [],
-                "usage": usage,
-            },
-        }
+        yield make(
+            "sub_agent_end",
+            task_id=task_id,
+            role=role,
+            findings=_findings(artifacts),
+            summary="",
+            n_iterations=n_iters,
+            error=str(e),
+            artifacts=[],
+            usage=usage,
+        )
 
     finally:
         cancel_pending(started)

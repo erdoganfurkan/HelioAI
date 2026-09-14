@@ -139,11 +139,15 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   `run_python` really sandboxed or on the fallback path (and why), how big the speasy
   inventory and the workspaces have grown. Offline by default, `--online` probes the
   provider once, `--json` for bug reports and CI; exit code 1 when a check fails.
-- **The event contract lives in one place.** `core/events.py` lists every kind the
-  agent loops emit with its payload keys and every artifact kind; a static test holds
-  the emitters, the CLI, the notebook magic and the browser to that list, so a kind
-  added to a loop and forgotten in one interface — or documented and never emitted —
-  fails in CI. Three docstrings used to carry their own, disagreeing copies.
+- **The event contract lives in one place, and is enforced as events are made.**
+  `core/events.py` lists every kind the agent loops emit with its payload keys and every
+  artifact kind; a static test holds the emitters, the CLI, the notebook magic and the
+  browser to that list, so a kind added to a loop and forgotten in one interface — or
+  documented and never emitted — fails in CI. Three docstrings used to carry their own,
+  disagreeing copies. Every emission now goes through `events.make` / `events.artifact`,
+  which refuse an unknown kind or a payload missing a key the interfaces rely on — the
+  `sub_agent_end` of a failed delegation lacked `findings` and `usage`, and the loop
+  tests that exercise the branch now say so.
 - **Token usage is kept.** Every provider reports what a call cost and every count was
   dropped at save time, so nothing could say what a session — or a user — had spent.
   Each lead call is now a row in a `usage` table (turn, agent, provider, prompt /

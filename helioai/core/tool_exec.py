@@ -21,6 +21,7 @@ from pathlib import Path
 
 from helioai import provenance
 from helioai.core.event_display import describe_tool_result, finding_str
+from helioai.core.events import artifact, make
 from helioai.core.llm.base import ToolCall
 from helioai.tools.results import ToolResult
 
@@ -248,14 +249,14 @@ def _extract_artifact(tool_name: str, payload: object) -> list[dict]:
         # "exited with code 1" with no way to see what ran.
         if tool_name == "run_python" and data.get("code_path"):
             return [
-                {
-                    "tool": tool_name,
-                    "kind": "code",
-                    "code_path": data["code_path"],
-                    "name": Path(data["code_path"]).name,
-                    "n_lines": data.get("n_lines"),
-                    "failed": True,
-                }
+                artifact(
+                    "code",
+                    tool=tool_name,
+                    code_path=data["code_path"],
+                    name=Path(data["code_path"]).name,
+                    n_lines=data.get("n_lines"),
+                    failed=True,
+                )
             ]
         return []
 
@@ -265,94 +266,95 @@ def _extract_artifact(tool_name: str, payload: object) -> list[dict]:
     if tool_name == "run_python":
         if data.get("figure_paths"):
             artifacts.append(
-                {
-                    "tool": tool_name,
-                    "kind": "image",
-                    "figure_paths": data["figure_paths"],
-                    "stdout": data.get("stdout", ""),
-                }
+                artifact(
+                    "image",
+                    tool=tool_name,
+                    figure_paths=data["figure_paths"],
+                    stdout=data.get("stdout", ""),
+                )
             )
         if data.get("exports"):
             artifacts.append(
-                {
-                    "tool": tool_name,
-                    "kind": "exports",
-                    "values": data["exports"],
-                    "code_path": data.get("code_path"),
-                }
+                artifact(
+                    "exports",
+                    tool=tool_name,
+                    values=data["exports"],
+                    code_path=data.get("code_path"),
+                )
             )
         for card in data.get("cards", []):
             if not isinstance(card, dict):
                 continue
             if card.get("kind") == "parameter_card":
-                artifacts.append({"tool": tool_name, **card})
+                fields = {k: v for k, v in card.items() if k != "kind"}
+                artifacts.append(artifact("parameter_card", tool=tool_name, **fields))
             elif card.get("kind") == "method_used":
                 artifacts.append(
-                    {
-                        "tool": tool_name,
-                        "kind": "recipe_used",
-                        "name": card.get("name", ""),
-                        "reference": card.get("reference", ""),
-                        "description": card.get("method", ""),
-                    }
+                    artifact(
+                        "recipe_used",
+                        tool=tool_name,
+                        name=card.get("name", ""),
+                        reference=card.get("reference", ""),
+                        description=card.get("method", ""),
+                    )
                 )
         if data.get("code_path"):
             artifacts.append(
-                {
-                    "tool": tool_name,
-                    "kind": "code",
-                    "code_path": data["code_path"],
-                    "name": Path(data["code_path"]).name,
-                    "n_lines": data.get("n_lines"),
-                }
+                artifact(
+                    "code",
+                    tool=tool_name,
+                    code_path=data["code_path"],
+                    name=Path(data["code_path"]).name,
+                    n_lines=data.get("n_lines"),
+                )
             )
 
     # load_recipe: surface the recipe + its scientific reference for provenance
     if tool_name == "load_recipe" and data.get("name"):
         meta = data.get("metadata") or {}
         artifacts.append(
-            {
-                "tool": tool_name,
-                "kind": "recipe_used",
-                "name": data["name"],
-                "reference": meta.get("reference", ""),
-                "description": meta.get("description", ""),
-            }
+            artifact(
+                "recipe_used",
+                tool=tool_name,
+                name=data["name"],
+                reference=meta.get("reference", ""),
+                description=meta.get("description", ""),
+            )
         )
 
     # get_catalog result
     if tool_name == "get_catalog" and data.get("_kind") == "catalog_preview":
         artifacts.append(
-            {
-                "tool": tool_name,
-                "kind": "catalog_preview",
-                "catalog_id": data.get("catalog_id"),
-                "name": data.get("name"),
-                "type": data.get("type"),
-                "nb_events_total": data.get("nb_events_total"),
-                "columns": data.get("columns", []),
-                "sample": (data.get("sample") or [])[:5],
-                "survey_start": data.get("survey_start"),
-                "survey_stop": data.get("survey_stop"),
-            }
+            artifact(
+                "catalog_preview",
+                tool=tool_name,
+                catalog_id=data.get("catalog_id"),
+                name=data.get("name"),
+                type=data.get("type"),
+                nb_events_total=data.get("nb_events_total"),
+                columns=data.get("columns", []),
+                sample=(data.get("sample") or [])[:5],
+                survey_start=data.get("survey_start"),
+                survey_stop=data.get("survey_stop"),
+            )
         )
 
     # get_timeseries called directly by main agent
     if tool_name == "get_timeseries" and "preview" in data:
-        card = {
-            "tool": tool_name,
-            "kind": "parameter_card",
-            "param_id": data.get("param_id"),
-            "name": data.get("name"),
-            "mission": data.get("mission"),
-            "instrument": data.get("instrument"),
-            "units": data.get("units"),
-            "cadence": data.get("cadence"),
-            "components": data.get("components"),
-            "n_points": data.get("n_points"),
-            "start": data.get("start"),
-            "stop": data.get("stop"),
-        }
+        card = artifact(
+            "parameter_card",
+            tool=tool_name,
+            param_id=data.get("param_id"),
+            name=data.get("name"),
+            mission=data.get("mission"),
+            instrument=data.get("instrument"),
+            units=data.get("units"),
+            cadence=data.get("cadence"),
+            components=data.get("components"),
+            n_points=data.get("n_points"),
+            start=data.get("start"),
+            stop=data.get("stop"),
+        )
         if (data.get("quality") or {}).get("notable"):
             card["quality"] = data["quality"]
         artifacts.append(card)
@@ -468,28 +470,20 @@ def emit_post_tool_events(
     text = result.for_llm()
     payload = result.payload
 
-    yield {
-        "event": "tool_result",
-        "data": {
-            "name": name,
-            "summary": _summarize_tool_result(text),
-            # `summary` is written for the model and stays untouched. `display` is the
-            # same event told to a person, computed here so the CLI, the Jupyter magic
-            # and the browser show identical words without three copies of the logic.
-            "display": describe_tool_result(name, text),
-            **tool_result_extra,
-        },
-    }
+    # `summary` is written for the model and stays untouched. `display` is the same
+    # event told to a person, computed here so the CLI, the Jupyter magic and the
+    # browser show identical words without three copies of the logic.
+    yield make(
+        "tool_result",
+        name=name,
+        summary=_summarize_tool_result(text),
+        display=describe_tool_result(name, text),
+        **tool_result_extra,
+    )
 
     if name == "load_skill" and isinstance(payload, dict):
         if payload.get("body") and not payload.get("error"):
-            yield {
-                "event": "skill_loaded",
-                "data": {
-                    "name": payload.get("name", ""),
-                    **common_extra,
-                },
-            }
+            yield make("skill_loaded", name=payload.get("name", ""), **common_extra)
 
     for art in _extract_artifact(name, payload):
         if art.get("kind") == "exports":
@@ -501,7 +495,7 @@ def emit_post_tool_events(
                 task_id=ctx.get("task_id"),
                 turn=tool_result_extra.get("turn"),
             )
-        yield {"event": "artifact", "data": {**art, **common_extra}}
+        yield make("artifact", **art, **common_extra)
 
 
 def unknown_id_correction(bogus: list[str]) -> str:

@@ -1,11 +1,12 @@
 """The event contract holds: what the loops emit is what `core/events.py` lists, and
 what the interfaces render.
 
-Static, by design. Running both loops through every branch that emits every kind would
-need a scripted scenario per kind; grepping the source for the literals the emitters
-and renderers use catches the drift this exists for — a kind added to a loop and to two
-of the three interfaces, or documented and never emitted — in milliseconds, on every
-run.
+Two layers. The static one greps the source for the kinds the emitters name in
+`make(...)` / `artifact(...)` and the renderers test for, and catches the drift this
+exists for — a kind added to a loop and to two of the three interfaces, or documented
+and never emitted — in milliseconds, on every run. The dynamic one is `make` itself:
+every emission checks its required keys as it is produced, so the loop tests that
+exercise a branch also prove its payload; the tests at the bottom pin that behaviour.
 """
 
 from __future__ import annotations
@@ -37,12 +38,11 @@ def _literals(paths, pattern) -> set[str]:
 
 
 def _emitted_kinds() -> set[str]:
-    return _literals(EMITTERS, r'"event":\s*"([a-z_]+)"')
+    return _literals(EMITTERS, r'\bmake\(\s*"([a-z_]+)"')
 
 
 def _emitted_artifact_kinds() -> set[str]:
-    # tool_exec builds artifacts; `data.get("kind")` reads are not emissions.
-    return _literals([ROOT / "core" / "tool_exec.py"], r'"kind":\s*"([a-z_]+)"')
+    return _literals([ROOT / "core" / "tool_exec.py"], r'\bartifact\(\s*"([a-z_]+)"')
 
 
 def test_every_emitted_kind_is_in_the_contract_and_vice_versa():
@@ -51,6 +51,32 @@ def test_every_emitted_kind_is_in_the_contract_and_vice_versa():
 
 def test_every_emitted_artifact_kind_is_in_the_contract_and_vice_versa():
     assert _emitted_artifact_kinds() == set(events.ARTIFACT_KINDS)
+
+
+def test_no_emitter_builds_an_event_dict_by_hand():
+    """A literal `{"event": ...}` would bypass the key check `make` performs."""
+    assert _literals(EMITTERS, r'"event":\s*"([a-z_]+)"') == set()
+    assert _literals([ROOT / "core" / "tool_exec.py"], r'"kind":\s*"([a-z_]+)"') == set()
+
+
+def test_make_checks_the_kind_and_its_keys_and_keeps_the_shape():
+    assert events.make("reply", text="hi") == {"event": "reply", "data": {"text": "hi"}}
+    with_extra = events.make("invalid_ids", ids=["x"], sub_agent_ctx={"role": "r"})
+    assert with_extra["data"]["sub_agent_ctx"] == {"role": "r"}
+    with pytest.raises(ValueError, match="tool_result event is missing"):
+        events.make("tool_result", turn=1, name="t")
+    with pytest.raises(KeyError, match="not an event kind"):
+        events.make("reply_chunk", text="hi")
+
+
+def test_artifact_checks_the_kind_and_its_keys():
+    art = events.artifact("image", tool="run_python", figure_paths=["f.png"])
+    assert art == {"kind": "image", "tool": "run_python", "figure_paths": ["f.png"]}
+    assert events.make("artifact", **art)["data"]["kind"] == "image"
+    with pytest.raises(ValueError, match="code artifact is missing"):
+        events.artifact("code", tool="run_python", code_path="c.py")
+    with pytest.raises(KeyError, match="not an artifact kind"):
+        events.artifact("table", tool="run_python")
 
 
 @pytest.mark.parametrize(

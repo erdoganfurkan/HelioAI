@@ -130,7 +130,7 @@ def test_version_is_single_sourced():
     """
     import tomllib
 
-    pyproject = tomllib.loads((PACKAGE_DIR.parent / "pyproject.toml").read_text())
+    pyproject = tomllib.loads((PACKAGE_DIR.parent / "pyproject.toml").read_text(encoding="utf-8"))
     assert "version" in pyproject["project"].get("dynamic", []), (
         "project.version should be dynamic, sourced from helioai/__init__.py"
     )
@@ -139,14 +139,14 @@ def test_version_is_single_sourced():
 
 
 def test_changelog_documents_the_current_version():
-    changelog = (PACKAGE_DIR.parent / "CHANGELOG.md").read_text()
+    changelog = (PACKAGE_DIR.parent / "CHANGELOG.md").read_text(encoding="utf-8")
     assert f"[{helioai.__version__}]" in changelog, (
         f"CHANGELOG.md has no entry for {helioai.__version__}"
     )
 
 
 def test_citation_matches_the_current_version():
-    citation = (PACKAGE_DIR.parent / "CITATION.cff").read_text()
+    citation = (PACKAGE_DIR.parent / "CITATION.cff").read_text(encoding="utf-8")
     assert f"version: {helioai.__version__}" in citation
 
 

@@ -130,6 +130,8 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "recipes: executes the shipped scientific recipes with synthetic inputs (-m 'not recipes' to skip)",
+    "network: touches the real network (-m 'not network' to skip)",
+    "slow: takes more than a few seconds",
 ]
 addopts = "--cov=helioai --cov-report=term-missing --cov-fail-under=70"
 

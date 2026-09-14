@@ -1,12 +1,12 @@
-"""Tests for helioai.tools.speasy_tools — mocked speasy + rag."""
+"""Tests for helioai.tools.speasy_tools — fake speasy + rag."""
 
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+from support.fake_speasy import FakeRange, FakeSpeasy, FakeVariable
 
 import helioai.tools.rag as rag_module
 from helioai.tools.speasy_tools import (
@@ -72,13 +72,9 @@ def test_data_quality_non_numeric_returns_empty() -> None:
 
 
 async def test_list_missions_returns_dict(monkeypatch) -> None:
-    mock_tree = MagicMock()
-    type(mock_tree).__iter__ = MagicMock(return_value=iter([]))
+    fake_spz = FakeSpeasy(tree=object())
 
-    mock_spz = MagicMock()
-    mock_spz.inventories.tree = mock_tree
-
-    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
     result = await list_missions()
     assert isinstance(result, dict)
     assert "providers" in result or "error" in result
@@ -140,13 +136,12 @@ async def test_fallback_note_names_what_actually_failed(monkeypatch) -> None:
     the dense search raised at import and the note said "RAG index not built". A client
     model with none of our context would have told the user to build an index that
     existed. The exception is the diagnosis, so the note carries it."""
-    import types
 
     def boom(q, top_k=5, provider=None):
         raise NameError("name 'nn' is not defined")
 
     monkeypatch.setattr(rag_module, "search", boom)
-    fake_spz = types.SimpleNamespace(inventories=types.SimpleNamespace(tree=None))
+    fake_spz = FakeSpeasy(tree=None)
     monkeypatch.setattr(
         "helioai.tools.speasy_tools._fallback_search", lambda spz, q, k: [{"id": "x"}]
     )
@@ -160,14 +155,12 @@ async def test_fallback_note_names_what_actually_failed(monkeypatch) -> None:
 
 
 async def test_batch_fallback_note_names_what_actually_failed(monkeypatch) -> None:
-    import types
-
     def boom(queries, top_k=5, provider=None):
         raise RuntimeError("chroma unreachable")
 
     monkeypatch.setattr(rag_module, "search_batch", boom)
     monkeypatch.setattr("helioai.tools.speasy_tools._fallback_search", lambda spz, q, k: [])
-    monkeypatch.setitem(__import__("sys").modules, "speasy", types.SimpleNamespace())
+    monkeypatch.setitem(__import__("sys").modules, "speasy", FakeSpeasy())
 
     result = await search_parameters(queries=["a", "b"])
 
@@ -178,21 +171,15 @@ async def test_batch_fallback_note_names_what_actually_failed(monkeypatch) -> No
 # ─────────────────────────────── get_timeseries ─────────────────────────────
 
 
-def _make_fake_var(n: int = 5) -> MagicMock:
-    fake_var = MagicMock()
+def _make_fake_var(n: int = 5) -> FakeVariable:
     times = np.array([f"2005-01-17T12:0{i}:00" for i in range(n)], dtype="datetime64[s]")
-    fake_var.time = times
-    fake_var.values = np.random.rand(n, 1).astype("float32")
-    fake_var.unit = "nT"
-    return fake_var
+    return FakeVariable(time=times, values=np.random.rand(n, 1).astype("float32"), unit="nT")
 
 
 async def test_get_timeseries_returns_preview(monkeypatch) -> None:
     fake_var = _make_fake_var(5)
-    mock_spz = MagicMock()
-    mock_spz.get_data = MagicMock(return_value=fake_var)
-    mock_spz.amda.parameter_range.return_value = None  # skip coverage guard
-    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+    fake_spz = FakeSpeasy(get_data=fake_var)
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
 
     result = await get_timeseries("amda/ace_b_gse", "2005-01-17T12:00:00", "2005-01-17T12:10:00")
     assert "error" not in result
@@ -201,68 +188,35 @@ async def test_get_timeseries_returns_preview(monkeypatch) -> None:
 
 
 async def test_get_timeseries_no_data_returns_error(monkeypatch) -> None:
-    mock_spz = MagicMock()
-    mock_spz.get_data = MagicMock(return_value=None)
-    mock_spz.amda.parameter_range.return_value = None  # skip coverage guard
-    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+    fake_spz = FakeSpeasy(get_data=None)
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
 
     result = await get_timeseries("amda/fake", "2024-01-01T00:00:00", "2024-01-01T01:00:00")
     assert "error" in result
 
 
 async def test_get_timeseries_exception_returns_error(monkeypatch) -> None:
-    mock_spz = MagicMock()
-    mock_spz.get_data = MagicMock(side_effect=RuntimeError("network error"))
-    mock_spz.amda.parameter_range.return_value = None  # skip coverage guard
-    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+    fake_spz = FakeSpeasy(get_data_error=RuntimeError("network error"))
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
 
     result = await get_timeseries("amda/fake", "2024-01-01T00:00:00", "2024-01-01T01:00:00")
     assert "error" in result
 
 
-def _range(start_iso: str, stop_iso: str):
-    """A stand-in for speasy's DateTimeRange, with ITS attribute names.
-
-    This matters more than it looks: the previous version of this test set
-    `.start`/`.stop` on a MagicMock, which the real class does not have. The guard
-    read those, raised AttributeError into a bare `except`, and was a silent no-op
-    in production while this test passed — a mock that agrees with the code instead
-    of with the library proves nothing.
-    """
-    from datetime import UTC, datetime
-
-    class _R:
-        start_time = datetime.fromisoformat(start_iso).replace(tzinfo=UTC)
-        stop_time = datetime.fromisoformat(stop_iso).replace(tzinfo=UTC)
-
-    return _R()
-
-
-def test_speasy_daterange_still_uses_start_time(monkeypatch) -> None:
-    """Guards against the library renaming what the guard reads.
-
-    If speasy ever returns a range whose attributes are not start_time/stop_time,
-    the coverage guard degrades to a no-op again — this fails loudly instead.
-    """
-    import speasy as spz
-
-    rng = spz.cda.parameter_range("AC_H0_MFI/BGSM")
-    assert hasattr(rng, "start_time") and hasattr(rng, "stop_time")
+def _range(start_iso: str, stop_iso: str) -> FakeRange:
+    return FakeRange(start_iso, stop_iso)
 
 
 async def test_get_timeseries_refuses_a_window_with_no_overlap(monkeypatch) -> None:
-    mock_spz = MagicMock()
-    mock_spz.amda.parameter_range.return_value = _range(
-        "2005-01-01T00:00:00", "2005-12-31T23:59:59"
-    )
-    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+    fake_spz = FakeSpeasy(ranges={"amda": _range("2005-01-01T00:00:00", "2005-12-31T23:59:59")})
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
 
     result = await get_timeseries("amda/imf", "2020-01-01T00:00:00", "2020-01-02T00:00:00")
 
     assert "error" in result
     assert "2005-01-01" in result["error"], "the error must name the coverage"
     assert result["available_start"].startswith("2005-01-01")
-    mock_spz.get_data.assert_not_called()
+    assert fake_spz.get_data_calls == []
 
 
 async def test_get_timeseries_downloads_a_partial_overlap(monkeypatch) -> None:
@@ -272,28 +226,26 @@ async def test_get_timeseries_downloads_a_partial_overlap(monkeypatch) -> None:
     away real data — for a parameter ending last month, an ordinary "the last few
     weeks" request returned nothing at all.
     """
-    mock_spz = MagicMock()
-    mock_spz.amda.parameter_range.return_value = _range(
-        "2005-01-01T00:00:00", "2005-12-31T23:59:59"
+    fake_spz = FakeSpeasy(
+        get_data=_make_fake_var(5),
+        ranges={"amda": _range("2005-01-01T00:00:00", "2005-12-31T23:59:59")},
     )
-    mock_spz.get_data = MagicMock(return_value=_make_fake_var(5))
-    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
 
     result = await get_timeseries("amda/imf", "2005-12-30T00:00:00", "2006-01-05T00:00:00")
 
     assert "error" not in result
-    mock_spz.get_data.assert_called_once()
+    assert len(fake_spz.get_data_calls) == 1
     assert "coverage_note" in result
     assert "clipped" in result["coverage_note"]
 
 
 async def test_get_timeseries_is_silent_when_fully_covered(monkeypatch) -> None:
-    mock_spz = MagicMock()
-    mock_spz.amda.parameter_range.return_value = _range(
-        "2005-01-01T00:00:00", "2005-12-31T23:59:59"
+    fake_spz = FakeSpeasy(
+        get_data=_make_fake_var(5),
+        ranges={"amda": _range("2005-01-01T00:00:00", "2005-12-31T23:59:59")},
     )
-    mock_spz.get_data = MagicMock(return_value=_make_fake_var(5))
-    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
 
     result = await get_timeseries("amda/imf", "2005-06-01T00:00:00", "2005-06-02T00:00:00")
 
@@ -316,22 +268,10 @@ async def test_get_timeseries_rejects_an_all_fill_series(monkeypatch, tmp_path):
     times = np.arange("2003-10-29T00:00", n, dtype="datetime64[m]")
     values = np.full(n, -9.9999998e30)
 
-    class _Var:
-        unit = "cm^-3"
-        columns = ["Np"]
-        meta: dict = {}
-        name = "Np"
-
-        def __init__(self):
-            self.time = times
-            self.values = values
-
-        def __len__(self):
-            return n
-
-    import speasy
-
-    monkeypatch.setattr(speasy, "get_data", lambda *a, **k: _Var(), raising=False)
+    fake_spz = FakeSpeasy(
+        get_data=FakeVariable(time=times, values=values, unit="cm^-3", columns=["Np"], name="Np")
+    )
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
 
     res = await st.get_timeseries("cda/AC_H0_SWE/Np", "2003-10-29", "2003-10-29T00:40")
 
@@ -397,22 +337,12 @@ async def test_get_timeseries_persists_nan_not_the_sentinel(monkeypatch, tmp_pat
     values = np.array([400.0, fill, 420.0, fill, 440.0])
     times = np.arange("2015-03-17T00:00", 5, dtype="datetime64[m]")
 
-    class _Var:
-        unit = "km/s"
-        columns = ["V"]
-        meta = {"FILLVAL": fill}
-        name = "V"
-
-        def __init__(self):
-            self.time = times
-            self.values = values
-
-        def __len__(self):
-            return len(times)
-
-    import speasy
-
-    monkeypatch.setattr(speasy, "get_data", lambda *a, **k: _Var(), raising=False)
+    fake_spz = FakeSpeasy(
+        get_data=FakeVariable(
+            time=times, values=values, unit="km/s", columns=["V"], meta={"FILLVAL": fill}, name="V"
+        )
+    )
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
     monkeypatch.setattr(ds, "_session_data_dir", lambda: tmp_path)
 
     res = await st.get_timeseries("cda/WI_H1_SWE/V", "2015-03-17", "2015-03-17T00:05")
@@ -430,12 +360,8 @@ async def test_get_timeseries_persists_nan_not_the_sentinel(monkeypatch, tmp_pat
 @pytest.mark.asyncio
 async def test_retrieval_failure_names_the_exception_type(monkeypatch):
     """A bare "tuple index out of range" gave the agent nothing to act on."""
-    import speasy
-
-    def boom(*a, **k):
-        raise IndexError("tuple index out of range")
-
-    monkeypatch.setattr(speasy, "get_data", boom)
+    fake_spz = FakeSpeasy(get_data_error=IndexError("tuple index out of range"))
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
     result = await get_timeseries("cda/AC_OR_SSC/Epoch", "2015-03-17", "2015-03-18")
     assert "IndexError" in result["error"]
     assert "not a plottable data variable" in result["error"]
@@ -444,15 +370,10 @@ async def test_retrieval_failure_names_the_exception_type(monkeypatch):
 @pytest.mark.asyncio
 async def test_preview_survives_non_numeric_values(monkeypatch):
     """datetime64 values used to raise inside the preview loop, killing the call."""
-    from types import SimpleNamespace
-
-    import speasy
-
     times = np.array(["2015-03-17T00:00:00", "2015-03-17T00:01:00"], dtype="datetime64[s]")
-    var = SimpleNamespace(
-        time=times, values=times.copy(), unit="", name="Epoch", columns=[], meta={}
-    )
-    monkeypatch.setattr(speasy, "get_data", lambda *a, **k: var)
+    var = FakeVariable(time=times, values=times.copy(), name="Epoch")
+    fake_spz = FakeSpeasy(get_data=var)
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
     result = await get_timeseries("cda/AC_OR_SSC/Epoch", "2015-03-17", "2015-03-18")
     assert "error" not in result or "preview" in result
 
@@ -460,8 +381,6 @@ async def test_preview_survives_non_numeric_values(monkeypatch):
 @pytest.mark.asyncio
 async def test_repeat_download_short_circuits_before_the_network(tmp_path, monkeypatch):
     """A second request for the same param+window must not hit speasy at all."""
-    import speasy
-
     import helioai.workspace as ws
     from helioai.datastore import save_timeseries
 
@@ -485,7 +404,7 @@ async def test_repeat_download_short_circuits_before_the_network(tmp_path, monke
             columns=["Bx", "By", "Bz"],
             source="get_timeseries",
         )
-        monkeypatch.setattr(speasy, "get_data", counting_get_data)
+        monkeypatch.setitem(sys.modules, "speasy", FakeSpeasy(get_data=counting_get_data))
         result = await get_timeseries(
             "cda/WI_H0_MFI/B3GSM", "2015-03-16T18:00:00", "2015-03-18T12:00:00"
         )
@@ -559,7 +478,6 @@ async def test_a_slow_download_does_not_freeze_the_event_loop(monkeypatch):
     import asyncio
     import sys
     import time
-    from unittest.mock import MagicMock
 
     from helioai.tools.speasy_tools import get_timeseries
 
@@ -567,9 +485,8 @@ async def test_a_slow_download_does_not_freeze_the_event_loop(monkeypatch):
         time.sleep(0.5)
         raise RuntimeError("no data, on purpose")
 
-    mock_spz = MagicMock()
-    mock_spz.get_data.side_effect = slow_get_data
-    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+    fake_spz = FakeSpeasy(get_data=slow_get_data)
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
     monkeypatch.setattr("helioai.tools.speasy_tools._coverage_check", lambda *a, **k: (None, None))
 
     gaps: list[float] = []

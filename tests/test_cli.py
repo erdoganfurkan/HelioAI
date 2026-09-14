@@ -328,3 +328,79 @@ def test_migrate_storage_is_a_no_op_when_the_data_dir_is_the_default(tmp_path, m
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     assert cli._migrate_split_data_dir() == 0
     assert (tmp_path / "chroma").exists()
+
+
+# ── argparse router: flags with missing values fail cleanly, subcommand flags parse ──
+
+
+def test_a_flag_without_its_value_is_an_argument_error_not_a_crash(monkeypatch, tripwires):
+    import helioai.interfaces.cli as cli
+
+    monkeypatch.setattr(sys, "argv", ["helioai", "--session"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2
+
+
+def test_serve_web_parses_host_and_port_wherever_they_come(monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.interfaces.web.app as web_app
+    import helioai.workspace as ws
+
+    seen = {}
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(web_app, "serve_web", lambda host, port: seen.update(host=host, port=port))
+    monkeypatch.setattr(
+        sys, "argv", ["helioai", "serve", "--port", "9000", "--web", "--host", "0.0.0.0"]
+    )
+    cli.main()
+    assert seen == {"host": "0.0.0.0", "port": 9000}
+
+
+def test_serve_web_without_a_port_value_is_an_argument_error(monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(sys, "argv", ["helioai", "serve", "--web", "--port"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2
+
+
+def test_history_delete_needs_an_id(monkeypatch, capsys):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(sys, "argv", ["helioai", "history", "delete"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2
+    assert "session id" in capsys.readouterr().err
+
+
+def test_index_rebuild_flag(monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    seen = {}
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(cli, "_run_index", lambda rebuild: seen.update(rebuild=rebuild))
+    monkeypatch.setattr(sys, "argv", ["helioai", "index", "--rebuild"])
+    cli.main()
+    assert seen == {"rebuild": True}
+
+
+def test_global_options_may_follow_the_question(monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    seen = {}
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(ws, "cleanup_old_runs", lambda: None)
+    monkeypatch.setattr(cli, "_run_query", lambda q, **kw: seen.setdefault("q", q))
+    monkeypatch.setattr(cli.asyncio, "run", lambda coro: coro)
+    monkeypatch.setattr(sys, "argv", ["helioai", "plot", "IMF", "Bz", "--session", "abc"])
+    cli.main()
+    assert seen["q"] == "plot IMF Bz" and cli._SESSION_ID == "abc"

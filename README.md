@@ -88,6 +88,7 @@ helioai                       # interactive CLI
 helioai "θ_Bn for the 2005-01-16 WIND shock"      # one-shot
 helioai serve --web           # web UI on http://localhost:7890
 helioai mcp-install           # wire it into Claude Code, Claude Desktop or Codex
+helioai doctor                # is the index built, the sandbox real, the key found?
 ```
 
 In Jupyter:

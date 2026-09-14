@@ -76,6 +76,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   `X-Content-Type-Options: nosniff`; the Host-header guard against DNS rebinding is
   built by `harden_for_host`, so the test client exercises what uvicorn serves; the
   browser console no longer receives every artifact's absolute server path.
+- **The CLI parses its arguments with `argparse`.** `helioai --session` (value missing)
+  crashed with an `IndexError`; `serve --web --port` likewise. Both are now argument
+  errors, subcommand flags may come in any order, and `--session`/`--dev`/`--resume` may
+  follow the question. `--help` still prints the module documentation and a quoted
+  question containing the words is still a question.
 - **`serve --web` on a non-loopback address with no users configured now refuses to
   start**, as `helioai-mcp --http` already did without a token: a bare
   `docker run -p 7890:7890` published an unauthenticated `run_python` on every host
@@ -106,6 +111,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   superposed-epoch median, a planar front for two-spacecraft timing. Until now a
   regression in a recipe was invisible before a demo. Marked `recipes`; skip them with
   `-m "not recipes"`.
+- **`helioai doctor`** answers the questions every support request starts with: which
+  `.env` was read, is the provider key there, is the index built and how old is it, is
+  `run_python` really sandboxed or on the fallback path (and why), how big the speasy
+  inventory and the workspaces have grown. Offline by default, `--online` probes the
+  provider once, `--json` for bug reports and CI; exit code 1 when a check fails.
 
 ### Removed
 

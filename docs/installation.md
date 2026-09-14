@@ -42,6 +42,18 @@
     The image ships with `bubblewrap`, so the sandbox is fully isolated. Mount `./data`
     to persist the index and sessions.
 
+### Check the install
+
+```bash
+helioai doctor            # offline: Python, .env found where, provider key, index, sandbox, disk
+helioai doctor --online   # plus one request to the provider's model list
+helioai doctor --json     # the same report for a bug report or a CI smoke test
+```
+
+Every line is a check with a status; `✗` lines block HelioAI and name the fix (`helioai
+index`, `helioai migrate-storage`, the missing key). The exit code is 1 when any check
+fails, so the command doubles as a health probe.
+
 ### Optional extras
 
 | Extra | Brings | For |

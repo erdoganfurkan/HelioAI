@@ -13,6 +13,7 @@ Usage:
     helioai serve --web           # web UI on :7890 (--host, --port)
     helioai serve                 # MCP server on stdio
     helioai migrate-storage       # move legacy data into the per-user layout
+    helioai doctor [--online]     # check this install: index, sandbox, keys, .env (--json)
 
 Options:
     --session <id>                # continue a specific session
@@ -22,6 +23,7 @@ Options:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
 import uuid
@@ -569,10 +571,87 @@ def _run_mcp_install(args: list[str]) -> None:
             print(f"\nwritten to {path}")
 
 
+_COMMANDS = (
+    "history",
+    "index",
+    "profile",
+    "export",
+    "migrate-storage",
+    "mcp-install",
+    "serve",
+    "doctor",
+)
+
+
+def _global_options(args: list[str]) -> tuple[argparse.Namespace, list[str]]:
+    """Pull `--session`, `--dev` and `--resume` out of argv, wherever they appear.
+
+    `parse_known_args` so that everything else — a subcommand and its own flags, or the
+    words of a question — comes back untouched for the router. A flag with its value
+    missing is an argparse error (exit 2), not the `IndexError` the hand-rolled
+    `args.index()` parsing raised on `helioai --session`.
+    """
+    p = argparse.ArgumentParser(prog="helioai", add_help=False)
+    p.add_argument("--session")
+    p.add_argument("--dev", action="store_true")
+    p.add_argument("--resume", action="store_true")
+    return p.parse_known_args(args)
+
+
+def _run_command(command: str, argv: list[str]) -> None:
+    p = argparse.ArgumentParser(prog=f"helioai {command}", add_help=False)
+    if command == "history":
+        p.add_argument("action", nargs="?", choices=("delete",))
+        p.add_argument("session_id", nargs="?")
+        ns = p.parse_args(argv)
+        if ns.action == "delete":
+            if not ns.session_id:
+                p.error("history delete needs a session id prefix")
+            _delete_session(ns.session_id)
+        else:
+            _show_history()
+    elif command == "index":
+        p.add_argument("--rebuild", action="store_true")
+        _run_index(rebuild=p.parse_args(argv).rebuild)
+    elif command == "profile":
+        p.parse_args(argv)
+        _run_profile()
+    elif command == "export":
+        p.add_argument("session_id", nargs="?")
+        _run_export(p.parse_args(argv).session_id)
+    elif command == "migrate-storage":
+        p.parse_args(argv)
+        _run_migrate_storage()
+    elif command == "mcp-install":
+        _run_mcp_install(argv)
+    elif command == "doctor":
+        from helioai.doctor import run_doctor
+
+        p.add_argument("--online", action="store_true")
+        p.add_argument("--json", action="store_true", dest="as_json")
+        ns = p.parse_args(argv)
+        raise SystemExit(run_doctor(online=ns.online, as_json=ns.as_json))
+    elif command == "serve":
+        if "--web" in argv:
+            p.add_argument("--web", action="store_true")
+            p.add_argument("--host", default="127.0.0.1")
+            p.add_argument("--port", type=int, default=7890)
+            ns = p.parse_args(argv)
+            from helioai.interfaces.web.app import serve_web
+
+            serve_web(host=ns.host, port=ns.port)
+        else:
+            # The MCP server parses its own flags (--http, --host, --port, ...).
+            from helioai.mcp_server import main as mcp_main
+
+            sys.argv = [sys.argv[0]] + argv
+            mcp_main()
+
+
 def main() -> None:
     """Entry point for the `helioai` command.
 
-    Routes subcommands (index, export, history, profile, serve, ...) and
+    Routes subcommands (index, export, history, profile, serve, doctor, ...) and
     otherwise runs either a one-shot query or the interactive prompt.
 
     `--help` is answered before anything else runs. The default branch of this
@@ -580,7 +659,8 @@ def main() -> None:
     handled, `helioai --help` created a workspace and billed an LLM call to ask
     the model what `--help` meant — the first thing anyone types after
     `pip install`. Printing `__doc__` keeps the help and the module's own
-    documentation as one string.
+    documentation as one string. Only a standalone `--help` token counts: a quoted
+    question that happens to contain the words is still a question.
     """
     global _SESSION_ID
 
@@ -589,85 +669,40 @@ def main() -> None:
         print(__doc__)
         return
 
+    options, rest = _global_options(args)
+
+    if rest and rest[0] in _COMMANDS and rest[0] != "doctor":
+        # Storage commands need the user bound; doctor must not touch the workspace.
+        from helioai.workspace import set_user
+
+        set_user(_USER_ID)
+        _run_command(rest[0], rest[1:])
+        return
+    if rest and rest[0] == "doctor":
+        _run_command("doctor", rest[1:])
+        return
+
     from helioai.config import dev_unlock, settings
     from helioai.workspace import cleanup_old_runs, set_user
 
     set_user(_USER_ID)
     cleanup_old_runs()
+    restricted = not dev_unlock(settings.dev.token if options.dev else None)
+    if options.session:
+        _SESSION_ID = options.session
 
-    # --dev: supply the configured dev token to bypass the scope guardrail
-    dev_flag = "--dev" in args
-    if dev_flag:
-        args = [a for a in args if a != "--dev"]
-    restricted = not dev_unlock(settings.dev.token if dev_flag else None)
-
-    if "--session" in args:
-        idx = args.index("--session")
-        if idx + 1 < len(args):
-            _SESSION_ID = args[idx + 1]
-            args = [a for i, a in enumerate(args) if i not in (idx, idx + 1)]
-
-    if not args:
-        _interactive(restricted=restricted)
-        return
-
-    if args[0] == "history":
-        if len(args) >= 3 and args[1] == "delete":
-            _delete_session(args[2])
-        else:
-            _show_history()
-        return
-
-    if args[0] == "index":
-        _run_index(rebuild="--rebuild" in args)
-        return
-
-    if args[0] == "profile":
-        _run_profile()
-        return
-
-    if args[0] == "export":
-        _run_export(args[1] if len(args) > 1 else None)
-        return
-
-    if args[0] == "migrate-storage":
-        _run_migrate_storage()
-        return
-
-    if args[0] == "mcp-install":
-        _run_mcp_install(args[1:])
-        return
-
-    if args[0] == "serve":
-        if "--web" in args:
-            serve_args = args[1:]
-            host = "127.0.0.1"
-            port = 7890
-            if "--host" in serve_args:
-                idx = serve_args.index("--host")
-                host = serve_args[idx + 1]
-            if "--port" in serve_args:
-                idx = serve_args.index("--port")
-                port = int(serve_args[idx + 1])
-            from helioai.interfaces.web.app import serve_web
-
-            serve_web(host=host, port=port)
-        else:
-            from helioai.mcp_server import main as mcp_main
-
-            sys.argv = [sys.argv[0]] + args[1:]
-            mcp_main()
-        return
-
-    if "--resume" in args:
+    if options.resume:
         session_id = _pick_session()
         if session_id:
             _SESSION_ID = session_id
         _interactive(restricted=restricted)
         return
 
-    query = " ".join(args)
-    asyncio.run(_run_query(query, restricted=restricted))
+    if not rest:
+        _interactive(restricted=restricted)
+        return
+
+    asyncio.run(_run_query(" ".join(rest), restricted=restricted))
 
 
 if __name__ == "__main__":

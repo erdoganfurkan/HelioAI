@@ -449,3 +449,94 @@ def test_rankine_hugoniot_refuses_to_project_a_scalar_speed():
 
     with pytest.raises(ValueError, match="scalar speed"):
         ns["window_mean"](t, speed, *window, normal=np.array([-0.9, 0.3, 0.1]))
+
+
+# ── theta_bn — the recipe of the demo scenario (E9-D1) ────────────────────────
+
+
+def _theta_bn_function():
+    """The recipe's function, exec'd without its trailing run block.
+
+    The run block assigns placeholder vectors and calls `export`; the tests here are
+    about the function, and exec'ing the whole file would also need an `export` stub.
+    """
+    import numpy as np
+
+    code = _real_recipe("theta_bn.py").read_text(encoding="utf-8").split("# ── Run")[0]
+    ns: dict = {"np": np}
+    exec(code, ns)
+    return ns["theta_bn"]
+
+
+def test_theta_bn_on_a_planar_shock_returns_the_analytic_angle():
+    """Fixed before looking at any run, independent of the code: a shock whose normal
+    is x̂ conserves B_x and compresses the tangential B_z. With |B_up| = 10 nT at 60°
+    from x̂, coplanarity must give back exactly that normal and that angle.
+    """
+    import numpy as np
+
+    theta_bn = _theta_bn_function()
+    bx, bz = 10 * np.cos(np.radians(60)), 10 * np.sin(np.radians(60))
+    res = theta_bn(np.array([bx, 0.0, bz]), np.array([bx, 0.0, 2.5 * bz]))
+
+    assert res["theta_bn_deg"] == pytest.approx(60.0, abs=0.01)
+    assert res["geometry"] == "quasi-perpendicular"
+    assert np.abs(res["shock_normal"]) == pytest.approx([1.0, 0.0, 0.0], abs=1e-9)
+
+
+def test_theta_bn_on_the_wind_2015_03_17_means_lands_in_the_published_band():
+    """Regression against the two databases the notebook cites, not against the agent.
+
+    Mean Wind/MFI 3 s GSM vectors over the notebook's windows (03:48–03:56 and
+    04:04–04:12 UT, measured in the live runs of 00_quickstart). Harvard-CfA gives
+    58.8 ± 2.7° by the same magnetic-coplanarity method, IPShocks 63.1 ± 16.8°; the
+    notebook fixes the expected band at 55–66°. The angle must land in it and the
+    quoted value — 62.68° in every live run — must not drift.
+    """
+    theta_bn = _theta_bn_function()
+    res = theta_bn([-2.329, -0.113, 9.617], [0.818, 2.529, 24.718])
+
+    assert 55.0 <= res["theta_bn_deg"] <= 66.0
+    assert res["theta_bn_deg"] == pytest.approx(62.68, abs=0.05)
+
+
+def test_theta_bn_does_not_classify_an_invalid_input():
+    """Audit reproduction: a NaN anywhere in the input flowed through the cross
+    products to `theta_bn_deg: nan` — and `nan < 45` being False, the reply carried
+    `geometry: "quasi-perpendicular"`. A physical classification of an angle that
+    does not exist. An invalid input is reported as such, and nothing else.
+    """
+    import numpy as np
+
+    theta_bn = _theta_bn_function()
+    good = np.array([0.818, 2.529, 24.718])
+
+    for bad in (
+        np.array([np.nan, -0.113, 9.617]),
+        np.full((5, 3), np.nan),
+        np.zeros(3),
+    ):
+        res = theta_bn(bad, good)
+        assert "error" in res, res
+        assert "geometry" not in res
+        assert "theta_bn_deg" not in res
+
+
+def test_theta_bn_averages_over_the_finite_rows_of_a_gapped_interval():
+    """Wind/MFI has 2.5 % fill in the demo interval, already NaN by the time the
+    analyst sees it. The recipe documents an (N, 3) input, and `mean(axis=0)` over
+    such an array is NaN: the documented input on the demo's own data gave the
+    invalid result above. Rows with a gap are left out of the mean; enough remain.
+    """
+    import numpy as np
+
+    theta_bn = _theta_bn_function()
+    bx, bz = 10 * np.cos(np.radians(60)), 10 * np.sin(np.radians(60))
+    up = np.tile([bx, 0.0, bz], (8, 1))
+    up[3] = np.nan
+    dn = np.tile([bx, 0.0, 2.5 * bz], (8, 1))
+    dn[0, 2] = np.nan
+
+    res = theta_bn(up, dn)
+    assert res["theta_bn_deg"] == pytest.approx(60.0, abs=0.01)
+    assert res["B_up_mean_nT"] == pytest.approx([bx, 0.0, bz], abs=1e-9)

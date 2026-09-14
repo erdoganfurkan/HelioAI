@@ -569,15 +569,31 @@ def _resolve_dataset_name(name, datasets):
 
     The manifest keys a dataset by the slug of its product id's last component, but
     every tool result and prompt in front of the model says the full id, so
-    load_data("cda/WI_H0_MFI/BGSM") is the natural thing to write. Mirrors
-    datastore._slug, including its _data suffix for names the preamble already binds.
+    load_data("cda/WI_H0_MFI/BGSM") is the natural thing to write.
+
+    Resolution goes through the recorded param_id, never through the slug alone: two
+    missions both ending in /BGSM slug to the same name, and matching on the suffix
+    handed the model MISSION_A's field when it asked for MISSION_B's — plausible
+    numbers, right units, wrong spacecraft. An id saved over several windows is
+    refused with the candidates listed rather than silently taking the first.
     \"\"\"
     if name in datasets:
         return name
-    _slug = _re.sub(r"[^a-z0-9]+", "_", name.rstrip("/").split("/")[-1].lower()).strip("_")
-    for _cand in (_slug, _slug + "_data"):
-        if _cand in datasets:
-            return _cand
+    _norm = lambda s: _re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+    if "/" in name:
+        _matches = [k for k, e in datasets.items() if e.get("param_id") == name]
+    else:
+        _matches = [
+            k for k, e in datasets.items()
+            if _norm(str(e.get("param_id", "")).rstrip("/").split("/")[-1]) == _norm(name)
+        ]
+    if len(_matches) == 1:
+        return _matches[0]
+    if _matches:
+        _windows = ", ".join(
+            f"{k} ({datasets[k].get('start')} -> {datasets[k].get('stop')})" for k in sorted(_matches)
+        )
+        raise KeyError(f"ambiguous dataset {name!r}: {_windows} -- load one of these names explicitly")
     return name
 
 

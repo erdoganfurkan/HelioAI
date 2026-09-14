@@ -151,3 +151,40 @@ def test_unknown_env_level_falls_back_to_the_caller_level(monkeypatch):
     monkeypatch.setenv("HELIOAI_LOG_LEVEL", "LOUD")
     setup_logging("WARNING")
     assert logging.getLogger().level == logging.WARNING
+
+
+# ── third-party noise ───────────────────────────────────────────────────────────
+
+
+def test_a_disabled_speasy_provider_is_one_line_not_a_traceback(monkeypatch, capsys):
+    """Every live run of 00_quickstart: speasy 1.7.1 fails to build the inventory of its
+    `generic_archive` provider (`KeyError: 'master_cdf'`), disables it — correctly —
+    and logs that as *two* warnings, the second being a 20-line traceback that Jupyter
+    paints red across the notebook. The provider is not one HelioAI uses. The fact
+    stays visible in one line; the traceback does not, except at DEBUG.
+    """
+    monkeypatch.setenv("HELIOAI_LOG_FORMAT", "json")
+    setup_logging("WARNING")
+    speasy_log = logging.getLogger("speasy.core.requests_scheduling.request_dispatch")
+
+    speasy_log.warning(
+        "Provider ['archive', 'generic_archive'] initialization failed, disabling provider"
+    )
+    speasy_log.warning(
+        "Exception: Traceback (most recent call last):\n  File ...\nKeyError: 'master_cdf'"
+    )
+
+    lines = [json.loads(line) for line in capsys.readouterr().err.strip().splitlines()]
+    assert len(lines) == 1, lines
+    assert "disabling provider" in lines[0]["event"]
+    assert "Traceback" not in lines[0]["event"]
+
+
+def test_speasy_traceback_is_still_visible_at_debug(monkeypatch, capsys):
+    monkeypatch.setenv("HELIOAI_LOG_FORMAT", "json")
+    setup_logging("DEBUG")
+    speasy_log = logging.getLogger("speasy.core.requests_scheduling.request_dispatch")
+
+    speasy_log.warning("Exception: Traceback (most recent call last):\nKeyError: 'master_cdf'")
+
+    assert "Traceback" in capsys.readouterr().err

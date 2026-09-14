@@ -891,3 +891,55 @@ def test_build_sandbox_cmd_warns_when_no_net_and_no_bwrap(monkeypatch):
         and log.get("log_level") == "warning"
         for log in cap_logs
     )
+
+
+@pytest.mark.asyncio
+async def test_theta_bn_recipe_end_to_end_on_a_gapped_timeseries(tmp_path) -> None:
+    """The recipe as the analyst uses it: `load_data`, window means, then the recipe
+    source pasted whole. Its run block used to assign two placeholder vectors
+    unconditionally, so pasting the file computed the placeholder angle over the data
+    that had just been averaged; every live run avoided that by copying the function
+    alone. The block now honours vectors already defined, like the other recipes do.
+
+    The series has a NaN row in each window, as Wind/MFI does in the demo interval.
+    """
+    import numpy as np
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    bx, bz = 10 * np.cos(np.radians(60)), 10 * np.sin(np.radians(60))
+    n = 40
+    t = np.datetime64("2015-03-17T03:50:00", "s") + np.arange(n) * np.timedelta64(30, "s")
+    values = np.tile([bx, 0.0, bz], (n, 1))
+    values[n // 2 :, 2] *= 2.5
+    values[5] = np.nan
+    values[n // 2 + 5] = np.nan
+    np.savez_compressed(data_dir / "b.npz", time=t, values=values)
+    manifest = {
+        "datasets": {
+            "b": {
+                "kind": "timeseries",
+                "file": "b.npz",
+                "param_id": "cda/WI_H0_MFI/B3GSM",
+                "units": "nT",
+                "columns": ["Bx", "By", "Bz"],
+                "source": "test",
+                "created": "0",
+            }
+        }
+    }
+    (data_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    from helioai.config import _PKG_RECIPES
+
+    recipe_src = (_PKG_RECIPES / "theta_bn.py").read_text(encoding="utf-8")
+    setup = (
+        "import numpy as np\n"
+        "var = load_data('b')\n"
+        f"B_up = var.values[: {n // 2}]\n"
+        f"B_dn = var.values[{n // 2} :]\n"
+    )
+    result = await run_python(setup + recipe_src, _plot_dir=str(tmp_path))
+
+    assert result.get("error") is None, result.get("stderr", "")
+    assert result["exports"]["theta_bn"]["mean"] == pytest.approx(60.0, abs=0.01)

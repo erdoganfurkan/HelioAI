@@ -499,3 +499,157 @@ def test_the_name_nearest_the_number_is_the_one_accused():
 
     assert _named_entry(claim.context, claim.units, entries, claim.pos)["name"] == "upstream_flow"
     assert _named_entry(claim.context, claim.units, entries)["name"] == "shock_speed_km_s"
+
+
+# ── E7: a number is only sourced by the quantity it claims to be ───────────────
+
+
+def test_a_matching_number_of_another_quantity_does_not_source_a_claim():
+    """Audit probe: ledger held B_downstream = 10 nT and density = 25 cm-3; the reply said
+    "B downstream = 25 nT" and came back matched=1, contradicted=0. The bare numeric
+    coincidence with the density disculpated a wrong field value — the mechanism this
+    module exists to expose, defeated by its own lookup order.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [
+            {"name": "B_downstream", "units": "nT", "mean": 10.0, "shape": [], "sample": [10.0]},
+            {"name": "density", "units": "cm-3", "mean": 25.0, "shape": [], "sample": [25.0]},
+        ]
+    }
+    report = verify(extract_claims("B downstream = 25 nT"), ledger)
+
+    assert report.matched == 0
+    assert report.contradicted == 1
+    assert report.details[0]["name"] == "B_downstream"
+
+
+def test_a_unitless_export_still_sources_a_claim_written_with_its_unit():
+    """Most exports carry no unit — the model writes it into the name. Requiring unit
+    agreement would have turned every one of those into `unsourced` and made the check
+    blind again; only a *conflicting* unit disqualifies.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [{"name": "B_up_nT", "units": "", "mean": 9.79, "shape": [], "sample": [9.79]}]
+    }
+    report = verify(extract_claims("upstream field 9.79 nT"), ledger)
+    assert report.matched == 1
+
+
+def test_the_named_scalar_wins_over_a_coincidental_unitless_hit():
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [
+            {"name": "B_downstream", "units": "nT", "mean": 10.0, "shape": [], "sample": [10.0]},
+            {"name": "ratio", "units": "", "mean": 25.0, "shape": [], "sample": [25.0]},
+        ]
+    }
+    report = verify(extract_claims("B downstream = 25 nT"), ledger)
+    assert report.contradicted == 1
+    assert report.matched == 0
+
+
+def test_a_negative_claim_is_not_sourced_by_a_positive_record():
+    """Magnitudes are compared on purpose — "a 464.5 s lag" quotes a recorded -464.5 — but
+    the other way round is not a magnitude: a reply stating Bz = -10 nT for a recorded
+    +10 has the sign wrong, and sign is the physics of Bz.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [{"name": "Bz_min", "units": "nT", "mean": 10.0, "shape": [], "sample": [10.0]}]
+    }
+    report = verify(extract_claims("Bz min reached -10 nT"), ledger)
+    assert report.matched == 0
+    assert report.contradicted == 1
+
+    lag = {
+        "values": [{"name": "lag_s", "units": "s", "mean": -464.5, "shape": [], "sample": [-464.5]}]
+    }
+    assert verify(extract_claims("a lag of 464.5 s"), lag).matched == 1
+
+
+def test_a_three_decimal_comma_in_a_comma_decimal_reply_is_a_decimal():
+    """Audit probe: `Bz = -0,657 nT` was read as -657 nT. Three digits after the comma
+    are a thousands separator in "1,800 points" — and a plain decimal in a French reply.
+    A leading zero settles it on its own; elsewhere the rest of the reply does.
+    """
+    assert (-0.657, "nT") in _claims("Bz = -0,657 nT")
+    assert (657.0, "nT") not in _claims("Bz = -0,657 nT")
+    # the reply already uses a comma as its decimal mark elsewhere → 2,150 is 2.15
+    got = _claims("|B| = 9,79 nT et la vitesse 2,150 km/s")
+    assert (2.15, "km/s") in got
+    assert (2150.0, "km/s") not in got
+    # nothing marks the reply as comma-decimal → English thousands, unchanged behaviour
+    assert (1800.0, "") in _claims("downloaded 1,800 points over the interval")
+
+
+def test_scientific_notation_keeps_its_exponent_and_unit():
+    assert (1.2e-3, "Hz") in _claims("the spectral peak sits at 1.2e-3 Hz")
+    assert (1.2, "") not in _claims("the spectral peak sits at 1.2e-3 Hz")
+    assert (3.5e5, "K") in _claims("temperature 3.5E+05 K")
+
+
+def test_a_degree_sign_in_the_reply_matches_deg_in_the_ledger():
+    """Live run, 2026-09-11: the recipe exported theta_Bn_deg = 62.68 with units="deg";
+    the reply wrote "62.68 °" and the line under the answer read `unsourced` — for the
+    one number the whole demo is about. `°` and `deg` are the same unit.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [
+            {"name": "theta_Bn_deg", "units": "deg", "mean": 62.68, "shape": [], "sample": [62.68]}
+        ]
+    }
+    report = verify(extract_claims("θ_Bn = 62.68° (quasi-perpendicular)"), ledger)
+    assert report.matched == 1, report.details
+    assert report.unsourced == 0
+
+
+def test_a_quantity_exported_several_times_is_sourced_by_any_of_its_runs():
+    """Live run, 2026-09-11: the analyst exported `compression_ratio` in four runs (3.045,
+    2.467, 3.123, 2.538) while it found and worked around a data gap. The reply quoted the
+    last one and the line under the answer read `contradicted` — the name lookup kept the
+    first of the equally named entries and judged the number against run 2.
+
+    Every export under that name was computed in the session, so each of them sources the
+    number it produced: this module certifies provenance, not which run was right. Only a
+    value none of the runs produced is contradicted, and the accusation points at the most
+    recent run, as `provenance.find_value` does.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    def ratio(run, value):
+        return {
+            "name": "compression_ratio",
+            "units": "",
+            "mean": value,
+            "shape": [],
+            "sample": [value],
+            "code_path": f"/s/code_{run}.py",
+        }
+
+    ledger = {"values": [ratio(2, 3.045), ratio(3, 2.467), ratio(4, 3.123), ratio(7, 2.538)]}
+
+    final = verify(extract_claims("Compression ratio: r_B = 2.538"), ledger)
+    assert final.contradicted == 0, final.details
+    assert final.matched == 1
+
+    (claim,) = extract_claims("Compression ratio: r_B = 2.538")
+    verify([claim], ledger)
+    assert claim.code_path == "/s/code_7.py"
+
+    (stale,) = extract_claims("a preliminary compression ratio of 3.045")
+    verify([stale], ledger)
+    assert stale.status == "matched"
+    assert stale.code_path == "/s/code_2.py"
+
+    invented = verify(extract_claims("Compression ratio: r_B = 2.90"), ledger)
+    assert invented.contradicted == 1
+    assert invented.details[0]["name"] == "compression_ratio"
+    assert invented.details[0]["code_path"] == "/s/code_7.py"

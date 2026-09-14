@@ -84,6 +84,23 @@ def setup_logging(level: str | int = "INFO") -> None:
     _quiet_third_party_advisories()
 
 
+class _SpeasyProviderTraceback(logging.Filter):
+    """Drop the traceback speasy logs after saying it disabled a provider.
+
+    `_safe_init_provider` logs the failure twice at WARNING: the one-line verdict, then
+    `Exception: <full traceback>`. Only the second is dropped — the user still reads
+    that a provider is off. The traceback is not lost, only demoted: DEBUG lets it
+    through, which is where a speasy bug report is written from.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno != logging.WARNING:
+            return True
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            return True
+        return not record.getMessage().startswith("Exception: Traceback")
+
+
 def _quiet_third_party_advisories() -> None:
     """Keep other libraries' non-actionable notices out of the agent transcript.
 
@@ -96,8 +113,16 @@ def _quiet_third_party_advisories() -> None:
     Nothing is wrong when it fires: the model is cached and the request is only a
     freshness check. Real HTTP failures still raise, and the notice is still
     visible at DEBUG.
+
+    speasy 1.7.1 cannot build the inventory of its `generic_archive` provider
+    (`KeyError: 'master_cdf'`) and disables it, which is right, then logs the whole
+    traceback at WARNING — twenty red lines in a notebook, on a provider HelioAI does
+    not use. The verdict line stays; the traceback goes.
     """
     logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
+    speasy_dispatch = logging.getLogger("speasy.core.requests_scheduling.request_dispatch")
+    if not any(isinstance(f, _SpeasyProviderTraceback) for f in speasy_dispatch.filters):
+        speasy_dispatch.addFilter(_SpeasyProviderTraceback())
 
 
 def get_logger(name: str | None = None) -> Any:

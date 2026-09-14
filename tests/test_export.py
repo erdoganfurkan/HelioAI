@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import sys
+
 import nbformat
 import pytest
 
@@ -165,7 +168,7 @@ def test_rewrite_timeseries_load_data_to_get_data() -> None:
     }
     code = 'd = load_data("imf_gsm")\nplt.plot(d.time, d.values)'
     out = _rewrite_load_data_calls(code, manifest)
-    assert 'spz.get_data("amda/imf_gsm", "2005-01-17", "2005-01-18")' in out
+    assert 'fetch_series("amda/imf_gsm", "2005-01-17", "2005-01-18")' in out
     assert "load_data(" not in out
 
 
@@ -174,8 +177,8 @@ def test_rewrite_unknown_dataset_left_intact() -> None:
 
     code = 'd = load_data("mystery")'
     out = _rewrite_load_data_calls(code, {"datasets": {}})
-    assert 'load_data("mystery")' in out  # never emit a wrong spz.get_data call
-    assert "spz.get_data" not in out
+    assert 'load_data("mystery")' in out  # never emit a wrong fetch call
+    assert "fetch_series" not in out
 
 
 def test_rewrite_event_collection_reconstructed() -> None:
@@ -212,7 +215,7 @@ def test_rewrite_event_collection_reconstructed() -> None:
     code = 'evs = load_data("shocks_events")'
     out = _rewrite_load_data_calls(code, manifest)
     assert "load_data(" not in out
-    assert 'spz.get_data("amda/imf_gsm"' in out
+    assert 'fetch_events("amda/imf_gsm"' in out
     assert "2005-01-17T01:00" in out and "2005-03-10T05:00" in out
     assert "2005-02-01T00:00" not in out  # no_data event excluded
 
@@ -342,3 +345,242 @@ def test_transform_helper_reemitted_with_geopack_note():
     assert "pip install geopack" in out
     assert "def _epoch_seconds" in out
     assert "def transform_coords" in out
+
+
+# ── E6: the exported code must compute what the sandbox computed ─────────────
+
+
+def _fake_speasy(values, fillval, *, columns=("Bx",), unit="nT"):
+    """A stand-in `spz` whose get_data returns raw archive values with a declared FILLVAL."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    def get_data(param_id, start, stop=None):
+        def _var(n):
+            return SimpleNamespace(
+                time=np.arange(n).astype("datetime64[s]"),
+                values=np.array(values, dtype=float),
+                meta={"FILLVAL": fillval},
+                columns=list(columns),
+                unit=unit,
+            )
+
+        if isinstance(start, list):
+            return [_var(len(values)) for _ in start]
+        return _var(len(values))
+
+    return SimpleNamespace(get_data=get_data)
+
+
+def test_exported_timeseries_blanks_declared_fill_like_the_sandbox_did(monkeypatch) -> None:
+    """Audit probe: the same code gave mean 5.0 in the sandbox and 50002.45 once exported.
+
+    get_timeseries blanks the declared FILLVAL before persisting, so the sandbox never
+    sees 99999.9. A rewrite to a bare spz.get_data() hands the raw sentinel back to the
+    very same arithmetic. Same source, different data, different number — silently.
+    """
+    import numpy as np
+
+    from helioai.export import to_standalone
+
+    manifest = {
+        "datasets": {
+            "density": {
+                "kind": "timeseries",
+                "param_id": "cda/EXAMPLE/Np",
+                "start": "2005-01-17",
+                "stop": "2005-01-18",
+            }
+        }
+    }
+    code = 'd = load_data("density")\nresult = float(np.nanmean(d.values))\n'
+    out = to_standalone(code, manifest)
+    monkeypatch.setitem(
+        sys.modules, "speasy", _fake_speasy([5.0, 99999.8984375], [99999.8984375], unit="cm-3")
+    )
+    ns: dict = {}
+    exec(out, ns)  # noqa: S102
+
+    assert ns["result"] == pytest.approx(5.0)
+    assert ns["d"].units == "cm-3", "load_data exposed .units; the standalone must too"
+    assert ns["d"].param_id == "cda/EXAMPLE/Np"
+    assert np.isnan(ns["d"].values[1])
+
+
+def test_exported_event_collection_blanks_declared_fill(monkeypatch) -> None:
+    from helioai.export import to_standalone
+
+    manifest = {
+        "datasets": {
+            "b_events": {
+                "kind": "event_collection",
+                "param_id": "amda/imf_gsm",
+                "events": [
+                    {
+                        "idx": 0,
+                        "start": "2005-01-17T01:00",
+                        "stop": "2005-01-17T02:00",
+                        "status": "ok",
+                    },
+                    {
+                        "idx": 1,
+                        "start": "2005-03-10T05:00",
+                        "stop": "2005-03-10T06:00",
+                        "status": "ok",
+                    },
+                ],
+            }
+        }
+    }
+    code = 'evs = load_data("b_events")\nmeans = [float(np.nanmean(e.values)) for e in evs]\n'
+    out = to_standalone(code, manifest)
+    monkeypatch.setitem(sys.modules, "speasy", _fake_speasy([2.0, -1e31, 4.0], -1e31))
+    ns: dict = {}
+    exec(out, ns)  # noqa: S102
+
+    assert ns["means"] == [pytest.approx(3.0), pytest.approx(3.0)]
+    assert ns["evs"][0].start == "2005-01-17T01:00"
+    assert ns["evs"][1].units == "nT"
+
+
+def test_exported_helpers_accept_what_the_sandbox_helpers_accept() -> None:
+    """Audit probe: export(units=), export(dict), magnitude() and interp_to() all ran in
+    the sandbox and all failed once exported — TypeError, TypeError, NameError, NameError.
+    """
+    import numpy as np
+
+    from helioai.export import to_standalone
+
+    code = (
+        "b = np.array([[3., 4., 0.], [np.nan, np.nan, np.nan]])\n"
+        "mag = magnitude(b)\n"
+        "t1 = np.array(['2015-03-17T00:00:00', '2015-03-17T00:02:00'], dtype='datetime64[s]')\n"
+        "t2 = np.array(['2015-03-17T00:01:00'], dtype='datetime64[s]')\n"
+        "mid = interp_to(t2, t1, np.array([10., 30.]))\n"
+        'export("field", [5.0], units="nT")\n'
+        'export("summary", {"ratio": 2.5, "note": "text"})\n'
+    )
+    out = to_standalone(code, {"datasets": {}})
+    ns: dict = {}
+    exec(out, ns)  # noqa: S102
+
+    assert ns["mag"][0] == pytest.approx(5.0)
+    assert np.isnan(ns["mag"][1]), "a three-component gap stays a gap, never 0 nT"
+    assert ns["mid"][0] == pytest.approx(20.0)
+
+
+def test_strip_known_imports_keeps_names_the_header_does_not_provide() -> None:
+    """Audit probe: `from numpy import mean` was stripped because its root is numpy,
+    but the header only binds `np` — the cell then died on NameError.
+    """
+    from helioai.export import to_standalone
+
+    code = "from numpy import mean\nimport numpy\nresult = mean([1., 3.]) + numpy.float64(0)\n"
+    out = to_standalone(code, {"datasets": {}})
+    ns: dict = {}
+    exec(out, ns)  # noqa: S102
+    assert ns["result"] == pytest.approx(2.0)
+
+    redundant = "import numpy as np\nfrom scipy import signal\nx = np.arange(2); signal.welch\n"
+    out = to_standalone(redundant, {"datasets": {}})
+    assert out.count("import numpy as np") == 1
+    assert out.count("from scipy import signal") == 1
+
+
+def test_failed_attempts_are_not_executable_cells(monkeypatch, tmp_path) -> None:
+    """Audit probe: code_N.py is written before it runs, so a failed attempt followed by
+    its fix exported as two executable cells — and "Run All" stopped on the first.
+    """
+    from helioai.export import build_notebook
+
+    store = SessionStore(tmp_path / "sessions.db")
+    workspace = tmp_path / "users" / _USER / "workspace" / _LABEL
+    workspace.mkdir(parents=True)
+    (workspace / "code_0.py").write_text('raise ValueError("first attempt")\n', encoding="utf-8")
+    (workspace / "code_1.py").write_text("result = 2 + 2\n", encoding="utf-8")
+
+    history = [
+        Message(role="user", content="compute"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="r0", name="run_python", arguments={"code": "..."})],
+        ),
+        Message(
+            role="tool",
+            tool_call_id="r0",
+            content=json.dumps(
+                {"error": "ValueError: first attempt", "code_path": str(workspace / "code_0.py")}
+            ),
+        ),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="r1", name="run_python", arguments={"code": "..."})],
+        ),
+        Message(
+            role="tool",
+            tool_call_id="r1",
+            content=json.dumps(
+                {"stdout": "", "exports": {}, "code_path": str(workspace / "code_1.py")}
+            ),
+        ),
+        Message(role="assistant", content="4"),
+    ]
+    store.save(_USER, _SESSION, history)
+    store.set_workspace_dir(_USER, _SESSION, _LABEL)
+    monkeypatch.setattr(export_module, "store", store)
+    monkeypatch.setattr(export_module.settings, "data_dir", tmp_path)
+
+    nb = build_notebook(_USER, _SESSION)
+    code_cells = [c.source for c in nb.cells if c.cell_type == "code"]
+    markdown = "\n".join(c.source for c in nb.cells if c.cell_type == "markdown")
+
+    assert not any("first attempt" in s for s in code_cells), "a failed run must not block Run All"
+    assert any("result = 2 + 2" in s for s in code_cells)
+    assert "first attempt" in markdown, "the failed attempt stays in the record, as prose"
+    ns: dict = {}
+    for src in code_cells:
+        exec(src, ns)  # noqa: S102
+    assert ns["result"] == 4
+
+
+def test_methods_section_sees_recipes_loaded_by_a_sub_agent(monkeypatch, tmp_path) -> None:
+    """Audit probe: a recipe loaded inside a data_analyst run reaches the lead only as a
+    `recipe_used` artifact in the task result — and the export ignored those.
+    """
+    import json
+
+    from helioai.export import _collect_recipes
+
+    history = [
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(id="task-1", name="task", arguments={"agent_role": "data_analyst"})
+            ],
+        ),
+        Message(
+            role="tool",
+            tool_call_id="task-1",
+            content=json.dumps(
+                {
+                    "summary": "done",
+                    "artifacts": [
+                        {
+                            "tool": "load_recipe",
+                            "kind": "recipe_used",
+                            "name": "theta_bn",
+                            "reference": "Schwartz (1998), ISSI SR-001",
+                            "description": "Shock normal angle by coplanarity.",
+                        }
+                    ],
+                }
+            ),
+        ),
+    ]
+    found = _collect_recipes(history)
+    assert [r["name"] for r in found] == ["theta_bn"]
+    assert found[0]["reference"] == "Schwartz (1998), ISSI SR-001"

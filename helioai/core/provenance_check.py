@@ -30,7 +30,12 @@ _UNITS = (
 # Accepting only "." did not merely miss those — it started a token *after* the comma,
 # so the ledger held 9.79 while the reply seemed to claim 79, and every real measurement
 # came back `unsourced`.
-_TOKEN = re.compile(rf"(?<![\w.,])(-?\d+(?:[.,]\d+)?)(?:\s*({_UNITS})(?![\w/^]))?")
+_TOKEN = re.compile(rf"(?<![\w.,])(-?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?)(?:\s*({_UNITS})(?![\w/^]))?")
+
+# A reply that writes any number as `d,d` or `d,dddd` uses the comma as its decimal mark:
+# from then on `2,150 km/s` is 2.15, not two thousand. Without that evidence, three digits
+# after a comma stay a thousands separator ("1,800 points").
+_COMMA_DECIMAL_HINT = re.compile(r"\d,(?:\d{1,2}|\d{4,})(?!\d)")
 
 # A bare integer under this is almost always "3 panels", "2 spacecraft" or a day of the
 # month; matching them floods the report with noise that hides the one number that matters.
@@ -95,17 +100,22 @@ class Report:
         }
 
 
-def _normalise_decimal(raw: str) -> str:
+def _normalise_decimal(raw: str, comma_is_decimal: bool = False) -> str:
     """Return `raw` with a decimal comma turned into a point.
 
     Exactly three digits after the comma is a thousands separator — "1,800 points" —
-    and reading that as 1.8 would be a worse error than the one being fixed. Anything
-    else is a decimal comma.
+    and reading that as 1.8 would be a worse error than the one being fixed. Two things
+    override that: a leading zero (`0,657` is never six hundred and fifty-seven), and a
+    reply that has already shown it writes decimals with a comma. `-0,657 nT` read as
+    -657 nT was the audit's example; `Bz` never reaches that value, so the check went
+    on believing a fabricated number.
     """
     if "," not in raw:
         return raw
     head, _, tail = raw.rpartition(",")
-    return head + tail if len(tail) == 3 else head + "." + tail
+    if len(tail) == 3 and not comma_is_decimal and head.lstrip("-") != "0":
+        return head + tail
+    return head + "." + tail
 
 
 def extract_claims(text: str) -> list[Claim]:
@@ -126,6 +136,7 @@ def extract_claims(text: str) -> list[Claim]:
     if not text:
         return []
     norm = text.replace("−", "-").replace("≈", "~")
+    comma_is_decimal = bool(_COMMA_DECIMAL_HINT.search(norm))
     claims: list[Claim] = []
     for m in _TOKEN.finditer(norm):
         raw, unit = m.group(1), (m.group(2) or "")
@@ -133,13 +144,13 @@ def extract_claims(text: str) -> list[Claim]:
         after = norm[m.end() : m.end() + 1]
         if before in ("-", ":", "/", ".") or after in (":", "/", "-"):
             continue
-        raw = _normalise_decimal(raw)
+        raw = _normalise_decimal(raw, comma_is_decimal)
         try:
             value = float(raw)
         except ValueError:
             continue
         if not unit:
-            written_as_int = "." not in raw
+            written_as_int = "." not in raw and "e" not in raw.lower()
             if written_as_int and (abs(value) < _MIN_BARE_INT or int(value) in _YEARS):
                 continue
         # Sliced from the original text, not from `norm`: both replacements are
@@ -159,7 +170,31 @@ def extract_claims(text: str) -> list[Claim]:
     return claims
 
 
-_UNIT_ALIASES = {"cm⁻³": "cm-3", "cm^-3": "cm-3", "/cm3": "cm-3", "R_E": "RE", "Re": "RE"}
+_UNIT_ALIASES = {
+    "cm⁻³": "cm-3",
+    "cm^-3": "cm-3",
+    "/cm3": "cm-3",
+    "R_E": "RE",
+    "Re": "RE",
+    # A recipe exports "deg"; a reply writes "62.68°". Same unit — and with unit
+    # agreement now deciding whether a hit counts, missing this alias read the demo's
+    # one number as unsourced.
+    "°": "deg",
+}
+
+
+def _units_conflict(claim_units: str, entry_units: str) -> bool:
+    """Whether a claim and an entry name two different quantities outright.
+
+    Only a stated disagreement counts. Most exports carry no unit at all — the model
+    writes it into the name and leaves the argument empty — and treating those as
+    incompatible with any claim that has one would silence the check on the majority
+    of real sessions. What must never happen is the opposite: a field claimed in nT
+    being vouched for by a density recorded in cm-3 because the two numbers coincide.
+    """
+    if not claim_units or not entry_units:
+        return False
+    return not _same_unit(claim_units, entry_units)
 
 
 def _same_unit(a: str, b: str) -> bool:
@@ -205,12 +240,14 @@ def _named_entry(
     arbitrary about what the sentence is actually saying — and it decides the verdict now
     that only a scalar entry can support a contradiction: whichever of a vector and a
     scalar is picked out of the same window is the difference between an accusation and
-    none. Name length only breaks ties, which is what `pos=None` falls back to.
+    none. Name length only breaks ties, which is what `pos=None` falls back to. Entries
+    that tie on both — the same quantity exported again by a later run — resolve to the
+    most recent one, as `provenance.find_value` does.
     """
     low = context.lower()
     best = None
-    best_key: tuple[int, int] | None = None
-    for entry in entries:
+    best_key: tuple[int, int, int] | None = None
+    for idx, entry in enumerate(entries):
         name = entry.get("name") or ""
         entry_units = entry.get("units") or ""
         if not _same_unit(claim_units, entry_units):
@@ -222,7 +259,7 @@ def _named_entry(
         if not all(starts):
             continue
         distance = 0 if pos is None else min(abs(s - pos) for occ in starts for s in occ)
-        key = (distance, -len(name))
+        key = (distance, -len(name), -idx)
         if best_key is None or key < best_key:
             best, best_key = entry, key
     return best
@@ -279,6 +316,10 @@ def _states(entry: dict, value: float, rtol: float) -> bool:
     """
 
     def close(v: float) -> bool:
+        # A positive claim may quote the magnitude of a negative record; a negative
+        # claim against a positive record is not a magnitude, it is the wrong sign.
+        if value < 0 and v > 0:
+            return False
         return abs(abs(v) - abs(value)) <= rtol * max(abs(value), abs(v), 1e-12)
 
     for key in ("mean", "min", "max", "std"):
@@ -294,12 +335,18 @@ def _states(entry: dict, value: float, rtol: float) -> bool:
 def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
     """Give every claim a provenance status against the ledger.
 
-    - `matched` — a recorded value (mean, min, max or std) equals it within `rtol`.
+    - `matched` — a recorded value (mean, min, max or std) equals it within `rtol`, from
+      an entry whose unit does not contradict the claim's. When the wording names a
+      recorded scalar, only that entry can source the number: a density of 25 cm-3 must
+      not vouch for "B downstream = 25 nT".
     - `contradicted` — the wording names a recorded **scalar** and the number is not it.
       The strongest signal available here: the value was computed, and what got published
       is something else. An entry holding several values cannot support the accusation —
       `B_up = [-2.33, -0.40, 9.38] nT` legitimately states numbers that are neither the
-      mean, the min, the max nor the std of that vector.
+      mean, the min, the max nor the std of that vector. Nor can a quantity the session
+      exported more than once accuse a number one of its runs produced: a preliminary
+      `compression_ratio` of 3.045 and the final 2.538 were both computed, and each run
+      sources the value it gave. What the accusation says is that no run produced it.
     - `derived` — no match, but either a ratio or a percentage, or a number the reply
       spells out the arithmetic for ("U1 = Vs - Vu ~ 176.98 km/s"). Both are computed
       *from* recorded values rather than being one, and a reader can follow them. Counted
@@ -320,8 +367,23 @@ def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
     report = Report()
 
     for claim in claims:
-        hits = [e for e in entries if _states(e, claim.value, rtol)]
         named = _named_entry(claim.context, claim.units, entries, claim.pos)
+        # The quantity the sentence names is judged first: when the wording points at a
+        # recorded scalar, that quantity alone decides, and a coincidence with some other
+        # number in the ledger cannot rescue a value the named quantity does not hold.
+        if named and _is_scalar(named):
+            hits = [
+                e
+                for e in reversed(entries)
+                if e.get("name") == named.get("name") and _states(e, claim.value, rtol)
+            ]
+        else:
+            hits = [
+                e
+                for e in entries
+                if not _units_conflict(claim.units, e.get("units") or "")
+                and _states(e, claim.value, rtol)
+            ]
         if hits:
             claim.status = "matched"
             claim.name = hits[0].get("name")

@@ -61,10 +61,10 @@ def test_summarize_nested_list_compact() -> None:
 
 
 def test_summarize_nested_dict_compact() -> None:
-    payload = json.dumps({"exports": {"a": 1, "b": 2, "c": 3}})
+    payload = json.dumps({"per_provider": {"a": 1, "b": 2, "c": 3}})
     summary = _summarize_tool_result(payload)
     data = json.loads(summary)
-    assert data["exports"] == "{3 keys}"
+    assert data["per_provider"] == "{3 keys}"
 
 
 def test_summarize_scalar_fields_kept() -> None:

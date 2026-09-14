@@ -2,9 +2,13 @@
 
 marked.setOptions({ breaks: false, gfm: true });
 
-let sessionId = crypto.randomUUID();
-let isStreaming = false;
-let abortController = null;
+// One view per session. A reply streams into the view of the session that asked for
+// it, whether or not that view is the one on screen: switching sessions mid-stream used
+// to render A's answer into B, because everything appended to the single chat area.
+// The view is kept when the user navigates away, so coming back shows what arrived.
+const views = new Map();
+let activeView = null;
+let sessionId = null;
 
 const chatArea      = document.getElementById('chat-area');
 const input         = document.getElementById('input');
@@ -37,15 +41,49 @@ function scrollDock() {
 }
 
 function setStreaming(on) {
-  isStreaming = on;
   btnSend.style.display = on ? 'none' : '';
   btnCancel.style.display = on ? '' : 'none';
   input.disabled = on;
 }
 
 function cancelStreaming() {
-  if (abortController) abortController.abort();
+  if (activeView && activeView.abort) activeView.abort.abort();
   setStreaming(false);
+}
+
+// ── Session views ───────────────────────────────────────────────────────────
+
+function createView(sid) {
+  const view = {
+    sid,
+    chat: el('div', 'session-view'),
+    dock: el('div', 'ad-session'),
+    summary: '',
+    dockOpen: false,
+    steps: 0, tools: 0, subagents: 0,
+    streaming: false,
+    abort: null,
+  };
+  views.set(sid, view);
+  return view;
+}
+
+function isActive(view) {
+  return view === activeView;
+}
+
+function mountView(view) {
+  activeView = view;
+  sessionId = view.sid;
+  chatArea.replaceChildren(view.chat);
+  adBody.replaceChildren(view.dock);
+  adSummary.textContent = view.summary;
+  activityDock.classList.toggle('collapsed', !view.dockOpen);
+  setStreaming(view.streaming);
+  document.querySelectorAll('.session-item').forEach(i =>
+    i.classList.toggle('active', i.dataset.sid === view.sid));
+  closeCodePanel();
+  scrollBottom();
 }
 
 function argsStr(args) {
@@ -93,30 +131,36 @@ devTokenInput.addEventListener('input', () => {
 
 // ── Activity dock ────────────────────────────────────────────────────────────
 
-let _dockSteps = 0;
-let _dockTools = 0;
-let _dockSubagents = 0;
-
-function resetDock() {
-  adBody.innerHTML = '';
-  adSummary.textContent = '';
-  _dockSteps = 0;
-  _dockTools = 0;
-  _dockSubagents = 0;
-  activityDock.classList.add('collapsed');
+function resetDock(view) {
+  view.dock.replaceChildren();
+  view.summary = '';
+  view.steps = 0;
+  view.tools = 0;
+  view.subagents = 0;
+  view.dockOpen = false;
+  if (isActive(view)) {
+    adSummary.textContent = '';
+    activityDock.classList.add('collapsed');
+  }
 }
 
-function openDock() {
-  activityDock.classList.remove('collapsed');
+function openDock(view) {
+  view.dockOpen = true;
+  if (isActive(view)) activityDock.classList.remove('collapsed');
 }
 
-function closeDock(summary) {
-  adSummary.textContent = summary || '';
-  activityDock.classList.add('collapsed');
+function closeDock(view, summary) {
+  view.summary = summary || '';
+  view.dockOpen = false;
+  if (isActive(view)) {
+    adSummary.textContent = view.summary;
+    activityDock.classList.add('collapsed');
+  }
 }
 
 document.getElementById('ad-header').addEventListener('click', () => {
-  activityDock.classList.toggle('collapsed');
+  const open = !activityDock.classList.toggle('collapsed');
+  if (activeView) activeView.dockOpen = open;
 });
 
 // ── Welcome screen ──────────────────────────────────────────────────────────
@@ -132,7 +176,7 @@ const SUGGESTED_PROMPTS = [
   'Compute the plasma beta in the magnetosheath: B=20 nT, n=15 cm⁻³, T=200 eV',
 ];
 
-function renderWelcome() {
+function renderWelcome(view) {
   const wrap = el('div', 'welcome');
   const title = el('div', 'welcome-title', 'What do you want to explore?');
   const sub = el('div', 'welcome-sub', '70+ missions · 83k parameters · event catalogs · literature search · sandboxed Python analysis');
@@ -146,65 +190,65 @@ function renderWelcome() {
     grid.append(btn);
   });
   wrap.append(title, sub, grid);
-  chatArea.append(wrap);
+  view.chat.append(wrap);
 }
 
 // ── Event rendering ─────────────────────────────────────────────────────────
 
-function appendTlEvent(iconText, text, extraClass) {
+function appendTlEvent(view, iconText, text, extraClass) {
   const row = el('div', 'tl-event ' + (extraClass || ''));
   const icon = el('span', 'tl-icon', iconText);
   const span = el('span', 'tl-text', text);
   row.append(icon, span);
-  adBody.append(row);
-  scrollDock();
-  _dockSteps++;
+  view.dock.append(row);
+  if (isActive(view)) scrollDock();
+  view.steps++;
   return row;
 }
 
-function renderEvent(ev) {
+function renderEvent(view, ev) {
   const { event, data } = ev;
   const nested = !!data.sub_agent_ctx;
   const nestCls = nested ? ' tl-nested' : '';
 
   if (event === 'tool_call') {
-    _dockTools++;
+    view.tools++;
     // `display` is built server-side by core/event_display.py so this timeline, the CLI
     // and the Jupyter magic word things identically. The argsStr fallback keeps replays
     // of sessions recorded before that field existed readable.
     const detail = data.display !== undefined && data.display !== null
       ? data.display
       : argsStr(data.arguments);
-    appendTlEvent('→', detail ? `${data.name} ${detail}` : data.name, 'tl-tool-call' + nestCls);
+    appendTlEvent(view, '→', detail ? `${data.name} ${detail}` : data.name, 'tl-tool-call' + nestCls);
 
   } else if (event === 'tool_result') {
-    appendTlEvent('←', `${data.name}: ${data.display || data.summary || ''}`,
+    appendTlEvent(view, '←', `${data.name}: ${data.display || data.summary || ''}`,
                   'tl-tool-result' + nestCls);
 
   } else if (event === 'sub_agent_start') {
-    _dockSubagents++;
-    appendTlEvent('⚡', `spawning ${data.role}…`, 'tl-subagent');
+    view.subagents++;
+    appendTlEvent(view, '⚡', `spawning ${data.role}…`, 'tl-subagent');
 
   } else if (event === 'sub_agent_end') {
     const summary = (data.summary || '').slice(0, 100);
     const icon = data.error ? '✗' : '✓';
-    appendTlEvent(icon, `${data.role}: ${data.error || summary}`, 'tl-subagent');
+    appendTlEvent(view, icon, `${data.role}: ${data.error || summary}`, 'tl-subagent');
 
   } else if (event === 'skill_loaded') {
-    appendTlEvent('📖', `skill: ${data.name}`, 'tl-skill' + nestCls);
+    appendTlEvent(view, '📖', `skill: ${data.name}`, 'tl-skill' + nestCls);
 
   } else if (event === 'artifact') {
-    renderArtifact(data);
+    renderArtifact(view, data);
 
   } else if (event === 'plan') {
     // The loop has always emitted this and the SSE has always forwarded it; only the
     // web client dropped it, so a plan showed up in the CLI and the notebook but never
     // in the browser. Rendered in the chat, not the timeline: it is addressed to the
     // reader, not a trace of what the agent did.
-    renderPlan(data);
+    renderPlan(view, data);
 
   } else if (event === 'figure_review') {
-    renderFigureReview(data.text);
+    renderFigureReview(view, data.text);
 
   } else if (event === 'recipe_bypassed') {
     // Advisory, not a banner: exports resemble a computation with a calibrated recipe,
@@ -212,10 +256,10 @@ function renderEvent(ev) {
     const names = (data.recipes || [])
       .map(r => `${r.recipe || r}${r.reason === 'shallow_use' ? ' (outputs missing)' : ''}`)
       .join(', ');
-    appendTlEvent('⚠', `recipe check — ${names}, verify the exported numbers`, 'tl-issue');
+    appendTlEvent(view, '⚠', `recipe check — ${names}, verify the exported numbers`, 'tl-issue');
 
   } else if (event === 'provenance') {
-    renderProvenance(data);
+    renderProvenance(view, data);
 
   } else if (event === 'invalid_ids') {
     // A sub-agent quoting parameter ids that exist in no catalogue is the most
@@ -225,45 +269,43 @@ function renderEvent(ev) {
     const ul = el('ul');
     for (const id of data.ids || []) ul.append(el('li', null, id));
     box.append(ul);
-    chatArea.append(box);
-    scrollBottom();
+    view.chat.append(box);
+    if (isActive(view)) scrollBottom();
 
   } else if (event === 'reply') {
     const bubble = el('div', 'msg-ai');
     bubble.innerHTML = DOMPurify.sanitize(marked.parse(data.text || ''));
-    chatArea.append(bubble);
-    scrollBottom();
+    view.chat.append(bubble);
+    if (isActive(view)) scrollBottom();
 
   } else if (event === 'done') {
     const parts = [`✓ ${data.n_iterations} iter`];
-    if (_dockTools > 0) parts.push(`${_dockTools} tools`);
-    if (_dockSubagents > 0) parts.push(`${_dockSubagents} sub-agents`);
-    closeDock(parts.join(' · '));
+    if (view.tools > 0) parts.push(`${view.tools} tools`);
+    if (view.subagents > 0) parts.push(`${view.subagents} sub-agents`);
+    closeDock(view, parts.join(' · '));
     loadHistory();
 
   } else if (event === 'error') {
     const banner = el('div', 'error-banner', `Error: ${data.message}`);
-    chatArea.append(banner);
-    scrollBottom();
+    view.chat.append(banner);
+    if (isActive(view)) scrollBottom();
   }
 }
 
-function renderFigureReview(text) {
-  // From feat/web-auth, minus its `container` argument: that one exists only for that
-  // branch's history replay, and main's appendTlEvent takes no container.
+function renderFigureReview(view, text) {
   const ok = (text || '').startsWith('OK');
-  const row = appendTlEvent(ok ? '✓' : '⚠', text || '', ok ? 'tl-ok' : 'tl-issue');
+  const row = appendTlEvent(view, ok ? '✓' : '⚠', text || '', ok ? 'tl-ok' : 'tl-issue');
   row.title = text || '';
   return row;
 }
 
-function renderProvenance(data) {
+function renderProvenance(view, data) {
   // A timeline row, not a banner: it annotates the answer, it does not overrule it.
   // Collapsed by default — the counts are the signal, the list is for whoever doubts it.
   const flagged = (data.contradicted || 0) + (data.unsourced || 0);
   const summary = `📐 provenance — ${data.matched || 0} traced, ${data.contradicted || 0} contradicted, ` +
                   `${data.unsourced || 0} unsourced, ${data.derived || 0} derived`;
-  const row = appendTlEvent(flagged ? '⚠' : '✓', summary, flagged ? 'tl-issue' : 'tl-ok');
+  const row = appendTlEvent(view, flagged ? '⚠' : '✓', summary, flagged ? 'tl-issue' : 'tl-ok');
   const details = data.details || [];
   if (!details.length) return row;
 
@@ -281,9 +323,7 @@ function renderProvenance(data) {
   return row;
 }
 
-function renderPlan(data) {
-  // Kept byte-identical to the feat/web-auth implementation: that branch already had
-  // this and main never did, so the two would otherwise collide on merge for no reason.
+function renderPlan(view, data) {
   if (!data || !(data.steps || []).length) return;
   const card = el('div', 'plan-card');
   card.append(el('div', 'plan-title', `🗺 ${data.title || 'Plan'}`));
@@ -301,11 +341,11 @@ function renderPlan(data) {
     ol.append(li);
   });
   card.append(ol);
-  chatArea.append(card);
-  scrollBottom();
+  view.chat.append(card);
+  if (isActive(view)) scrollBottom();
 }
 
-function renderArtifact(data) {
+function renderArtifact(view, data) {
   console.log('[HelioAI] artifact event:', data);
   if (data.kind === 'image' && data.figure_paths && data.figure_paths.length > 0) {
     data.figure_paths.forEach(path => {
@@ -338,9 +378,9 @@ function renderArtifact(data) {
       pdfBtn.textContent = '↓ PDF';
 
       wrap.append(img, dlBtn, pdfBtn);
-      chatArea.append(wrap);
+      view.chat.append(wrap);
     });
-    scrollBottom();
+    if (isActive(view)) scrollBottom();
   } else if (data.kind === 'parameter_card') {
     const card = el('div', 'parameter-card');
 
@@ -389,16 +429,16 @@ function renderArtifact(data) {
       card.append(period);
     }
 
-    chatArea.append(card);
-    scrollBottom();
+    view.chat.append(card);
+    if (isActive(view)) scrollBottom();
   } else if (data.kind === 'code' && data.code_path) {
     const chip = el('div', 'artifact-code');
     const lines = data.n_lines != null ? ` · ${data.n_lines} lines` : '';
     { const ico = document.createElement('span'); ico.className = 'ac-icon'; ico.textContent = '\u{1F4C4}'; chip.append(ico); }
     chip.append(document.createTextNode((data.name || 'code.py') + lines));
     chip.addEventListener('click', () => openCodePanel(data.code_path, data.name));
-    chatArea.append(chip);
-    scrollBottom();
+    view.chat.append(chip);
+    if (isActive(view)) scrollBottom();
 
   } else if (data.kind === 'recipe_used') {
     const chip = el('div', 'artifact-recipe');
@@ -407,8 +447,8 @@ function renderArtifact(data) {
     { const nm = document.createElement('span'); nm.className = 'ar-name'; nm.textContent = data.name || ''; chip.append(nm); }
     chip.append(document.createTextNode(ref));
     if (data.description) chip.title = data.description;
-    chatArea.append(chip);
-    scrollBottom();
+    view.chat.append(chip);
+    if (isActive(view)) scrollBottom();
 
   } else if (data.kind === 'catalog_preview') {
     const card = el('div', 'catalog-card');
@@ -460,14 +500,14 @@ function renderArtifact(data) {
       card.append(table);
     }
 
-    chatArea.append(card);
-    scrollBottom();
+    view.chat.append(card);
+    if (isActive(view)) scrollBottom();
 
   } else if (data.kind === 'data_preview' && data.preview) {
     const pre = el('div', 'artifact-preview',
       `${data.param_id} — ${data.n_points} pts\n${data.preview}`);
-    chatArea.append(pre);
-    scrollBottom();
+    view.chat.append(pre);
+    if (isActive(view)) scrollBottom();
   }
 }
 
@@ -517,30 +557,35 @@ async function openCodePanel(path, name) {
 // ── SSE streaming ───────────────────────────────────────────────────────────
 
 async function sendMessage() {
+  const view = activeView;
   const text = input.value.trim();
-  if (!text || isStreaming) return;
+  if (!text || !view || view.streaming) return;
 
-  document.querySelector('.welcome')?.remove();
-  const userBubble = el('div', 'msg-user', text);
-  chatArea.append(userBubble);
+  view.chat.querySelector('.welcome')?.remove();
+  view.chat.append(el('div', 'msg-user', text));
   input.value = '';
   input.style.height = 'auto';
   scrollBottom();
-  resetDock();
-  openDock();
+  resetDock(view);
+  openDock(view);
+  view.streaming = true;
   setStreaming(true);
 
   const headers = { 'Content-Type': 'application/json' };
   const devToken = getDevToken();
   if (devToken) headers['X-Helio-Dev-Token'] = devToken;
 
+  // Until /api/config has answered, the selector shows the markup's first option, not
+  // the server's setting; sending it would override a provider the user never chose.
+  const provider = (provSel.dataset.synced || provSel.dataset.touched) ? provSel.value : null;
+
   try {
-    abortController = new AbortController();
+    view.abort = new AbortController();
     const resp = await fetch('/chat/stream', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ message: text, session_id: sessionId, provider: provSel.value }),
-      signal: abortController.signal,
+      body: JSON.stringify({ message: text, session_id: view.sid, provider }),
+      signal: view.abort.signal,
     });
 
     if (!resp.ok) {
@@ -559,21 +604,21 @@ async function sendMessage() {
       buf = lines.pop();
       for (const line of lines) {
         if (line.startsWith('data: ')) {
-          try {
-            renderEvent(JSON.parse(line.slice(6)));
-          } catch { /* ignore parse errors */ }
+          let ev = null;
+          try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+          renderEvent(view, ev);
         }
       }
     }
   } catch (err) {
-    if (err.name !== 'AbortError') {
-      const banner = el('div', 'error-banner', `Connection error: ${err.message}`);
-      chatArea.append(banner);
-      scrollBottom();
-    }
+    const banner = el('div', 'error-banner',
+      err.name === 'AbortError' ? 'Cancelled.' : `Connection error: ${err.message}`);
+    view.chat.append(banner);
+    if (isActive(view)) scrollBottom();
   } finally {
-    abortController = null;
-    setStreaming(false);
+    view.abort = null;
+    view.streaming = false;
+    if (isActive(view)) setStreaming(false);
   }
 }
 
@@ -584,12 +629,9 @@ function closeCodePanel() {
 }
 
 function newSession() {
-  sessionId = crypto.randomUUID();
-  chatArea.innerHTML = '';
-  closeCodePanel();
-  resetDock();
-  document.querySelectorAll('.session-item').forEach(i => i.classList.remove('active'));
-  renderWelcome();
+  const view = createView(crypto.randomUUID());
+  renderWelcome(view);
+  mountView(view);
 }
 
 async function loadHistory() {
@@ -603,6 +645,7 @@ async function loadHistory() {
     }
     sessions.forEach(s => {
       const item = el('div', 'session-item');
+      item.dataset.sid = s.session_id;
       if (s.session_id === sessionId) item.classList.add('active');
       const preview = el('div', 's-preview', s.first_message || '(empty)');
       const meta = el('div', 's-meta', `${s.updated_at.slice(0, 16).replace('T', ' ')} · ${s.n_messages} msgs`);
@@ -637,19 +680,26 @@ function exportSession(sid) {
 async function deleteSession(sid) {
   try {
     await fetch(`/api/sessions/${sid}`, { method: 'DELETE' });
+    const view = views.get(sid);
+    if (view && view.abort) view.abort.abort();
+    views.delete(sid);
     if (sid === sessionId) newSession();
     await loadHistory();
   } catch { /* non-critical */ }
 }
 
 async function resumeSession(sid, itemEl) {
-  sessionId = sid;
-  chatArea.innerHTML = '';
-  document.querySelector('.welcome')?.remove();
-  closeCodePanel();
-  resetDock();
-  document.querySelectorAll('.session-item').forEach(i => i.classList.remove('active'));
-  itemEl.classList.add('active');
+  // A session already held in memory — streaming or finished — is shown as it is.
+  // Refetching would wipe a reply that arrived while the user was elsewhere.
+  const held = views.get(sid);
+  if (held) {
+    mountView(held);
+    if (itemEl) itemEl.classList.add('active');
+    return;
+  }
+  const view = createView(sid);
+  mountView(view);
+  if (itemEl) itemEl.classList.add('active');
 
   try {
     const resp = await fetch(`/api/sessions/${sid}/messages`);
@@ -657,21 +707,25 @@ async function resumeSession(sid, itemEl) {
     const messages = data.messages || data;
     messages.forEach(m => {
       if (m.role === 'user') {
-        chatArea.append(el('div', 'msg-user', m.content));
-      } else if (m.role === 'assistant' && m.content) {
-        (m.cards || []).forEach(c => renderArtifact(c));
-        (m.catalogs || []).forEach(c => renderArtifact(c));
-        (m.code || []).forEach(c => renderArtifact(c));
-        (m.recipes || []).forEach(c => renderArtifact(c));
+        view.chat.append(el('div', 'msg-user', m.content));
+      } else if (m.role === 'assistant') {
+        // Artifacts come before the text even when the text is empty: a turn cut short
+        // still produced its figure and its script, and the replay must show them.
+        (m.cards || []).forEach(c => renderArtifact(view, c));
+        (m.catalogs || []).forEach(c => renderArtifact(view, c));
+        (m.code || []).forEach(c => renderArtifact(view, c));
+        (m.recipes || []).forEach(c => renderArtifact(view, c));
         if (m.figures && m.figures.length > 0) {
-          renderArtifact({ kind: 'image', figure_paths: m.figures });
+          renderArtifact(view, { kind: 'image', figure_paths: m.figures });
         }
-        const div = el('div', 'msg-ai');
-        div.innerHTML = DOMPurify.sanitize(marked.parse(m.content));
-        chatArea.append(div);
+        if (m.content) {
+          const div = el('div', 'msg-ai');
+          div.innerHTML = DOMPurify.sanitize(marked.parse(m.content));
+          view.chat.append(div);
+        }
       }
     });
-    scrollBottom();
+    if (isActive(view)) scrollBottom();
   } catch { /* non-critical */ }
 }
 
@@ -709,9 +763,12 @@ async function syncProvider() {
     if (provider && [...provSel.options].some(o => o.value === provider)) {
       provSel.value = provider;
     }
+    provSel.dataset.synced = '1';
   } catch { /* leave the markup default; a failed probe must not block the UI */ }
 }
 
+provSel.addEventListener('change', () => { provSel.dataset.touched = '1'; });
+
 syncProvider();
 loadHistory();
-renderWelcome();
+newSession();

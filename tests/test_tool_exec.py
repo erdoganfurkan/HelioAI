@@ -176,6 +176,34 @@ def test_compact_history_noop_when_few_tools() -> None:
     assert compact_history(history, keep_full=2) is history
 
 
+def test_a_loaded_recipe_survives_compaction():
+    """Live runs 3 and 4 of 00_quickstart, same sequence both times: load_recipe, two
+    run_python calls, load_recipe again. After two more tool results the recipe source
+    had been compacted to its first 117 characters, the analyst no longer had the
+    function, reloaded it — and in run 4 rewrote the formula from memory instead of
+    calling it. A recipe is a few kilobytes and is the one tool result the next
+    `run_python` is written against; it must stay verbatim.
+    """
+    recipe = json.dumps(
+        {
+            "name": "theta_bn",
+            "code": "# name: theta_bn\n# description: Compute the shock normal angle\n"
+            + "def theta_bn(B_up, B_dn):\n    ...\n" * 40,
+            "metadata": {"name": "theta_bn", "description": "Compute the shock normal angle"},
+        }
+    )
+    run = json.dumps({"stdout": "n_points 1200", "figure_paths": [], "exports": {}})
+    history = [
+        Message(role="user", content="compute theta_Bn"),
+        Message(role="tool", tool_call_id="1", content=recipe),
+        Message(role="assistant", content="probing the data first"),
+        Message(role="tool", tool_call_id="2", content=run),
+        Message(role="tool", tool_call_id="3", content=run),
+    ]
+    out = compact_history(history, keep_full=2)
+    assert out[1].content == recipe
+
+
 def test_compaction_keeps_the_traceback_of_a_failed_run():
     """Losing stderr two turns later is why one typo was retried three times."""
     payload = json.dumps(
@@ -257,3 +285,107 @@ def test_redaction_does_not_touch_science_text(monkeypatch, tmp_path):
     out = te._history_tool_result("run_python", result)
     assert "2.59" in out
     assert "47.3" in out
+
+
+# ──────────────────── compaction: what a stale result must still say ────────
+
+
+def _stat(v, units=""):
+    return {
+        "units": units,
+        "shape": [],
+        "dtype": "float64",
+        "min": v,
+        "max": v,
+        "mean": v,
+        "std": 0.0,
+        "n_finite": 1,
+        "n_nan": 0,
+        "sample": [v],
+    }
+
+
+def test_a_stale_run_python_still_holds_every_exported_number():
+    """Run 4 of 00_quickstart: the analyst exported eleven values, probed the data twice
+    more, and by then its own result read `"exports": "{11 keys}"`. Two turns later it
+    was writing the answer from the two probes alone. The exports are the numbers the
+    run exists to produce; they are kept as `name: value units`, like findings are.
+    """
+    payload = json.dumps(
+        {
+            "stdout": "theta_bn: 54.85 deg\n" + "diagnostic line\n" * 40,
+            "figure_paths": ["/w/fig_3_0.png"],
+            "exports": {
+                "theta_bn_deg": _stat(54.85, "deg"),
+                "Bmag_up_nT": _stat(9.79, "nT"),
+                "Bmag_dn_nT": _stat(25.17, "nT"),
+                "compression_ratio": _stat(2.57),
+                "normal_Bx_GSM": _stat(-0.509),
+                "normal_By_GSM": _stat(-0.753),
+                "normal_Bz_GSM": _stat(0.417),
+                "shock_time_ut": {"error": "could not convert string to float", "repr": "'04:00'"},
+            },
+            "cards": [],
+            "code_path": "/w/code_3.py",
+            "n_lines": 86,
+        }
+    )
+    summary = _summarize_tool_result(payload, max_chars=1500)
+    data = json.loads(summary)
+    assert data["exports"]["theta_bn_deg"] == "54.85 deg"
+    assert data["exports"]["compression_ratio"] == "2.57"
+    assert data["exports"]["normal_Bz_GSM"] == "0.417"
+    assert "shock_time_ut" not in data["exports"]
+    assert data["stdout"].startswith("theta_bn: 54.85 deg")
+
+
+def test_findings_are_never_cut_by_the_cap():
+    """Run 4, one-shot: the analyst's report was 9 485 characters and the 300-character
+    cap fell in the middle of the findings dict — the JSON was truncated after
+    `"Bmag_up_nT": "9.79090`, and the compression ratio was gone. The code said the
+    findings table must not degrade; the final slice degraded it anyway.
+    """
+    findings = {f"quantity_{i:02d}": {"value": float(i), "units": "nT"} for i in range(40)}
+    payload = json.dumps(
+        {
+            "findings": findings,
+            "summary": "x" * 5000,
+            "n_iterations": 7,
+            "artifacts": [],
+            "error": None,
+        }
+    )
+    summary = _summarize_tool_result(payload, max_chars=300)
+    data = json.loads(summary)
+    assert len(data["findings"]) == 40
+    assert data["findings"]["quantity_39"] == "39.0 nT"
+
+
+def test_a_sub_agent_report_keeps_enough_of_its_summary_to_be_a_memory():
+    """The lead's only account of what a sub-agent did is its summary. At 117
+    characters — "Done. **Dataset key:** `b3gsm` (parameter `cda/WI_H0_MFI/B3GSM`, Wind
+    MFI 3-second GSM magnetic field vector, 2015-..." — the method, the windows and the
+    caveats were all gone by the next cell of the notebook.
+    """
+    report = "Used windows 03:48–03:56 and 04:04–04:12; theta_bn() from the recipe. " * 30
+    payload = json.dumps(
+        {"findings": {}, "summary": report, "n_iterations": 5, "artifacts": [], "error": None}
+    )
+    summary = _summarize_tool_result(payload, max_chars=1500)
+    data = json.loads(summary)
+    assert len(data["summary"]) >= 900
+    assert len(summary) <= 1500
+
+
+def test_compaction_shrinks_text_to_fit_rather_than_cutting_the_json():
+    payload = json.dumps(
+        {
+            "findings": {"Bd": {"value": 14.5, "units": "nT"}},
+            "summary": "word " * 400,
+            "error": None,
+        }
+    )
+    summary = _summarize_tool_result(payload, max_chars=300)
+    data = json.loads(summary)
+    assert data["findings"]["Bd"] == "14.5 nT"
+    assert len(summary) <= 300

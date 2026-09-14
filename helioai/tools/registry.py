@@ -96,7 +96,9 @@ class ToolRegistry:
                 return result
             return json.dumps(result, ensure_ascii=False, default=str)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            # `str(TimeoutError())` is "", and every reader downstream tests the error
+            # field for truth — a tool that never ran was displayed as "ok".
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def is_read_only(self, name: str) -> bool:
         """Whether the tool leaves the user's world unchanged. Unknown names count as not."""

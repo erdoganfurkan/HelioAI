@@ -182,6 +182,13 @@ async def list_sessions(user_id: str = Depends(require_user)) -> list:
 async def get_session_messages(session_id: str, user_id: str = Depends(require_user)) -> dict:
     """Replay a session: its messages plus any figures and figure reviews.
 
+    Artifacts accumulate from tool results and are attached to the assistant message
+    that closes the turn. A turn cut short — browser closed mid-stream, iteration cap —
+    has no such message, so its figures and scripts are flushed as an empty assistant
+    entry instead: once at the next user message, so they cannot be pinned onto an
+    unrelated later answer, and once at the end of the history, so they are not
+    dropped altogether. Both happened in the audit replay.
+
     Args:
         session_id: Session to replay.
         user_id: Resolved by `require_user`; a session belonging to anyone else
@@ -200,27 +207,34 @@ async def get_session_messages(session_id: str, user_id: str = Depends(require_u
     pending_catalogs: list[dict] = []
     pending_code: list[dict] = []
     pending_recipes: list[dict] = []
+
+    def _flush(content: str) -> None:
+        nonlocal pending_figures, pending_cards, pending_catalogs, pending_code, pending_recipes
+        entry: dict = {"role": "assistant", "content": content}
+        if pending_figures:
+            entry["figures"] = pending_figures[:]
+            pending_figures = []
+        if pending_cards:
+            entry["cards"] = pending_cards[:]
+            pending_cards = []
+        if pending_catalogs:
+            entry["catalogs"] = pending_catalogs[:]
+            pending_catalogs = []
+        if pending_code:
+            entry["code"] = pending_code[:]
+            pending_code = []
+        if pending_recipes:
+            entry["recipes"] = pending_recipes[:]
+            pending_recipes = []
+        if content or len(entry) > 2:
+            out.append(entry)
+
     for m in history:
         if m.role == "user":
+            _flush("")
             out.append({"role": "user", "content": m.content})
         elif m.role == "assistant" and m.content:
-            entry: dict = {"role": "assistant", "content": m.content}
-            if pending_figures:
-                entry["figures"] = pending_figures[:]
-                pending_figures = []
-            if pending_cards:
-                entry["cards"] = pending_cards[:]
-                pending_cards = []
-            if pending_catalogs:
-                entry["catalogs"] = pending_catalogs[:]
-                pending_catalogs = []
-            if pending_code:
-                entry["code"] = pending_code[:]
-                pending_code = []
-            if pending_recipes:
-                entry["recipes"] = pending_recipes[:]
-                pending_recipes = []
-            out.append(entry)
+            _flush(m.content)
         elif m.role == "tool" and m.content:
             try:
                 data = json.loads(m.content)
@@ -307,6 +321,7 @@ async def get_session_messages(session_id: str, user_id: str = Depends(require_u
                             pending_recipes.append(art)
             except (ValueError, TypeError):
                 pass
+    _flush("")
     return {"messages": out}
 
 

@@ -697,3 +697,127 @@ def test_the_selector_is_not_hardcoded_to_the_first_option():
         encoding="utf-8"
     )
     assert "/api/config" in js
+
+
+# ── E8: what the browser shows must be what the session did ──────────────────
+
+
+def _messages_client(monkeypatch, tmp_path, history, sid):
+    from helioai.core.session import SessionStore
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    test_store.save("web", sid, history)
+    monkeypatch.setattr("helioai.interfaces.web.app.stream_chat", lambda *a, **kw: (_ for _ in []))
+    monkeypatch.setattr("helioai.interfaces.web.app.build_llm_client", lambda provider=None: None)
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+    from helioai.interfaces.web.app import app
+
+    return TestClient(app)
+
+
+def test_session_messages_keeps_the_artifacts_of_an_interrupted_turn(monkeypatch, tmp_path):
+    """Audit probe: `user → tool(figure, code)` with no final assistant replayed as the
+    user message alone — the figure and the script existed on disk and were invisible.
+    """
+    from helioai.core.llm.base import Message
+
+    tool_result = json.dumps(
+        {"stdout": "", "figure_paths": ["/tmp/ws/fig_0_0.png"], "code_path": "/tmp/ws/code_0.py"}
+    )
+    history = [
+        Message(role="user", content="Plot it."),
+        Message(role="assistant", content="", tool_calls=[]),
+        Message(role="tool", tool_call_id="t1", content=tool_result),
+    ]
+    client = _messages_client(monkeypatch, tmp_path, history, "sess-cut")
+    msgs = client.get("/api/sessions/sess-cut/messages").json()["messages"]
+
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    assert msgs[1]["figures"] == ["/tmp/ws/fig_0_0.png"]
+    assert msgs[1]["code"][0]["name"] == "code_0.py"
+
+
+def test_session_messages_do_not_attach_a_cut_turn_to_the_next_answer(monkeypatch, tmp_path):
+    """Audit probe: the figure of an interrupted turn was pinned onto the next assistant
+    message — an unrelated answer replayed with someone else's plot.
+    """
+    from helioai.core.llm.base import Message
+
+    tool_result = json.dumps({"stdout": "", "figure_paths": ["/tmp/ws/fig_0_0.png"]})
+    history = [
+        Message(role="user", content="Plot it."),
+        Message(role="assistant", content="", tool_calls=[]),
+        Message(role="tool", tool_call_id="t1", content=tool_result),
+        Message(role="user", content="Unrelated question."),
+        Message(role="assistant", content="Unrelated answer."),
+    ]
+    client = _messages_client(monkeypatch, tmp_path, history, "sess-mix")
+    msgs = client.get("/api/sessions/sess-mix/messages").json()["messages"]
+
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
+    assert msgs[1]["figures"] == ["/tmp/ws/fig_0_0.png"]
+    assert msgs[3]["content"] == "Unrelated answer."
+    assert "figures" not in msgs[3]
+
+
+def test_chat_stream_uses_the_requested_provider_or_the_server_default(monkeypatch, tmp_path):
+    """The selector shows a provider; the request must carry that one, and none when the
+    browser has not been told the server's setting yet.
+    """
+    from helioai.core.session import SessionStore
+
+    seen: list = []
+
+    async def _gen(_llm, _user, _sid, _msg, *, restricted=True):
+        yield {"event": "done", "data": {"n_iterations": 0}}
+
+    monkeypatch.setattr("helioai.interfaces.web.app.stream_chat", _gen)
+    monkeypatch.setattr(
+        "helioai.interfaces.web.app.build_llm_client", lambda provider=None: seen.append(provider)
+    )
+    monkeypatch.setattr("helioai.interfaces.web.app.store", SessionStore(tmp_path / "sessions.db"))
+    from helioai.interfaces.web.app import app
+
+    client = TestClient(app)
+    client.post("/chat/stream", json={"message": "hi", "session_id": "s1", "provider": "gemini"})
+    client.post("/chat/stream", json={"message": "hi", "session_id": "s2"})
+    assert seen == ["gemini", None]
+
+
+def test_the_selector_lists_every_provider_the_factory_accepts():
+    """Ollama was configured server-side and absent from the markup, so the browser kept
+    `azure` selected and sent it — a local-model user got an Azure key error.
+    """
+    import re
+
+    from helioai.core.llm.factory import OPENAI_COMPAT
+
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    options = set(re.findall(r'<option value="(\w+)"', html))
+    assert {"azure", "gemini", *OPENAI_COMPAT} <= options
+
+
+def test_provider_is_only_sent_once_the_server_setting_is_known():
+    js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    assert "dataset.synced" in js, "an unsynced selector must not override the server"
+
+
+def test_streams_stay_bound_to_their_session_in_the_real_app_js():
+    """Audit probe: a reply still streaming for session A rendered into session B after
+    "New session". Reproduced by driving the shipped app.js under Node with a DOM stub —
+    the Python tests never load app.js at all.
+    """
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    proc = subprocess.run(
+        [node, str(Path(__file__).parent / "web" / "test_session_streams.js")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    assert "OK web session streams" in proc.stdout

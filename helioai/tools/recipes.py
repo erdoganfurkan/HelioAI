@@ -29,7 +29,9 @@ RECIPE_SIGNATURES: dict[str, tuple[str, ...]] = {
     "theta_bn": ("theta_bn",),
     "mvab": ("mvab", "minimum_variance", "lambda_min", "ratio_int_min"),
     "rankine_hugoniot": (
-        "compression_ratio",
+        # Not `compression_ratio`: |B_dn|/|B_up| is an ordinary output of the coplanarity
+        # analysis too, and it accused a theta_bn run that had loaded and called its own
+        # recipe. The names below belong to the jump conditions and to nothing else.
         "alfven_mach",
         "predicted_rh",
         "predicted_compression",

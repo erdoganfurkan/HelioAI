@@ -43,10 +43,12 @@ from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
     _extract_artifact,
     _history_tool_result,
     _summarize_tool_result,
+    cancel_pending,
     check_answer,
     compact_history,
     emit_post_tool_events,
     inject_run_python_args,
+    start_tool_calls,
     unknown_id_correction,
 )
 from helioai.core.vision import maybe_review
@@ -391,6 +393,7 @@ async def _stream_turn(
         effective_prompt = f"{effective_prompt}\n\n## User profile\n{profile}"
 
     retried_bogus_ids = False
+    started: dict = {}
     try:
         for i in range(settings.agent.max_iterations):
             turn = i + 1
@@ -462,6 +465,7 @@ async def _stream_turn(
                 for ev in _provenance_events(response.content):
                     yield ev
 
+            started = start_tool_calls(response.tool_calls)
             for tc in response.tool_calls:
                 log.info("tool_call_issued", turn=turn, tool=tc.name)
                 yield {
@@ -528,6 +532,8 @@ async def _stream_turn(
                                 yield sub_ev
                     elif tc.name in _INTERNAL_TOOL_NAMES:
                         result = _dispatch_internal_tool(tc.name, tc.arguments)
+                    elif tc.id in started:
+                        result = await started[tc.id]
                     else:
                         result = await registry.call_tool(
                             tc.name, tc.arguments, trusted=inject_run_python_args(tc.name)
@@ -592,6 +598,7 @@ async def _stream_turn(
         raise
 
     finally:
+        cancel_pending(started)
         _ws.reset_session(_ws_token)
         _ws.reset_label(_label_token)
         _ws.reset_user(_user_token)

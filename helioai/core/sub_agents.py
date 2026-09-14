@@ -21,10 +21,12 @@ from helioai.core.skills_loader import SkillError
 from helioai.core.skills_loader import load_skill as load_skill_body
 from helioai.core.tool_exec import (
     _history_tool_result,
+    cancel_pending,
     check_answer,
     compact_history,
     emit_post_tool_events,
     inject_run_python_args,
+    start_tool_calls,
     unknown_id_correction,
 )
 from helioai.core.vision import maybe_review
@@ -366,6 +368,7 @@ async def stream_subagent(
 
     artifacts: list[dict] = []
     n_iters = 0
+    started: dict = {}
     try:
         system_prompt, skills_loaded = _build_system_prompt(role_cfg)
         for skill_name in skills_loaded:
@@ -417,6 +420,7 @@ async def stream_subagent(
                         continue
                 break
 
+            started = start_tool_calls(response.tool_calls, allowed=allowed)
             for tc in response.tool_calls:
                 log.info("tool_call_issued", turn=n_iters, tool=tc.name, sub_role=role)
                 yield {
@@ -437,6 +441,8 @@ async def stream_subagent(
                             "error": f"tool {tc.name!r} not available to {role!r}. Allowed: {sorted(allowed)}"
                         }
                     )
+                elif tc.id in started:
+                    result = await started[tc.id]
                 else:
                     trusted = inject_run_python_args(
                         tc.name, no_network=role_cfg.sandbox_no_network
@@ -526,6 +532,7 @@ async def stream_subagent(
         }
 
     finally:
+        cancel_pending(started)
         _ws.reset_session(_ws_token)
         if _user_token is not None:
             _ws.reset_user(_user_token)

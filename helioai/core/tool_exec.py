@@ -12,6 +12,7 @@ This module imports neither agent_loop nor sub_agents, so there is no cycle.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Iterator
@@ -381,6 +382,53 @@ def inject_run_python_args(name: str, *, no_network: bool = False) -> dict:
     if no_network:
         args["_no_net"] = True
     return args
+
+
+# Tools that must run one at a time within a turn: run_python numbers its scripts from
+# what is on disk (`get_next_run_idx`) and writes into the one session directory.
+_SEQUENTIAL_TOOLS: frozenset[str] = frozenset({"run_python"})
+
+
+def start_tool_calls(tool_calls, *, allowed: set[str] | None = None) -> dict[str, asyncio.Task]:
+    """Start every parallel-safe registry call of a turn at once, keyed by call id.
+
+    The prompt asks the model to batch its downloads in one turn, and the loops then
+    ran them one after the other: a data_analyst's first turn — three or four
+    `get_timeseries` — took the sum of their durations. Started here, they overlap;
+    the caller still awaits each result in the model's order, so every event and
+    every `tool` message keeps the order it had when the calls were sequential.
+
+    Skipped, and left to the caller's sequential path: `run_python` (see
+    `_SEQUENTIAL_TOOLS`), anything not in the registry (the `task` tool, the internal
+    tools), and — for a sub-agent — anything outside its whitelist, which the caller
+    refuses without dispatching.
+
+    Args:
+        tool_calls: The assistant's tool calls for this turn.
+        allowed: A sub-agent's whitelist; None for the lead, who may call anything.
+
+    Returns:
+        `{tool_call.id: task}` for the calls that were started. `registry.call_tool`
+        never raises — a failure is an error string — so awaiting a task is safe.
+    """
+    from helioai.tools.registry import registry
+
+    started: dict[str, asyncio.Task] = {}
+    for tc in tool_calls or []:
+        if tc.name in _SEQUENTIAL_TOOLS or tc.name not in registry:
+            continue
+        if allowed is not None and tc.name not in allowed:
+            continue
+        started[tc.id] = asyncio.create_task(registry.call_tool(tc.name, tc.arguments))
+    return started
+
+
+def cancel_pending(started: dict[str, asyncio.Task]) -> None:
+    """Cancel the calls a turn started and never awaited — a cancelled turn must not
+    leave downloads running for nobody."""
+    for task in started.values():
+        if not task.done():
+            task.cancel()
 
 
 def emit_post_tool_events(

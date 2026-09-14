@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import helioai.core.tool_exec as te
 from helioai.core.llm.base import Message
 from helioai.core.tool_exec import (
@@ -389,3 +391,145 @@ def test_compaction_shrinks_text_to_fit_rather_than_cutting_the_json():
     data = json.loads(summary)
     assert data["findings"]["Bd"] == "14.5 nT"
     assert len(summary) <= 300
+
+
+# ── a turn's tool calls overlap, and their results keep the model's order ──────
+
+
+@pytest.fixture
+def three_slow_tools(monkeypatch):
+    """Three registry tools that each take 0.2 s and record when they ran."""
+    import asyncio
+    import time
+
+    from helioai.tools.registry import Tool, registry
+
+    log: list[tuple[str, float]] = []
+
+    def make(name):
+        async def tool(**kwargs):
+            log.append((name, time.monotonic()))
+            await asyncio.sleep(0.2)
+            return {"tool": name}
+
+        return tool
+
+    for name in ("slow_a", "slow_b", "slow_c"):
+        monkeypatch.setitem(
+            registry._tools,
+            name,
+            Tool(name=name, description="slow", parameters={"type": "object"}, func=make(name)),
+        )
+    return log
+
+
+async def test_start_tool_calls_overlaps_registry_tools(three_slow_tools):
+    import asyncio
+    import time
+
+    from helioai.core.llm.base import ToolCall
+    from helioai.core.tool_exec import start_tool_calls
+
+    calls = [
+        ToolCall(id=f"c{i}", name=n, arguments={})
+        for i, n in enumerate(("slow_a", "slow_b", "slow_c"))
+    ]
+    t0 = time.monotonic()
+    started = start_tool_calls(calls)
+    results = [await started[tc.id] for tc in calls]
+    elapsed = time.monotonic() - t0
+
+    assert [r for r in results] == [
+        '{"tool": "slow_a"}',
+        '{"tool": "slow_b"}',
+        '{"tool": "slow_c"}',
+    ]
+    assert elapsed < 0.45, f"three 0.2 s tools took {elapsed:.2f} s — they ran one after another"
+    await asyncio.sleep(0)
+
+
+def test_start_tool_calls_leaves_the_sequential_and_unknown_calls_alone():
+    import asyncio
+
+    import helioai.tools.setup  # noqa: F401 — the registry is empty until this import
+    from helioai.core.llm.base import ToolCall
+    from helioai.core.tool_exec import start_tool_calls
+
+    async def run():
+        calls = [
+            ToolCall(id="a", name="run_python", arguments={"code": "1"}),
+            ToolCall(id="b", name="task", arguments={}),
+            ToolCall(id="c", name="present_plan", arguments={}),
+            ToolCall(id="d", name="no_such_tool", arguments={}),
+            ToolCall(id="e", name="list_recipes", arguments={}),
+        ]
+        started = start_tool_calls(calls)
+        assert set(started) == {"e"}
+        await started["e"]
+
+    asyncio.run(run())
+
+
+def test_start_tool_calls_respects_a_sub_agents_whitelist():
+    import asyncio
+
+    import helioai.tools.setup  # noqa: F401
+    from helioai.core.llm.base import ToolCall
+    from helioai.core.tool_exec import start_tool_calls
+
+    async def run():
+        calls = [
+            ToolCall(id="a", name="list_recipes", arguments={}),
+            ToolCall(id="b", name="list_missions", arguments={}),
+        ]
+        started = start_tool_calls(calls, allowed={"list_recipes"})
+        assert set(started) == {"a"}
+        await started["a"]
+
+    asyncio.run(run())
+
+
+async def test_the_lead_keeps_event_order_when_calls_overlap(
+    three_slow_tools, monkeypatch, tmp_path
+):
+    """Overlap must be invisible to the interfaces: tool_call/tool_result pairs and the
+    `tool` messages stay in the order the model issued the calls."""
+    from helioai.core import agent_loop
+    from helioai.core.llm.base import Message, ToolCall
+    from helioai.core.session import SessionStore
+
+    monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
+    responses = [
+        Message(
+            role="assistant",
+            tool_calls=[
+                ToolCall(id="c1", name="slow_c", arguments={}),
+                ToolCall(id="c2", name="slow_a", arguments={}),
+                ToolCall(id="c3", name="slow_b", arguments={}),
+            ],
+        ),
+        Message(role="assistant", content="done"),
+    ]
+
+    class _LLM:
+        async def chat(self, messages, tools, **k):
+            return responses.pop(0)
+
+    events = [
+        ev async for ev in agent_loop.stream_chat(_LLM(), "web", "s1", "go", restricted=False)
+    ]
+    names = [
+        (e["event"], e["data"]["name"])
+        for e in events
+        if e["event"] in ("tool_call", "tool_result")
+    ]
+    assert names == [
+        ("tool_call", "slow_c"),
+        ("tool_result", "slow_c"),
+        ("tool_call", "slow_a"),
+        ("tool_result", "slow_a"),
+        ("tool_call", "slow_b"),
+        ("tool_result", "slow_b"),
+    ]
+    history = agent_loop.store.get_or_create("web", "s1")
+    assert [m.tool_call_id for m in history if m.role == "tool"] == ["c1", "c2", "c3"]

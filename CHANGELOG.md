@@ -88,6 +88,12 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   tools now run their bodies in a worker thread (`asyncio.to_thread`, which carries the
   session context with it), at most four speasy downloads at a time; the figure review
   encodes its PNGs there too.
+- **The tool calls of one turn overlap.** The prompt asks the model to batch its
+  downloads in a single turn; both loops then ran them one after another, so a
+  data_analyst's first turn took the sum of three or four downloads. Registry tools are
+  now started together and their results consumed in the model's order, so every event
+  and every `tool` message keeps the sequence it had. `run_python` stays sequential (it
+  numbers its scripts from the disk), as do `task` and the internal tools.
 
 ### Removed
 

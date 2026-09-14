@@ -8,8 +8,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from support.scripted import ScriptedLLM
 
-from helioai.core.llm.base import LLMClient, Message
 from helioai.tools.sandbox import _sandbox_env
 
 _SANDBOX_WARMUP = """\
@@ -173,27 +173,10 @@ def sample_skill_dir(tmp_path: Path) -> Path:
     return d
 
 
-class _FakeLLM(LLMClient):
-    """Replays a scripted list of Messages, one per chat() call."""
-
-    def __init__(self, responses: list[Message]) -> None:
-        self._responses = list(responses)
-        self.calls: list[dict] = []
-
-    async def chat(self, messages, tools, system_prompt=None):
-        self.calls.append(
-            {
-                "messages": list(messages),
-                "tools": list(tools),
-                "system_prompt": system_prompt,
-            }
-        )
-        return self._responses.pop(0)
-
-
 @pytest.fixture
 def fake_llm_factory():
-    return _FakeLLM
+    """The shared scripted model (`support.scripted.ScriptedLLM`), as a factory."""
+    return ScriptedLLM
 
 
 class _FakeEmbedModel:

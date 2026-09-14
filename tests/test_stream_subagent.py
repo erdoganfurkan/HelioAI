@@ -16,30 +16,12 @@ import json
 
 import numpy as np
 import pytest
+from support.scripted import ScriptedLLM
 
 import helioai.tools.setup  # noqa: F401  — populates the registry; without it it is empty
 from helioai.core import sub_agents
 from helioai.core.llm.base import LLMClient, Message, ToolCall
 from helioai.tools.results import ToolResult
-
-
-class ScriptedLLM(LLMClient):
-    """Replays scripted responses and records how it was called."""
-
-    def __init__(self, responses: list[Message]):
-        self._responses = list(responses)
-        self.calls: list[dict] = []
-
-    async def chat(self, messages, tools, system_prompt=None, tool_choice="auto"):
-        self.calls.append(
-            {
-                "messages": list(messages),
-                "tools": [t.name for t in tools],
-                "system_prompt": system_prompt,
-                "tool_choice": tool_choice,
-            }
-        )
-        return self._responses.pop(0)
 
 
 def text(content: str) -> Message:

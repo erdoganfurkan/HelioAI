@@ -212,3 +212,37 @@ async def test_the_lead_follows_a_claimed_reply_with_one_verdict_and_journals_it
 
     prose = [ev async for ev in agent_loop.stream_chat(llm, "web", "s-verdict", "again")]
     assert "verdict" not in [e["event"] for e in prose]
+
+
+# ── what the first live run taught (2026-09-14, a876b27) ──────────────────────────
+
+
+def test_a_unitless_claim_pointing_at_a_dimensioned_export_is_not_accused():
+    """The model named the shock normal's components with `source: theta_bn` — the run
+    that printed them — and no units. The ledger's `theta_bn` is the angle, 54.85 deg.
+    'n_x stated -0.509, the session computed 54.85 deg' is not a contradiction anyone
+    can act on: without units the claim may be another quantity, and it is."""
+    ledger = [_entry("theta_bn", 54.85, "deg")]
+    status, detail = judge_claim(_claim("shock normal n_x (GSM)", -0.509, "", "theta_bn"), ledger)
+    assert status == "unsourced"
+    assert "units" in detail["note"] and "54.85 deg" in detail["note"]
+
+
+def test_a_unitless_claim_that_states_the_recorded_value_still_matches():
+    ledger = [_entry("theta_bn", 54.85, "deg")]
+    status, _ = judge_claim(_claim("theta_bn", 54.9, "", "theta_bn"), ledger)
+    assert status == "matched"
+
+
+def test_the_claims_tolerance_is_the_prose_checkers():
+    """2.59 for a recorded 2.5848 (0.2 % off, a rounding slip) was traced by the
+    `provenance` line and contradicted by the `verdict` line of the same answer. One
+    answer, one tolerance."""
+    from helioai.core.provenance_check import RTOL, verify
+
+    assert verify.__defaults__ == (RTOL,) == (5e-3,)
+    ledger = [_entry("compression_ratio", 2.5848101937326744)]
+    status, _ = judge_claim(_claim("compression_ratio", 2.59), ledger)
+    assert status == "matched"
+    status, _ = judge_claim(_claim("compression_ratio", 2.61), ledger)
+    assert status == "contradicted", "0.5 % is still the line"

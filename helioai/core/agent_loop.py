@@ -414,7 +414,8 @@ async def _stream_turn(
     ctx = RunContext.for_session(user_id, session_id, label=label)
 
     tools = tuple(registry.list_tool_defs() + _INTERNAL_TOOLS + [task_tool_def()])
-    log.info("agent_tools_listed", count=len(tools), tools=[t.name for t in tools])
+    tool_names = frozenset(t.name for t in tools)
+    log.info("agent_tools_listed", count=len(tools), tools=sorted(tool_names))
 
     effective_prompt = build_lead_system_prompt(restricted)
     profile = _load_user_profile(user_id)
@@ -466,7 +467,7 @@ async def _stream_turn(
             log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
             store.save(user_id, session_id, history)
             if plan is not None:
-                yield make("plan_report", **adherence(plan, tool_calls))
+                yield make("plan_report", **adherence(plan, tool_calls, known=tool_names))
             yield make(
                 "error", message=f"agent loop exceeded {settings.agent.max_iterations} iterations"
             )
@@ -518,7 +519,7 @@ async def _stream_turn(
                 log.warning("lead_claims_contradicted", claims=verdict.contradicted)
             yield make("verdict", **verdict.as_event())
         if plan is not None:
-            yield make("plan_report", **adherence(plan, tool_calls))
+            yield make("plan_report", **adherence(plan, tool_calls, known=tool_names))
         yield make("done", n_iterations=end.turns)
 
     except asyncio.CancelledError:

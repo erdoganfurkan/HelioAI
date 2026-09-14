@@ -51,7 +51,7 @@ const JOURNAL = [
   { event: 'verdict', data: { matched: 0, contradicted: 1, unsourced: 0, unknown_ids: [], recipe_flags: [], figure_reviews: [],
     claims: [{ status: 'contradicted', name: 'theta_bn', value: 62.7, units: 'deg', source: 'theta_bn', ledger: 57.16, ledger_units: 'deg' }] } },
   { event: 'plan_report', data: { title: 'Replayed plan', planned: ['load_recipe', 'run_python'], executed: ['load_recipe'],
-    unplanned_tools: [], missed_tools: ['run_python'], ratio: 0.5 } },
+    delegated: [], unplanned_tools: [], missed_tools: ['run_python'], ratio: 0.5 } },
   { event: 'done', data: { n_iterations: 1 } },
 ];
 

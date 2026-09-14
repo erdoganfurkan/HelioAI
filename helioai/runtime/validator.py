@@ -22,13 +22,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from helioai import provenance
-from helioai.core.provenance_check import _is_scalar, _states, check_reply
+from helioai.core.provenance_check import RTOL, _is_scalar, _states, check_reply
 from helioai.core.tool_exec import _flag_recipe_bypass, _flag_unknown_ids
 from helioai.logging_config import get_logger
 
 log = get_logger(__name__)
 
-_RTOL = 1e-3
 _SESSION_SOURCES_ONLY = frozenset({"literature", "asserted"})
 
 
@@ -137,11 +136,14 @@ def judge_claim(claim: dict, entries: list[dict]) -> tuple[str, dict]:
     The entries considered are those whose name is the claim's `source` or `name` — the
     export it says it came from. Any run that produced the value sources it (a session
     that exported `compression_ratio` twice, 3.045 then 2.538, computed both), so the
-    entries are read newest first and the first that states the value wins. A named
-    scalar that states another value contradicts the claim; an entry holding several
-    values cannot accuse, since a reply legitimately quotes one component of a vector.
-    A claim the model marked `literature` or `asserted` is never contradicted: it did
-    not say the session computed it.
+    entries are read newest first and the first that states the value wins, within the
+    prose checker's tolerance (`RTOL`) or the rounding the claim shows. A named scalar
+    that states another value contradicts the claim; an entry holding several values
+    cannot accuse, since a reply legitimately quotes one component of a vector; nor can
+    a dimensioned scalar accuse a claim that gives no units — the claim may be another
+    quantity of the same run, and on the first live run it was (a normal's components
+    filed under the angle's export). A claim the model marked `literature` or
+    `asserted` is never contradicted: it did not say the session computed it.
 
     Args:
         claim: `{name, value, units, source}` as `final_answer` delivered it.
@@ -172,7 +174,7 @@ def judge_claim(claim: dict, entries: list[dict]) -> tuple[str, dict]:
         comparable = True
         if converted is _INCOMPATIBLE:
             continue
-        if _states(entry, converted, _RTOL) or _within_rounding(entry, converted):
+        if _states(entry, converted, RTOL) or _within_rounding(entry, converted):
             detail["ledger"] = _ledger_value(entry)
             detail["code_path"] = entry.get("code_path")
             return "matched", detail
@@ -180,12 +182,24 @@ def judge_claim(claim: dict, entries: list[dict]) -> tuple[str, dict]:
         detail["note"] = "units could not be reconciled with the ledger's"
         return "unsourced", detail
     scalars = [e for e in named if _is_scalar(e)]
-    if scalars:
-        detail["ledger"] = _ledger_value(scalars[0])
-        detail["ledger_units"] = scalars[0].get("units") or ""
-        detail["code_path"] = scalars[0].get("code_path")
-        return "contradicted", detail
-    return "unsourced", detail
+    if not scalars:
+        return "unsourced", detail
+    recorded = scalars[0]
+    recorded_units = str(recorded.get("units") or "")
+    if not str(detail["units"]).strip() and recorded_units:
+        # The first live run named the shock normal's components `source: theta_bn` —
+        # the run that printed them — with no units; the ledger's `theta_bn` is the
+        # angle. "n_x stated -0.509, the session computed 54.85 deg" accuses nothing a
+        # reader can act on: a claim without units may be another quantity of the same
+        # run, and here it was. Only a claim that says what it measures can be wrong.
+        detail["note"] = (
+            f"no units given; the export named holds {_ledger_value(recorded)} {recorded_units}"
+        )
+        return "unsourced", detail
+    detail["ledger"] = _ledger_value(recorded)
+    detail["ledger_units"] = recorded_units
+    detail["code_path"] = recorded.get("code_path")
+    return "contradicted", detail
 
 
 def _number(value: object) -> float | None:

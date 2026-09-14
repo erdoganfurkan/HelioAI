@@ -155,18 +155,25 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   used, the ones that were not, and the ones used without being planned, with the share
   followed. It describes and never blocks — a capped turn reports how far the plan got
   before its error — and it is journaled and rendered as one line by the three
-  interfaces. Only the lead's own calls count; the scaffolding calls (the plan itself, the
-  skills, `search_tools`, `final_answer`) count for nothing on either side.
+  interfaces. A step's `tool` field is read word by word against the tools the lead
+  knows (the model writes "search_parameters + get_timeseries"), and a planned tool a
+  sub-agent ran for the lead is a step done, not a deviation — on the first live run the
+  lead delegated every step and the report said `0/4 used, unplanned: task`. The
+  scaffolding calls (the plan itself, the skills, `search_tools`, `final_answer`) count
+  for nothing on either side.
 - **One verdict on the answer.** The lead's reply was judged from four places — the
   catalogue ids, the recipe bypass, the numbers in the prose, the figures — each with its
   own event and none aware of the others. `runtime.validator` runs them in one call, and
   adds the judgement the claims make possible: each number `final_answer` named is placed
   against the provenance ledger **by name**, with a unit-aware tolerance (`57.2 deg`
   states a recorded `57.16 deg`, `0.0101 uT` states `10.077 nT`, a mean quoted within one
-  standard deviation of a series is not a different number) and the rule that any run
-  which produced the value sources it. A named scalar the session computed that holds
-  another value is `contradicted`; a claim the model marked `literature` or `asserted`
-  never is. The result is a `verdict` event — counts up front, every claim behind them —
+  standard deviation of a series is not a different number), the prose checker's own
+  tolerance so one answer is held to one rule, and the rule that any run which produced
+  the value sources it. A named scalar the session computed that holds another value is
+  `contradicted`; a claim the model marked `literature` or `asserted` never is, nor is a
+  claim that gives no units — on the first live run the model filed a normal's
+  components under the angle's export, and "n_x stated −0.509, the session computed
+  54.85 deg" accuses nothing a reader can act on. The result is a `verdict` event — counts up front, every claim behind them —
   journaled and rendered by the CLI, the notebook and the browser; it is emitted only when
   the answer named its numbers, and the existing `invalid_ids`, `recipe_bypassed` and
   `provenance` events keep flowing for the prose.

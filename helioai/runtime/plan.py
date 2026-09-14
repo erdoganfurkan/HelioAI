@@ -8,20 +8,30 @@ arithmetic instead looked exactly like one that was followed. `Plan` is the anno
 plan as data; `adherence` places the turn's tool calls against it and reports, in one
 `plan_report` event, which planned tools were used, which were not, and which tools were
 used without being planned. The report describes; it never blocks, corrects or retries.
-Only the lead's own calls count — a step the lead delegated with `task` is a `task` call,
-which is what the plan should have said — and the calls that are scaffolding rather than
-steps (the plan itself, the skills, `search_tools`, `final_answer`) count for nothing on
+
+Two things the first live run settled. A step's `tool` field is prose — the model wrote
+"search_parameters + get_timeseries" and "task (data_analyst)" — so it is read word by
+word against the tools the lead knows, not compared whole. And a planned tool the lead
+had a sub-agent run is a step done, not a deviation: the lead planned the analysis in its
+analyst's tools and then delegated every step, and the report said `0/4 used, unplanned:
+task`. `task` is how a step gets done, so it is never unplanned on its own; what the
+sub-agent did with it is held to the plan like the lead's own calls. The scaffolding
+calls (the plan itself, the skills, `search_tools`, `final_answer`) count for nothing on
 either side.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import re
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 
 SCAFFOLDING: frozenset[str] = frozenset(
     {"present_plan", "list_skills", "load_skill", "search_tools", "final_answer"}
 )
+DELEGATION = "task"
+
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 @dataclass(frozen=True)
@@ -70,52 +80,69 @@ class Plan:
                 steps.append(Step(str(raw.get("description") or ""), tool))
         return cls(str(data.get("title") or ""), tuple(steps))
 
-    @property
-    def tools(self) -> list[str]:
-        """The tools the plan names, once each, in the order of their first step."""
-        return list(dict.fromkeys(s.tool for s in self.steps if s.tool))
+    def tools(self, known: Collection[str] | None = None) -> list[str]:
+        """The tools the plan names, once each, in the order of their first mention.
+
+        Args:
+            known: The tools the lead can call. A step's `tool` field is read word by
+                word and only these words count; None keeps every word, for a caller
+                with no registry at hand.
+
+        Returns:
+            Tool names, first mention first.
+        """
+        words = (w for s in self.steps if s.tool for w in _WORD.findall(s.tool))
+        return list(dict.fromkeys(w for w in words if known is None or w in known))
 
 
-def executed_tools(events: Iterable[dict]) -> list[str]:
-    """The tools the lead itself called during a turn, once each, in call order.
+def calls_made(events: Iterable[dict]) -> tuple[list[str], list[str]]:
+    """The tools a turn called: the lead's own, and its sub-agents', each once in order.
 
     Args:
-        events: The turn's events; only `tool_call` events without a `sub_agent_ctx`
-            count, and the scaffolding calls never do.
+        events: The turn's events; `tool_call` events carrying a `sub_agent_ctx` are a
+            sub-agent's, the others the lead's. Scaffolding calls count for neither.
 
     Returns:
-        Tool names in the order of their first call.
+        `(own, delegated)`, tool names in the order of their first call.
     """
-    names = (
-        ev["data"].get("name")
-        for ev in events
-        if ev.get("event") == "tool_call" and "sub_agent_ctx" not in ev["data"]
-    )
-    return list(dict.fromkeys(n for n in names if n and n not in SCAFFOLDING))
+    own: dict[str, None] = {}
+    delegated: dict[str, None] = {}
+    for ev in events:
+        if ev.get("event") != "tool_call":
+            continue
+        name = ev["data"].get("name")
+        if not name or name in SCAFFOLDING:
+            continue
+        (delegated if "sub_agent_ctx" in ev["data"] else own).setdefault(name, None)
+    return list(own), list(delegated)
 
 
-def adherence(plan: Plan, events: Iterable[dict]) -> dict:
+def adherence(plan: Plan, events: Iterable[dict], known: Collection[str] | None = None) -> dict:
     """Compare what the run did with what the plan said.
 
     Args:
         plan: The plan the turn opened with.
         events: The turn's events, as yielded.
+        known: The tools the lead can call, to read the plan's `tool` fields against.
 
     Returns:
         The `plan_report` payload — `title`, `planned` (the tools the plan named),
-        `executed` (the tools the lead called), `unplanned_tools` (called, never
-        planned), `missed_tools` (planned, never called) and `ratio`, the share of
-        planned tools that were called, or None when the plan named no tool and there
-        is nothing to hold the run to.
+        `executed` (the tools the lead called itself), `delegated` (the tools its
+        sub-agents called), `unplanned_tools` (called by either, never planned, `task`
+        excepted), `missed_tools` (planned, called by neither) and `ratio`, the share
+        of planned tools that were called, or None when the plan named no tool and
+        there is nothing to hold the run to.
     """
-    planned = plan.tools
-    executed = executed_tools(events)
-    followed = [t for t in planned if t in executed]
+    planned = plan.tools(known)
+    own, delegated = calls_made(events)
+    done = list(dict.fromkeys(own + delegated))
+    followed = [t for t in planned if t in done]
     return {
         "title": plan.title,
         "planned": planned,
-        "executed": executed,
-        "unplanned_tools": [t for t in executed if t not in planned],
-        "missed_tools": [t for t in planned if t not in executed],
+        "executed": own,
+        "delegated": delegated,
+        "unplanned_tools": [t for t in done if t not in planned and t != DELEGATION],
+        "missed_tools": [t for t in planned if t not in done],
         "ratio": round(len(followed) / len(planned), 2) if planned else None,
     }

@@ -6,7 +6,7 @@ import pytest
 
 from helioai.core import events
 from helioai.core.llm.base import Message, ToolCall
-from helioai.runtime.plan import Plan, Step, adherence, executed_tools
+from helioai.runtime.plan import Plan, Step, adherence, calls_made
 from tests.support.scripted import ScriptedLLM, ScriptedRegistry, assistant_calls, assistant_text
 
 PLAN = {
@@ -46,25 +46,25 @@ def test_a_plan_is_read_from_the_payload_with_its_looseness_removed():
         Step("a bare string step", None),
         Step("", "run_python"),
     )
-    assert plan.tools == ["search_parameters", "run_python"]
+    assert plan.tools() == ["search_parameters", "run_python"]
 
 
 def test_a_payload_with_nothing_in_it_is_an_empty_plan():
     assert Plan.from_payload({}) == Plan("", ())
-    assert Plan.from_payload({"title": None, "steps": None}).tools == []
+    assert Plan.from_payload({"title": None, "steps": None}).tools() == []
 
 
 def test_a_tool_named_by_two_steps_is_planned_once():
     plan = Plan.from_payload(
         {"title": "t", "steps": [{"description": "a", "tool": "run_python"}] * 3}
     )
-    assert plan.tools == ["run_python"]
+    assert plan.tools() == ["run_python"]
 
 
 # ── what counts as executed ────────────────────────────────────────────────────────
 
 
-def test_only_the_leads_own_analysis_calls_count():
+def test_the_leads_own_calls_and_its_sub_agents_are_told_apart_and_scaffolding_dropped():
     turn = [
         _call("present_plan"),
         _call("load_skill"),
@@ -77,7 +77,7 @@ def test_only_the_leads_own_analysis_calls_count():
         _call("final_answer"),
         events.make("reply", text="…"),
     ]
-    assert executed_tools(turn) == ["search_parameters", "task"]
+    assert calls_made(turn) == (["search_parameters", "task"], ["get_timeseries", "run_python"])
 
 
 # ── the report, healthy case first ─────────────────────────────────────────────────
@@ -91,6 +91,7 @@ def test_a_plan_followed_to_the_letter_reports_a_full_ratio_and_no_differences()
         "title": "theta_Bn at the WIND shock",
         "planned": ["search_parameters", "get_timeseries", "run_python"],
         "executed": ["search_parameters", "get_timeseries", "run_python"],
+        "delegated": [],
         "unplanned_tools": [],
         "missed_tools": [],
         "ratio": 1.0,
@@ -116,9 +117,8 @@ def test_a_plan_that_names_no_tool_has_no_ratio_but_still_says_what_ran():
 
 def test_the_report_is_a_contract_event():
     ev = events.make("plan_report", **adherence(Plan.from_payload(PLAN), []))
-    assert (
-        ev["data"]["ratio"] == 0.0 and ev["data"]["missed_tools"] == Plan.from_payload(PLAN).tools
-    )
+    assert ev["data"]["ratio"] == 0.0
+    assert ev["data"]["missed_tools"] == Plan.from_payload(PLAN).tools()
 
 
 # ── through the lead ───────────────────────────────────────────────────────────────
@@ -138,7 +138,11 @@ async def _lead(monkeypatch, tmp_path, llm, question="hi"):
 
     store = SessionStore(tmp_path / "sessions.db")
     monkeypatch.setattr(agent_loop, "store", store)
-    monkeypatch.setattr(agent_loop, "registry", ScriptedRegistry())
+    monkeypatch.setattr(
+        agent_loop,
+        "registry",
+        ScriptedRegistry({"search_parameters": {}, "get_timeseries": {}, "run_python": {}}),
+    )
     live = [ev async for ev in agent_loop.stream_chat(llm, "web", "s-plan", question)]
     return live, store
 
@@ -184,3 +188,85 @@ async def test_a_capped_turn_still_reports_how_far_the_plan_got(monkeypatch, tmp
     report = live[-2]["data"]
     assert report["executed"] == ["search_parameters"]
     assert report["missed_tools"] == ["get_timeseries", "run_python"]
+
+
+# ── what the first live run taught (2026-09-14, a876b27) ──────────────────────────
+
+LIVE_PLAN = {
+    "title": "Wind shock 2015-03-17 — |B|/Bz plot, theta_Bn & literature",
+    "steps": [
+        {"description": "Resolve and download", "tool": "search_parameters + get_timeseries"},
+        {"description": "Plot |B| and Bz", "tool": "run_python"},
+        {"description": "theta_Bn via the recipe", "tool": "run_recipe"},
+        {"description": "Two papers", "tool": "find_papers"},
+    ],
+}
+KNOWN = {"search_parameters", "get_timeseries", "run_python", "run_recipe", "find_papers", "task"}
+
+
+def _sub(name: str, role: str) -> dict:
+    return _call(name, sub_agent_ctx={"role": role, "task_id": f"t-{role}"})
+
+
+def test_a_plan_carried_out_through_delegation_was_followed():
+    """The lead planned the analysis in its sub-agents' tools, then delegated every step:
+    the report said `0/4 planned tools used … unplanned: task`. A step done by the
+    sub-agent the lead spawned for it was done; `task` is how, not a deviation."""
+    turn = [
+        _call("task"),
+        _sub("search_parameters", "data_analyst"),
+        _sub("get_timeseries", "data_analyst"),
+        _sub("run_python", "data_analyst"),
+        _sub("run_recipe", "data_analyst"),
+        _call("task"),
+        _sub("find_papers", "librarian"),
+    ]
+    report = adherence(Plan.from_payload(LIVE_PLAN), turn, known=KNOWN)
+    assert report["planned"] == [
+        "search_parameters",
+        "get_timeseries",
+        "run_python",
+        "run_recipe",
+        "find_papers",
+    ]
+    assert report["delegated"] == [
+        "search_parameters",
+        "get_timeseries",
+        "run_python",
+        "run_recipe",
+        "find_papers",
+    ]
+    assert report["executed"] == ["task"]
+    assert report["missed_tools"] == [] and report["unplanned_tools"] == []
+    assert report["ratio"] == 1.0
+
+
+def test_a_step_naming_two_tools_plans_both_and_an_unknown_word_plans_nothing():
+    plan = Plan.from_payload(
+        {
+            "title": "t",
+            "steps": [
+                {"description": "d", "tool": "task (data_analyst)"},
+                {"description": "e", "tool": "search_parameters + get_timeseries"},
+            ],
+        }
+    )
+    report = adherence(
+        plan, [_call("task"), _sub("search_parameters", "data_analyst")], known=KNOWN
+    )
+    assert report["planned"] == ["task", "search_parameters", "get_timeseries"]
+    assert report["missed_tools"] == ["get_timeseries"] and report["unplanned_tools"] == []
+
+
+def test_a_delegation_the_plan_never_needed_is_still_not_a_deviation_but_its_tools_are():
+    """`task` never counts as unplanned — it is a means — but what the sub-agent did with
+    it is compared to the plan like the lead's own calls."""
+    plan = Plan.from_payload({"title": "t", "steps": [{"description": "d", "tool": "run_python"}]})
+    report = adherence(plan, [_call("task"), _sub("find_papers", "librarian")], known=KNOWN)
+    assert report["unplanned_tools"] == ["find_papers"] and report["missed_tools"] == ["run_python"]
+    assert report["ratio"] == 0.0
+
+
+def test_without_a_known_set_every_word_of_a_tool_field_is_taken_as_a_tool():
+    plan = Plan.from_payload({"title": "t", "steps": [{"description": "d", "tool": "a + b"}]})
+    assert adherence(plan, [])["planned"] == ["a", "b"]

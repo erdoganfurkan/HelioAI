@@ -30,6 +30,7 @@ uv run helioai index
 ```bash
 .venv/bin/python -m pytest                      # full suite
 .venv/bin/python -m pytest tests/test_rag.py -v # one module
+.venv/bin/python -m pytest -m "not network"     # skip live-network tests
 ```
 
 Call the interpreter in `.venv/` directly rather than `uv run pytest`: `uv run`

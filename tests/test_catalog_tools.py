@@ -1,11 +1,11 @@
-"""Tests for helioai.tools.catalog_tools — mocked speasy."""
+"""Tests for helioai.tools.catalog_tools — fake speasy."""
 
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock
 
 import pytest
+from support.fake_speasy import FakeCatalog, FakeCatalogIndex, FakeEvent, FakeSpeasy, FakeVariable
 
 import helioai.tools.catalog_tools as ct_module
 from helioai.tools.catalog_tools import (
@@ -29,36 +29,23 @@ def reset_catalog_cache():
 
 
 def _make_catalog_index(uid, name, desc, nb, s_start, s_stop, spz_type="CatalogIndex"):
-    idx = MagicMock()
-    idx.__spz_uid__ = uid
-    idx.__spz_name__ = name
-    idx.__spz_type__ = spz_type
-    idx.desc = desc
-    idx.nbIntervals = nb
-    idx.surveyStart = s_start
-    idx.surveyStop = s_stop
-    return idx
+    return FakeCatalogIndex(uid, name, desc, nb, s_start, s_stop, spz_type)
 
 
 def _make_event(start, stop, meta=None):
-    ev = MagicMock()
-    ev.start_time = start
-    ev.stop_time = stop
-    ev.meta = meta if meta is not None else {"shock_type": "FF"}
-    return ev
+    return FakeEvent(start, stop, meta if meta is not None else {"shock_type": "FF"})
 
 
-def _make_flat(catalogs: dict, timetables: dict):
-    flat = MagicMock()
-    flat.catalogs = catalogs
-    flat.timetables = timetables
-    return flat
+def _make_spz(catalogs=None, timetables=None, get_data=None):
+    return FakeSpeasy(catalogs=catalogs or {}, timetables=timetables or {}, get_data=get_data)
 
 
-def _make_spz(catalogs=None, timetables=None):
-    mock_spz = MagicMock()
-    mock_spz.inventories.flat_inventories.amda = _make_flat(catalogs or {}, timetables or {})
-    return mock_spz
+def _make_catalog(events):
+    return FakeCatalog(events=events)
+
+
+def _make_timeseries(time, values, unit="nT", columns=None):
+    return FakeVariable(time=time, values=values, unit=unit, columns=columns or [])
 
 
 # ── _walk_catalogs TTL cache ──────────────────────────────────────────────────
@@ -169,11 +156,7 @@ async def test_get_catalog_returns_events(monkeypatch) -> None:
         _make_event("2005-05-15T00:00:00", "2005-05-16T00:00:00"),
         _make_event("2006-12-14T00:00:00", "2006-12-15T00:00:00"),
     ]
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
-
-    mock_spz = _make_spz({"sharedcatalog_41": cat_idx}, {})
-    mock_spz.get_data.return_value = mock_cat
+    mock_spz = _make_spz({"sharedcatalog_41": cat_idx}, {}, _make_catalog(events))
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_catalog("amda/sharedcatalog_41")
@@ -192,11 +175,7 @@ async def test_get_catalog_time_filter(monkeypatch) -> None:
         _make_event("2005-01-17T00:00:00", "2005-01-18T00:00:00"),
         _make_event("2006-05-15T00:00:00", "2006-05-16T00:00:00"),
     ]
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
-
-    mock_spz = _make_spz({"sharedcatalog_41": cat_idx}, {})
-    mock_spz.get_data.return_value = mock_cat
+    mock_spz = _make_spz({"sharedcatalog_41": cat_idx}, {}, _make_catalog(events))
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_catalog("amda/sharedcatalog_41", start="2005-01-01", stop="2005-12-31")
@@ -217,10 +196,7 @@ async def test_get_catalog_not_found(monkeypatch) -> None:
 async def test_get_catalog_kind_marker(monkeypatch) -> None:
     cat_idx = _make_catalog_index("c1", "ICME list", "", 2, "2005-01-01", "2022-12-31")
     events = [_make_event("2005-01-17T00:00:00", "2005-01-18T00:00:00")]
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
-    mock_spz = _make_spz({"c1": cat_idx}, {})
-    mock_spz.get_data.return_value = mock_cat
+    mock_spz = _make_spz({"c1": cat_idx}, {}, _make_catalog(events))
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_catalog("amda/c1")
@@ -235,10 +211,7 @@ async def test_get_catalog_max_events_default(monkeypatch) -> None:
     events = [
         _make_event(f"2005-{i:02d}-01T00:00:00", f"2005-{i:02d}-02T00:00:00") for i in range(1, 21)
     ]
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
-    mock_spz = _make_spz({"c1": cat_idx}, {})
-    mock_spz.get_data.return_value = mock_cat
+    mock_spz = _make_spz({"c1": cat_idx}, {}, _make_catalog(events))
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_catalog("amda/c1")
@@ -259,21 +232,19 @@ async def test_get_events_timeseries_returns_stats(monkeypatch) -> None:
         _make_event("2005-01-17T00:00:00", "2005-01-18T00:00:00"),
         _make_event("2005-05-15T00:00:00", "2005-05-16T00:00:00"),
     ]
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+    catalog = _make_catalog(events)
 
-    fake_ts = MagicMock()
-    fake_ts.time = np.array(["2005-01-17T01:00:00"], dtype="datetime64[s]")
-    fake_ts.values = np.array([[5.0, -3.0, 2.0]])
-    fake_ts.unit = "nT"
+    fake_ts = _make_timeseries(
+        np.array(["2005-01-17T01:00:00"], dtype="datetime64[s]"),
+        np.array([[5.0, -3.0, 2.0]]),
+    )
 
     def get_data_side_effect(arg, intervals=None):
         if intervals is not None:
             return [fake_ts, fake_ts]
-        return mock_cat
+        return catalog
 
-    mock_spz = _make_spz({"sharedcatalog_41": cat_idx}, {})
-    mock_spz.get_data.side_effect = get_data_side_effect
+    mock_spz = _make_spz({"sharedcatalog_41": cat_idx}, {}, get_data_side_effect)
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_events_timeseries(
@@ -295,11 +266,7 @@ async def test_get_events_timeseries_no_events_in_window(monkeypatch) -> None:
         "sharedcatalog_41", "ICME list", "", 1, "2005-01-01", "2005-12-31"
     )
     events = [_make_event("2005-01-17T00:00:00", "2005-01-18T00:00:00")]
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
-
-    mock_spz = _make_spz({"sharedcatalog_41": cat_idx}, {})
-    mock_spz.get_data.return_value = mock_cat
+    mock_spz = _make_spz({"sharedcatalog_41": cat_idx}, {}, _make_catalog(events))
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_events_timeseries(
@@ -319,10 +286,7 @@ def _setup_catalog_mock(monkeypatch, events, catalog_uid="c1"):
     cat_idx = _make_catalog_index(
         catalog_uid, "Test catalog", "", len(events), "2000-01-01", "2030-01-01"
     )
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
-    mock_spz = _make_spz({catalog_uid: cat_idx}, {})
-    mock_spz.get_data.return_value = mock_cat
+    mock_spz = _make_spz({catalog_uid: cat_idx}, {}, _make_catalog(events))
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
     return f"amda/{catalog_uid}"
 
@@ -364,10 +328,7 @@ async def test_get_catalog_sort_and_pagination(monkeypatch) -> None:
         _make_event("2005-04-01T00:00:00", "2005-04-02T00:00:00", meta={"speed": 300}),
     ]
     cat_idx = _make_catalog_index("c1", "Test", "", 4, "2000-01-01", "2030-01-01")
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(side_effect=lambda: iter(events))
-    mock_spz = _make_spz({"c1": cat_idx}, {})
-    mock_spz.get_data.return_value = mock_cat
+    mock_spz = _make_spz({"c1": cat_idx}, {}, _make_catalog(events))
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
     cid = "amda/c1"
     page1 = await get_catalog(cid, sort_by="speed", descending=True, max_events=2, offset=0)
@@ -451,22 +412,20 @@ async def test_get_events_timeseries_vector_stats(monkeypatch) -> None:
 
     cat_idx = _make_catalog_index("c1", "ICME list", "", 1, "2005-01-01", "2005-12-31")
     events = [_make_event("2005-01-17T00:00:00", "2005-01-18T00:00:00")]
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+    catalog = _make_catalog(events)
 
-    fake_ts = MagicMock()
-    fake_ts.time = np.array(["2005-01-17T01:00:00", "2005-01-17T02:00:00"], dtype="datetime64[s]")
-    fake_ts.values = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-    fake_ts.columns = ["bx", "by", "bz"]
-    fake_ts.unit = "nT"
+    fake_ts = _make_timeseries(
+        np.array(["2005-01-17T01:00:00", "2005-01-17T02:00:00"], dtype="datetime64[s]"),
+        np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+        columns=["bx", "by", "bz"],
+    )
 
     def get_data_side_effect(arg, intervals=None):
         if intervals is not None:
             return [fake_ts]
-        return mock_cat
+        return catalog
 
-    mock_spz = _make_spz({"c1": cat_idx}, {})
-    mock_spz.get_data.side_effect = get_data_side_effect
+    mock_spz = _make_spz({"c1": cat_idx}, {}, get_data_side_effect)
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_events_timeseries(
@@ -490,21 +449,19 @@ async def test_get_events_timeseries_cap_warning_present(monkeypatch) -> None:
 
     cat_idx = _make_catalog_index("c1", "ICME list", "", 5, "2005-01-01", "2005-12-31")
     events = [_make_event(f"2005-0{i}-01T00:00:00", f"2005-0{i}-02T00:00:00") for i in range(1, 6)]
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+    catalog = _make_catalog(events)
 
-    fake_ts = MagicMock()
-    fake_ts.time = np.array(["2005-01-01T01:00:00"], dtype="datetime64[s]")
-    fake_ts.values = np.array([5.0])
-    fake_ts.unit = "nT"
+    fake_ts = _make_timeseries(
+        np.array(["2005-01-01T01:00:00"], dtype="datetime64[s]"),
+        np.array([5.0]),
+    )
 
     def get_data_side_effect(arg, intervals=None):
         if intervals is not None:
             return [fake_ts] * len(intervals)
-        return mock_cat
+        return catalog
 
-    mock_spz = _make_spz({"c1": cat_idx}, {})
-    mock_spz.get_data.side_effect = get_data_side_effect
+    mock_spz = _make_spz({"c1": cat_idx}, {}, get_data_side_effect)
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_events_timeseries(
@@ -531,21 +488,19 @@ async def test_get_events_timeseries_no_cap_warning_when_not_truncated(monkeypat
         _make_event("2005-01-01T00:00:00", "2005-01-02T00:00:00"),
         _make_event("2005-02-01T00:00:00", "2005-02-02T00:00:00"),
     ]
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+    catalog = _make_catalog(events)
 
-    fake_ts = MagicMock()
-    fake_ts.time = np.array(["2005-01-01T01:00:00"], dtype="datetime64[s]")
-    fake_ts.values = np.array([5.0])
-    fake_ts.unit = "nT"
+    fake_ts = _make_timeseries(
+        np.array(["2005-01-01T01:00:00"], dtype="datetime64[s]"),
+        np.array([5.0]),
+    )
 
     def get_data_side_effect(arg, intervals=None):
         if intervals is not None:
             return [fake_ts] * len(intervals)
-        return mock_cat
+        return catalog
 
-    mock_spz = _make_spz({"c1": cat_idx}, {})
-    mock_spz.get_data.side_effect = get_data_side_effect
+    mock_spz = _make_spz({"c1": cat_idx}, {}, get_data_side_effect)
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_events_timeseries(
@@ -569,21 +524,19 @@ async def test_get_events_timeseries_per_event_stats_slimmed_above_10(monkeypatc
         _make_event(f"2005-{i:02d}-01T00:00:00", f"2005-{i:02d}-02T00:00:00")
         for i in range(1, n + 1)
     ]
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+    catalog = _make_catalog(events)
 
-    fake_ts = MagicMock()
-    fake_ts.time = np.array(["2005-01-01T01:00:00"], dtype="datetime64[s]")
-    fake_ts.values = np.array([5.0])
-    fake_ts.unit = "nT"
+    fake_ts = _make_timeseries(
+        np.array(["2005-01-01T01:00:00"], dtype="datetime64[s]"),
+        np.array([5.0]),
+    )
 
     def get_data_side_effect(arg, intervals=None):
         if intervals is not None:
             return [fake_ts] * len(intervals)
-        return mock_cat
+        return catalog
 
-    mock_spz = _make_spz({"c1": cat_idx}, {})
-    mock_spz.get_data.side_effect = get_data_side_effect
+    mock_spz = _make_spz({"c1": cat_idx}, {}, get_data_side_effect)
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_events_timeseries(
@@ -606,22 +559,20 @@ async def test_get_events_timeseries_scalar_stats_unchanged(monkeypatch) -> None
 
     cat_idx = _make_catalog_index("c1", "Test", "", 1, "2005-01-01", "2005-12-31")
     events = [_make_event("2005-01-17T00:00:00", "2005-01-18T00:00:00")]
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter(events))
+    catalog = _make_catalog(events)
 
-    fake_ts = MagicMock()
-    fake_ts.time = np.array(["2005-01-17T01:00:00"], dtype="datetime64[s]")
-    fake_ts.values = np.array([5.0])
-    fake_ts.columns = []
-    fake_ts.unit = "km/s"
+    fake_ts = _make_timeseries(
+        np.array(["2005-01-17T01:00:00"], dtype="datetime64[s]"),
+        np.array([5.0]),
+        unit="km/s",
+    )
 
     def get_data_side_effect(arg, intervals=None):
         if intervals is not None:
             return [fake_ts]
-        return mock_cat
+        return catalog
 
-    mock_spz = _make_spz({"c1": cat_idx}, {})
-    mock_spz.get_data.side_effect = get_data_side_effect
+    mock_spz = _make_spz({"c1": cat_idx}, {}, get_data_side_effect)
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
     result = await get_events_timeseries(
@@ -650,16 +601,14 @@ _WINDOW = ("2015-03-17T00:00:00", "2015-03-18T00:00:00")
 
 def _edge_catalog(monkeypatch, get_data_for_intervals=None):
     cat_idx = _make_catalog_index("sharedcatalog_41", "shocks", "", 4, "2015-01-01", "2015-12-31")
-    mock_cat = MagicMock()
-    mock_cat.__iter__ = MagicMock(return_value=iter([_make_event(s, e) for s, e in _EDGE_EVENTS]))
-    mock_spz = _make_spz({"sharedcatalog_41": cat_idx}, {})
+    catalog = _make_catalog([_make_event(s, e) for s, e in _EDGE_EVENTS])
 
     def get_data(arg, intervals=None):
         if intervals is not None:
             return get_data_for_intervals(intervals)
-        return mock_cat
+        return catalog
 
-    mock_spz.get_data.side_effect = get_data
+    mock_spz = _make_spz({"sharedcatalog_41": cat_idx}, {}, get_data)
     monkeypatch.setitem(sys.modules, "speasy", mock_spz)
 
 
@@ -692,10 +641,10 @@ async def test_get_catalog_window_keeps_the_two_events_that_start_inside(monkeyp
 async def test_get_events_timeseries_applies_the_same_window_rule(monkeypatch) -> None:
     import numpy as np
 
-    fake_ts = MagicMock()
-    fake_ts.time = np.array(["2015-03-17T05:00:00"], dtype="datetime64[s]")
-    fake_ts.values = np.array([[5.0, -3.0, 2.0]])
-    fake_ts.unit = "nT"
+    fake_ts = _make_timeseries(
+        np.array(["2015-03-17T05:00:00"], dtype="datetime64[s]"),
+        np.array([[5.0, -3.0, 2.0]]),
+    )
     selected: list = []
 
     def for_intervals(intervals):

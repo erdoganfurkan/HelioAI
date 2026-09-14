@@ -522,6 +522,187 @@ def test_flag_recipe_bypass_keeps_the_original_text():
     assert "shock_timing_2sc" in out
 
 
+# ── recipe loaded, function never called (run 4 of 00_quickstart) ───────────
+
+_THETA_BN_SOURCE = '''# name: theta_bn
+# outputs: theta_bn_deg — angle in degrees between the upstream B and the shock normal
+import numpy as np
+
+def _to_vec(arr):
+    return np.asarray(arr, dtype=float).ravel()[:3]
+
+def theta_bn(B_up, B_dn):
+    """Coplanarity normal, then the angle to the upstream field."""
+    return {"theta_bn_deg": 62.68}
+'''
+
+_THETA_BN_LOADED = json.dumps(
+    {
+        "name": "theta_bn",
+        "code": _THETA_BN_SOURCE,
+        "metadata": {"outputs": "theta_bn_deg — angle in degrees between B_up and the normal"},
+    }
+)
+
+_INLINE_FORMULA = """
+B_up = np.nanmean(B[up], axis=0); B_dn = np.nanmean(B[dn], axis=0)
+dB = B_dn - B_up
+n = np.cross(np.cross(B_up, B_dn), dB); n /= np.linalg.norm(n)
+theta = np.degrees(np.arccos(abs(np.dot(B_up, n)) / np.linalg.norm(B_up)))
+export("theta_bn", np.array([theta]), "deg")
+"""
+
+_CALLS_THE_RECIPE = (
+    _THETA_BN_SOURCE
+    + """
+result = theta_bn(B[up], B[dn])
+export("theta_bn", np.array([result["theta_bn_deg"]]), "deg")
+"""
+)
+
+
+def _load_then_run(code: str) -> list[Message]:
+    return [
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c0", name="load_recipe", arguments={"name": "theta_bn"})],
+        ),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c1", name="run_python", arguments={"code": code})],
+        ),
+        text("theta_Bn = 54.85°"),
+    ]
+
+
+async def test_recipe_loaded_and_rewritten_inline_is_flagged_as_not_called(stub_registry):
+    """Run 4 of 00_quickstart: the analyst loaded `theta_bn`, rewrote the coplanarity
+    formula inline over a 12-minute window, exported `theta_bn` and reported 54.85°.
+    The export carries the recipe's own name, so the outputs check passes; only the
+    absence of a `theta_bn(` call in the code that followed the load tells it apart."""
+    invoked, results = stub_registry
+    results["load_recipe"] = _THETA_BN_LOADED
+    results["run_python"] = _run_python_exports(theta_bn=54.85)
+
+    events = await drain(**base(ScriptedLLM(_load_then_run(_INLINE_FORMULA)), role="data_analyst"))
+
+    flagged = [e for e in events if e["event"] == "recipe_bypassed"]
+    assert flagged, "a loaded recipe whose function never ran must be flagged"
+    assert flagged[0]["data"]["recipes"] == [{"recipe": "theta_bn", "reason": "not_called"}]
+    assert "theta_bn: loaded, but none of its functions was called" in final(events)["summary"]
+
+
+async def test_recipe_pasted_and_called_passes_silently(stub_registry):
+    """Run 5: the recipe source is pasted whole — `def theta_bn(` included — and then
+    called. The definition line must not be mistaken for a call, and the call must
+    clear the check."""
+    invoked, results = stub_registry
+    results["load_recipe"] = _THETA_BN_LOADED
+    results["run_python"] = _run_python_exports(theta_bn=62.68)
+
+    events = await drain(
+        **base(ScriptedLLM(_load_then_run(_CALLS_THE_RECIPE)), role="data_analyst")
+    )
+
+    assert not [e for e in events if e["event"] == "recipe_bypassed"]
+
+
+def test_not_called_needs_a_run_python_after_the_load():
+    """A recipe loaded and never followed by any `run_python` in this history is not
+    judged: a lead that loads a recipe and delegates the computation has bypassed
+    nothing, and a `run_python` that ran *before* the load could not have called it."""
+    from helioai.core.tool_exec import _flag_recipe_bypass
+
+    artifacts = [{"kind": "exports", "values": {"theta_bn": {"mean": 62.68}}}]
+    load = Message(
+        role="assistant",
+        content="",
+        tool_calls=[ToolCall(id="c0", name="load_recipe", arguments={"name": "theta_bn"})],
+    )
+    loaded = Message(role="tool", content=_THETA_BN_LOADED, tool_call_id="c0")
+    earlier_run = Message(
+        role="assistant",
+        content="",
+        tool_calls=[ToolCall(id="c1", name="run_python", arguments={"code": _INLINE_FORMULA})],
+    )
+
+    _, flags = _flag_recipe_bypass("62.68°", [load, loaded], artifacts)
+    assert flags == []
+
+    _, flags = _flag_recipe_bypass("62.68°", [earlier_run, load, loaded], artifacts)
+    assert flags == []
+
+
+def test_pasting_the_definition_alone_is_not_a_call():
+    """The recipe pasted in full, then the formula redone by hand below it: `def
+    theta_bn(` is present in the code, `theta_bn(` as a call is not."""
+    from helioai.core.tool_exec import _flag_recipe_bypass
+
+    artifacts = [{"kind": "exports", "values": {"theta_bn": {"mean": 54.85}}}]
+    history = _load_then_run(_THETA_BN_SOURCE + _INLINE_FORMULA)[:2]
+    history.insert(1, Message(role="tool", content=_THETA_BN_LOADED, tool_call_id="c0"))
+
+    _, flags = _flag_recipe_bypass("54.85°", history, artifacts)
+    assert flags == [{"recipe": "theta_bn", "reason": "not_called"}]
+
+
+def test_a_recipe_without_public_functions_is_not_judged_on_calls():
+    """A script-shaped recipe (only private helpers, or none) has nothing to call; the
+    outputs check is all that applies to it."""
+    from helioai.core.tool_exec import _flag_recipe_bypass
+
+    script = json.dumps(
+        {
+            "name": "superposed_epoch",
+            "code": "def _clean(arr):\n    return arr\nexport('epoch_median', m)\n",
+            "metadata": {"outputs": "epoch_median, epoch_q25, epoch_q75, figure"},
+        }
+    )
+    history = [
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(id="c0", name="load_recipe", arguments={"name": "superposed_epoch"})
+            ],
+        ),
+        Message(role="tool", content=script, tool_call_id="c0"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c1", name="run_python", arguments={"code": "m = 1"})],
+        ),
+    ]
+    artifacts = [{"kind": "exports", "values": {"epoch_median": {"mean": 1.0}}}]
+
+    _, flags = _flag_recipe_bypass("done", history, artifacts)
+    assert flags == []
+
+
+@pytest.mark.asyncio
+async def test_every_shipped_recipe_function_is_seen_by_the_check():
+    """The check reads function names off the real `load_recipe` payload. Each shipped
+    recipe that defines a public function must yield it — otherwise a recipe could be
+    loaded, ignored, and never flagged because its source was not understood."""
+    from helioai.core.tool_exec import _recipe_functions
+    from helioai.tools.recipes import list_recipes, load_recipe
+
+    names = [r["name"] for r in (await list_recipes())["recipes"]]
+    assert "theta_bn" in names
+    seen = {}
+    for name in names:
+        payload = await load_recipe(name)
+        assert "error" not in payload, payload
+        seen[name] = _recipe_functions(payload["code"])
+
+    assert "theta_bn" in seen["theta_bn"]
+    assert "rh_jump" in seen["rankine_hugoniot"]
+    assert "mvab" in seen["mvab"]
+    assert all(not f.startswith("_") for fns in seen.values() for f in fns)
+
+
 @pytest.mark.asyncio
 async def test_subagent_task_lists_the_sessions_existing_datasets(tmp_path, monkeypatch):
     """A sub-agent that cannot name the lead's datasets re-downloads them."""

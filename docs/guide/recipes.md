@@ -45,6 +45,21 @@ This came directly from user feedback. During a demo, θ_Bn was reported "via re
 an intermediate MVAB had in fact been done inline, with no trace of the method or its
 source. The fix was not a better prompt — it was making provenance a tracked artifact.
 
+The rule is checked, not trusted. When a run exports values, the answer gets a
+`ℹ️ RECIPE CHECK` note if any of three things is true:
+
+- **never loaded** — the exported names look like a recipe's computation and
+  `load_recipe` was never called for it;
+- **loaded, outputs missing** — the recipe was loaded, but none of its declared
+  `# outputs:` were exported;
+- **loaded, never called** — the recipe was loaded, and no `run_python` after it calls one
+  of the recipe's functions. This is the case the other two miss: on a live run the
+  analyst loaded `theta_bn`, rewrote the coplanarity formula by hand with a poorly chosen
+  averaging window, and exported the result as `theta_bn` — right name, wrong number.
+
+The note annotates; it never blocks, and it is not proof either way. Read it as "check
+these numbers against the recipe before quoting them".
+
 ## Methods you write inline
 
 Not everything has a recipe. For a one-off method, the sandbox provides:

@@ -36,11 +36,9 @@ async def _collect(gen):
 
 @pytest.mark.asyncio
 async def test_lead_flags_a_recipe_it_never_loaded(monkeypatch, tmp_path, fake_llm_factory):
-    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
 
     exports = {
@@ -80,11 +78,9 @@ async def test_lead_flags_a_recipe_it_loaded_but_never_called(
 ):
     """The lead doing run 4's mistake itself: `load_recipe("theta_bn")`, then the
     formula rewritten inline and exported under the recipe's own name."""
-    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
 
     recipe = json.dumps(
@@ -129,11 +125,9 @@ async def test_lead_flags_a_recipe_it_loaded_but_never_called(
 @pytest.mark.asyncio
 async def test_lead_says_nothing_when_it_exported_nothing(monkeypatch, tmp_path, fake_llm_factory):
     """A search or a catalogue listing must not be accused of skipping a recipe."""
-    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
 
     llm = fake_llm_factory([Message(role="assistant", content="Wind flies at L1.")])
@@ -151,12 +145,10 @@ async def test_lead_retries_once_on_an_invented_id(monkeypatch, tmp_path, fake_l
     *path* into an id that exists nowhere, the detector fired, and the loop ended at
     `n_iterations: 2` — shipping the invented id with the correction stapled to it.
     """
-    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
     from helioai.tools import rag
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
 
     real = "cda/MMS1_FGM_SRVY_L2/mms1_fgm_b_gsm_srvy_l2"
@@ -204,12 +196,10 @@ async def test_lead_retries_once_on_an_invented_id(monkeypatch, tmp_path, fake_l
 @pytest.mark.asyncio
 async def test_lead_gives_up_after_one_retry(monkeypatch, tmp_path, fake_llm_factory):
     """One retry, not a loop — a model that repeats itself still gets contradicted."""
-    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
     from helioai.tools import rag
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
 
     bogus = "cda/MMS1_FGM_SRVY_L2/mms1_fgm_b_gsm_srvy_l2_clean"

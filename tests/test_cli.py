@@ -320,12 +320,10 @@ def test_migrate_storage_never_overwrites_and_is_idempotent(tmp_path, monkeypatc
 
 def test_migrate_storage_is_a_no_op_when_the_data_dir_is_the_default(tmp_path, monkeypatch):
     import helioai.config as cfg
-    from helioai.config import settings
     from helioai.interfaces import cli
 
     (tmp_path / "chroma").mkdir()
     monkeypatch.setattr(cfg, "_default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     assert cli._migrate_split_data_dir() == 0
     assert (tmp_path / "chroma").exists()
 

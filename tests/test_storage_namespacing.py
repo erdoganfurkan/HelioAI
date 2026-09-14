@@ -11,7 +11,6 @@ from helioai.config import settings
 
 @pytest.fixture(autouse=True)
 def _data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     return tmp_path
 
 

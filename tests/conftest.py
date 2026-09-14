@@ -73,6 +73,90 @@ def _reset_workspace_ctx():
     ws._current_session.set(None)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Every test writes under its own `tmp_path`, never under the configured `data/`.
+
+    `settings` is a module-level singleton built at import, so a test that forgets to
+    repoint it lands sessions, workspaces and a 300 MB speasy seed in the real data
+    directory of whoever runs the suite — noticed twice, both times by `ls`, months
+    apart. The store is redirected too: its database path was fixed at import from the
+    same singleton, so patching `data_dir` alone still wrote `sessions.db` in place.
+    A test that needs another layout patches over this; the default is now hermetic.
+    """
+    from helioai.config import settings
+    from helioai.core import session
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(settings.rag, "chroma_dir", tmp_path / "chroma")
+    monkeypatch.setattr(settings.catalogs, "catalogs_dir", tmp_path / "catalogs")
+    monkeypatch.setattr(settings.profile, "profile_path", tmp_path / "profile.md")
+    monkeypatch.setattr(session.store, "_db_path", tmp_path / "sessions.db")
+    monkeypatch.setattr(session.store, "_schema_ready", False)
+    monkeypatch.setattr(session.store, "_cache", {})
+    monkeypatch.setattr(session.store, "_turn_locks", {})
+    return tmp_path
+
+
+def _data_tree_snapshot(root: Path) -> dict[str, tuple[int, int]]:
+    if not root.exists():
+        return {}
+    snapshot = {".": (-1, root.lstat().st_mtime_ns)}
+    for p in root.rglob("*"):
+        try:
+            st = p.lstat()
+        except OSError:
+            continue
+        snapshot[str(p.relative_to(root))] = (st.st_size if p.is_file() else -1, st.st_mtime_ns)
+    return snapshot
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Remember what the real data directory looked like before any test ran."""
+    from helioai.config import settings
+
+    root = Path(settings.data_dir)
+    session.config._helioai_data_root = root  # type: ignore[attr-defined]
+    session.config._helioai_data_before = _data_tree_snapshot(root)  # type: ignore[attr-defined]
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Fail the run when a test wrote under the real data directory.
+
+    A leak is invisible from any single test — the writes succeed — and it is only ever
+    noticed when someone lists `data/users` and finds sessions named after fixtures.
+    Comparing the tree before and after the whole run catches it whatever the test
+    selection, and names the paths so the guilty test is a `grep` away. Pre-existing
+    files are not the suite's to judge: only what changed during the run counts.
+    """
+    root = getattr(session.config, "_helioai_data_root", None)
+    if root is None:
+        return
+    before = session.config._helioai_data_before  # type: ignore[attr-defined]
+    after = _data_tree_snapshot(root)
+    changed = sorted(
+        {k for k in before.keys() ^ after.keys()}
+        | {k for k in before.keys() & after.keys() if before[k] != after[k]}
+    )
+    if not changed:
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    lines = [f"tests wrote under the real data directory {root}:"] + [
+        f"  {p}" for p in changed[:40]
+    ]
+    if len(changed) > 40:
+        lines.append(f"  … and {len(changed) - 40} more")
+    if reporter is not None:
+        reporter.ensure_newline()
+        reporter.section("data/ leak", sep="!", red=True, bold=True)
+        for line in lines:
+            reporter.line(line)
+    else:
+        print("\n".join(lines), file=sys.stderr)
+    if session.exitstatus == 0:
+        session.exitstatus = 1
+
+
 @pytest.fixture
 def tmp_chroma_dir(tmp_path: Path) -> Path:
     return tmp_path / "chroma"

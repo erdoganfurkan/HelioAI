@@ -7,7 +7,6 @@ import time
 
 import pytest
 
-from helioai.config import settings
 from helioai.tools import catalog_tools as ct
 
 _CSV = """\
@@ -22,7 +21,6 @@ _CSV = """\
 
 @pytest.fixture()
 def seeded_cache(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     path = tmp_path / "helio4cast" / "icmecat.csv"
     path.parent.mkdir(parents=True)
     path.write_text(_CSV, encoding="utf-8")
@@ -74,7 +72,6 @@ async def test_stale_cache_dead_url_fallback(seeded_cache, monkeypatch):
 
 
 async def test_no_cache_dead_url_returns_none(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setitem(
         ct._HELIO4CAST["icmecat"], "url", "http://127.0.0.1:1/HELIO4CAST_ICMECAT_v23.csv"
     )

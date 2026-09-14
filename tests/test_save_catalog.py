@@ -7,14 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from helioai.config import settings
-
 
 @pytest.fixture()
 def catalogs_dir(tmp_path, monkeypatch):
     from helioai.workspace import DEFAULT_USER, reset_user, set_user
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     tok = set_user(DEFAULT_USER)
     d = tmp_path / "users" / DEFAULT_USER / "catalogs"
     yield d
@@ -161,7 +158,6 @@ async def test_round_trip_save_then_get_events(catalogs_dir, tmp_path, monkeypat
     import helioai.workspace as ws_module
     from helioai.tools.catalog_tools import get_events_timeseries, save_catalog
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     token = ws_module.set_label("test_f2")
     try:
         events = _make_events(2)

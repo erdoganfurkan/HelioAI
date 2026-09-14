@@ -14,7 +14,6 @@ def quiet_install(monkeypatch, tmp_path):
     """An install with nothing built yet, pointed at tmp_path, no network, no bwrap."""
     from helioai.config import settings
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(settings.rag, "chroma_dir", tmp_path / "chroma")
     monkeypatch.setattr(settings.llm, "provider", "ollama")
     monkeypatch.setattr("helioai.tools.sandbox._bwrap_works", lambda: False)

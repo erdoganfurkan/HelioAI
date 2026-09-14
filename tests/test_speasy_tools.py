@@ -596,10 +596,8 @@ async def test_the_worker_thread_sees_the_callers_session(monkeypatch, tmp_path)
     """`to_thread` copies the context, so the download lands in the caller's session
     directory. This is the property a raw executor would silently lose."""
     import helioai.workspace as ws
-    from helioai.config import settings
     from helioai.tools.offload import run_blocking
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     token = ws.set_label("ticker-session")
     try:
         expected = ws.get_session_dir()

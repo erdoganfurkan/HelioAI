@@ -255,19 +255,12 @@ def test_figure_path_outside_workspace(web_client):
 
 
 def test_figure_path_traversal(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     # path traversal attempt
     r = web_client.get(f"/figure?path={tmp_path}/../etc/passwd")
     assert r.status_code == 404
 
 
 def test_figure_valid(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-
     fig_dir = tmp_path / "users" / "web" / "workspace" / "sess123" / "run001"
     fig_dir.mkdir(parents=True)
     fig = fig_dir / "fig_0.png"
@@ -279,10 +272,6 @@ def test_figure_valid(web_client, tmp_path, monkeypatch):
 
 
 def test_figure_pdf_served(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-
     fig_dir = tmp_path / "users" / "web" / "workspace" / "sess123" / "run001"
     fig_dir.mkdir(parents=True)
     pdf = fig_dir / "fig_0.pdf"
@@ -294,10 +283,6 @@ def test_figure_pdf_served(web_client, tmp_path, monkeypatch):
 
 
 def test_figure_unsupported_type_rejected(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-
     fig_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
     fig_dir.mkdir(parents=True)
     txt = fig_dir / "data.txt"
@@ -316,17 +301,11 @@ def test_code_outside_workspace(web_client):
 
 
 def test_code_path_traversal(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     r = web_client.get(f"/code?path={tmp_path}/../etc/passwd")
     assert r.status_code == 404
 
 
 def test_code_not_py(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     txt_file = tmp_path / "users" / "web" / "workspace" / "sess" / "data.txt"
     txt_file.parent.mkdir(parents=True)
     txt_file.write_text("not python")
@@ -335,9 +314,6 @@ def test_code_not_py(web_client, tmp_path, monkeypatch):
 
 
 def test_code_valid(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     code_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
     code_dir.mkdir(parents=True)
     code_file = code_dir / "code_0.py"
@@ -670,11 +646,9 @@ def test_delete_session_cannot_escape_the_user_workspace(web_client, tmp_path, m
     delete out of the user's home. Sanitising the id closes the front door; this pins
     the back one, where the label is already-persisted data from an older build.
     """
-    from helioai.config import settings
     from helioai.core.llm.base import Message
     from helioai.interfaces.web.app import store
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     sentinel = tmp_path / "users" / "web" / "catalogs"
     sentinel.mkdir(parents=True)
     (sentinel / "keepme.json").write_text("{}", encoding="utf-8")

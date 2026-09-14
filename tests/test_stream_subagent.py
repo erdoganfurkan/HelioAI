@@ -792,12 +792,8 @@ async def test_a_sub_agent_run_python_reads_the_dataset_the_lead_downloaded(tmp_
     on the way into `stream_subagent` breaks it silently, which is why the check runs the
     whole path instead of asserting on `get_session_dir()`.
     """
-    from helioai import datastore
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-
     import helioai.workspace as ws
+    from helioai import datastore
 
     ws.set_user("cli")
     ws.set_session("sess-lead")

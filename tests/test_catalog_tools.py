@@ -107,9 +107,6 @@ def test_walk_catalogs_ttl_cache() -> None:
 
 @pytest.mark.asyncio
 async def test_list_catalogs_returns_all(monkeypatch, tmp_path) -> None:
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     cat_idx = _make_catalog_index(
         "sharedcatalog_41", "ICME list", "Richardson & Cane ICME", 341, "1996-01-01", "2022-12-31"
     )
@@ -135,9 +132,6 @@ async def test_list_catalogs_returns_all(monkeypatch, tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_list_catalogs_type_filter(monkeypatch, tmp_path) -> None:
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     cat_idx = _make_catalog_index("c1", "Cat", "", 10, "", "")
     tt_idx = _make_catalog_index("t1", "TT", "", 5, "", "", "TimetableIndex")
     mock_spz = _make_spz({"c1": cat_idx}, {"t1": tt_idx})
@@ -150,9 +144,6 @@ async def test_list_catalogs_type_filter(monkeypatch, tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_list_catalogs_region_filter(monkeypatch, tmp_path) -> None:
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     icme_idx = _make_catalog_index("c1", "ICME list", "Richardson ICMEs", 100, "", "")
     shock_idx = _make_catalog_index("c2", "Bow shock crossings", "MMS bow shock", 2797, "", "")
     mock_spz = _make_spz({"c1": icme_idx, "c2": shock_idx}, {})

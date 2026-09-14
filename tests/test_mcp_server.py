@@ -278,7 +278,6 @@ async def test_two_mcp_calls_get_distinct_run_indices(monkeypatch, tmp_path):
     The whole point: without a session bound, `_run_idx` stays 0 and the second call
     silently overwrites the first one's code and figures.
     """
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     ctx = _ctx()
     first = await _run(ctx, "print('first')")
     second = await _run(ctx, "print('second')")
@@ -286,13 +285,11 @@ async def test_two_mcp_calls_get_distinct_run_indices(monkeypatch, tmp_path):
 
 
 async def test_mcp_call_writes_under_its_own_user(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     out = await _run(_ctx(), "print('hello')")
     assert str(tmp_path / "users" / "mcp") in out["code_path"]
 
 
 async def test_two_mcp_connections_do_not_share_a_workspace(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     a = await _run(_ctx(), "print('a')")
     b = await _run(_ctx(), "print('b')")
     assert Path(a["code_path"]).parent != Path(b["code_path"]).parent
@@ -308,7 +305,6 @@ async def test_one_connection_keeps_one_workspace_across_calls(monkeypatch, tmp_
     was pinned: load_data raised "no dataset manifest found" on the call right after
     a successful download.
     """
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     connection = _FakeConnection()
     first = await _run(_ctx(connection), "print('first')")
     second = await _run(_ctx(connection), "print('second')")
@@ -356,7 +352,6 @@ async def test_call_tool_success_is_not_an_error():
 
 
 async def test_sandbox_failure_is_reported_as_an_error(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     result = await ms._call_tool(
         _ctx(), CallToolRequestParams(name="run_python", arguments={"code": "1 / 0"})
     )
@@ -421,7 +416,6 @@ async def test_resource_templates_declare_both_schemes():
 
 
 async def test_run_python_returns_the_figure_as_image_content(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     result = await ms._call_tool(
         _ctx(),
         CallToolRequestParams(
@@ -441,7 +435,6 @@ async def test_returned_figure_is_downscaled(monkeypatch, tmp_path):
 
     from PIL import Image
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     code = (
         "import matplotlib.pyplot as plt\n"
         "fig = plt.figure(figsize=(30, 20), dpi=100)\n"

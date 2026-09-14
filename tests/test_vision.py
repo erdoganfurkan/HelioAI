@@ -116,7 +116,6 @@ async def test_loop_emits_figure_review_event(vision_on, monkeypatch, tmp_path):
     from helioai.core.llm.base import Message, ToolCall
     from helioai.core.session import SessionStore
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     store = SessionStore(tmp_path / "sessions.db")
     monkeypatch.setattr(agent_loop, "store", store)
 

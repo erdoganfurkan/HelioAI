@@ -21,10 +21,8 @@ from helioai.datastore import (
 @pytest.fixture()
 def session_dir(tmp_path, monkeypatch):
     """Patch data root + set user/label so get_session_dir() resolves under tmp_path."""
-    from helioai.config import settings
     from helioai.workspace import DEFAULT_USER
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     utok = ws_module.set_user(DEFAULT_USER)
     token = ws_module.set_label("test_session")
     yield tmp_path / "users" / DEFAULT_USER / "workspace" / "test_session"

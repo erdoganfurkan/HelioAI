@@ -99,6 +99,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   now started together and their results consumed in the model's order, so every event
   and every `tool` message keeps the sequence it had. `run_python` stays sequential (it
   numbers its scripts from the disk), as do `task` and the internal tools.
+- **The test suite no longer writes into the real `data/` directory.** `settings` is a
+  singleton built at import, and any test that forgot to repoint it left sessions,
+  workspaces and a 300 MB speasy seed under `data/users` of whoever ran `pytest` — found
+  twice by `ls`, months apart. Every test now gets its own data directory and session
+  database, and the run fails, naming the paths, if anything under the real one changed.
 
 ### Added
 

@@ -75,6 +75,58 @@ async def test_lead_flags_a_recipe_it_never_loaded(monkeypatch, tmp_path, fake_l
 
 
 @pytest.mark.asyncio
+async def test_lead_flags_a_recipe_it_loaded_but_never_called(
+    monkeypatch, tmp_path, fake_llm_factory
+):
+    """The lead doing run 4's mistake itself: `load_recipe("theta_bn")`, then the
+    formula rewritten inline and exported under the recipe's own name."""
+    from helioai.config import settings
+    from helioai.core import agent_loop
+    from helioai.core.session import SessionStore
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
+
+    recipe = json.dumps(
+        {
+            "name": "theta_bn",
+            "code": "def theta_bn(B_up, B_dn):\n    return {'theta_bn_deg': 62.68}\n",
+            "metadata": {"outputs": "theta_bn_deg — angle between B_up and the normal"},
+        }
+    )
+    exports = {"theta_bn": {"mean": 54.85, "min": 54.85, "max": 54.85, "units": "deg"}}
+
+    async def fake_call_tool(name, arguments, trusted=None):
+        return recipe if name == "load_recipe" else _exports_result(tmp_path, exports)
+
+    monkeypatch.setattr(agent_loop.registry, "call_tool", fake_call_tool)
+
+    inline = "n = np.cross(np.cross(Bu, Bd), Bd - Bu)\nexport('theta_bn', np.array([th]), 'deg')"
+    llm = fake_llm_factory(
+        [
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[ToolCall(id="c1", name="load_recipe", arguments={"name": "theta_bn"})],
+            ),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[ToolCall(id="c2", name="run_python", arguments={"code": inline})],
+            ),
+            Message(role="assistant", content="theta_Bn = 54.85°."),
+        ]
+    )
+
+    events = await _collect(agent_loop.stream_chat(llm, "u", "s", "shock normal angle"))
+
+    flagged = [e for e in events if e["event"] == "recipe_bypassed"]
+    assert flagged, "the lead loaded theta_bn and never called it"
+    assert flagged[0]["data"]["recipes"] == [{"recipe": "theta_bn", "reason": "not_called"}]
+    assert "RECIPE CHECK" in next(e for e in events if e["event"] == "reply")["data"]["text"]
+
+
+@pytest.mark.asyncio
 async def test_lead_says_nothing_when_it_exported_nothing(monkeypatch, tmp_path, fake_llm_factory):
     """A search or a catalogue listing must not be accused of skipping a recipe."""
     from helioai.config import settings

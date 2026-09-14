@@ -83,8 +83,9 @@ official `heliophysicsPy/pyhc-actions/phep3-compliance` action.
 
 - Floors with `>=`. **No upper bounds** unless absolutely necessary, and then only with a
   tracking issue. There are currently none, and adding one needs its reason in the diff.
-- `[tool.uv] constraint-dependencies = ["torch>=2.6"]` exists only so the lock resolves a
-  torch with cp313/cp314 wheels. It is **not** a direct dependency.
+- `torch>=2.6` is a direct dependency even though HelioAI never imports torch: transformers 5
+  needs `torch>=2.5` and does not say so, and `uv pip install` of the wheel resolved 2.4.1
+  without it (see `docs/dev/dependencies.md`). Do not move it back to a uv-only constraint.
 - Lifting an upper bound **relocks the entire graph**. If you do it, read the full `uv lock`
   diff and say what moved.
 

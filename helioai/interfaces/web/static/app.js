@@ -265,8 +265,9 @@ function renderEvent(view, ev) {
   } else if (event === 'recipe_bypassed') {
     // Advisory, not a banner: exports resemble a computation with a calibrated recipe,
     // either never loaded or loaded and not actually called — worth a glance, not an alarm.
+    const suffix = { shallow_use: ' (outputs missing)', not_called: ' (never called)' };
     const names = (data.recipes || [])
-      .map(r => `${r.recipe || r}${r.reason === 'shallow_use' ? ' (outputs missing)' : ''}`)
+      .map(r => `${r.recipe || r}${suffix[r.reason] || ''}`)
       .join(', ');
     appendTlEvent(view, '⚠', `recipe check — ${names}, verify the exported numbers`, 'tl-issue');
 

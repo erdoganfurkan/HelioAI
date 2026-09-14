@@ -135,6 +135,46 @@ async def test_search_parameters_requires_query_or_queries() -> None:
     assert "error" in result
 
 
+async def test_fallback_note_names_what_actually_failed(monkeypatch) -> None:
+    """The installed 0.3.0 candidate had an index and a torch too old for transformers:
+    the dense search raised at import and the note said "RAG index not built". A client
+    model with none of our context would have told the user to build an index that
+    existed. The exception is the diagnosis, so the note carries it."""
+    import types
+
+    def boom(q, top_k=5, provider=None):
+        raise NameError("name 'nn' is not defined")
+
+    monkeypatch.setattr(rag_module, "search", boom)
+    fake_spz = types.SimpleNamespace(inventories=types.SimpleNamespace(tree=None))
+    monkeypatch.setattr(
+        "helioai.tools.speasy_tools._fallback_search", lambda spz, q, k: [{"id": "x"}]
+    )
+    monkeypatch.setitem(__import__("sys").modules, "speasy", fake_spz)
+
+    result = await search_parameters("Wind MFI GSM")
+
+    assert result["results"] == [{"id": "x"}]
+    assert "NameError: name 'nn' is not defined" in result["note"]
+    assert "index not built" not in result["note"]
+
+
+async def test_batch_fallback_note_names_what_actually_failed(monkeypatch) -> None:
+    import types
+
+    def boom(queries, top_k=5, provider=None):
+        raise RuntimeError("chroma unreachable")
+
+    monkeypatch.setattr(rag_module, "search_batch", boom)
+    monkeypatch.setattr("helioai.tools.speasy_tools._fallback_search", lambda spz, q, k: [])
+    monkeypatch.setitem(__import__("sys").modules, "speasy", types.SimpleNamespace())
+
+    result = await search_parameters(queries=["a", "b"])
+
+    assert len(result["groups"]) == 2
+    assert "RuntimeError: chroma unreachable" in result["note"]
+
+
 # ─────────────────────────────── get_timeseries ─────────────────────────────
 
 

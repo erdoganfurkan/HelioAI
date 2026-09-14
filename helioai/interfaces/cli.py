@@ -246,9 +246,10 @@ def _render_event(ev: dict) -> None:
     elif name == "recipe_bypassed":
         print(f"\n{pad}\033[93m⚠ recipe check:\033[0m")
         for r in data.get("recipes") or []:
-            reason = (
-                "never loaded" if r.get("reason") == "not_loaded" else "loaded but outputs missing"
-            )
+            reason = {
+                "not_loaded": "never loaded",
+                "not_called": "loaded but never called",
+            }.get(r.get("reason"), "loaded but outputs missing")
             print(f"{pad}  \033[93m→ {r.get('recipe')} ({reason})\033[0m")
         print()
 

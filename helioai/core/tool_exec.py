@@ -571,6 +571,25 @@ def _exported_names(artifacts: list[dict]) -> set[str]:
     }
 
 
+_DEF_LINE = re.compile(r"^[ \t]*def\s+([A-Za-z_]\w*)\s*\(", re.MULTILINE)
+
+
+def _recipe_functions(code: str) -> set[str]:
+    """Public function names a recipe defines — what "calling the recipe" means.
+
+    Private helpers are left out: `_rh_core` is the recipe's business, `rh_jump` is
+    the contract. A script-shaped recipe with no public `def` (solar_mach,
+    superposed_epoch) has nothing to call and is not judged on this signal.
+    """
+    return {n for n in _DEF_LINE.findall(code) if not n.startswith("_")}
+
+
+def _calls_any(code: str, names: set[str]) -> bool:
+    """Whether `code` invokes one of `names` — a definition of it does not count."""
+    body = _DEF_LINE.sub("", code)
+    return any(re.search(rf"\b{re.escape(n)}\s*\(", body) for n in names)
+
+
 def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tuple[str, list[dict]]:
     """Append a note when a run's exports suggest a recipe was skipped, or read but
     not actually used.
@@ -597,30 +616,50 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
       code left three inert strings named after the recipes as its only trace of having
       "used" them.
 
-    Neither signal is proof, and the second under-fires on a recipe whose declared outputs
-    share the field's ordinary vocabulary ("compression ratio", "spacecraft frame") with
-    whatever a hand-written stand-in would also naturally call itself — it catches the
-    recipes with distinctive output names, not all of them.
+    - **loaded but never called** — `load_recipe` WAS called, and no `run_python` that
+      followed it in this history invokes one of the recipe's public functions. The
+      second signal cannot see this case when the hand-written copy exports the
+      recipe's own name: on the fourth live run of 00_quickstart the analyst loaded
+      `theta_bn`, rewrote the coplanarity formula inline, exported `theta_bn` — and got
+      54.85° from a 12-minute averaging window the recipe would not have chosen. The
+      export name matched, the function never ran. The function names come from the
+      recipe source already sitting in the tool result (`compact_history` keeps it
+      verbatim), the calls from the `code` argument of the later `run_python` calls.
+      A history with no `run_python` after the load is not judged: a lead that loads a
+      recipe and delegates the computation has not bypassed anything.
+
+    None of the signals is proof, and the second under-fires on a recipe whose declared
+    outputs share the field's ordinary vocabulary ("compression ratio", "spacecraft
+    frame") with whatever a hand-written stand-in would also naturally call itself — it
+    catches the recipes with distinctive output names, not all of them. The third is
+    textual: a run that redefines a function under the recipe's own name passes it.
+    One flag per recipe; "never called" is the more specific finding and wins.
 
     Args:
         text: The finished answer.
-        history: The run's message history, to check which recipes were loaded and
-            read their declared outputs from the matching tool results.
+        history: The run's message history, to check which recipes were loaded, read
+            their declared outputs and source from the matching tool results, and see
+            what the later `run_python` calls actually invoked.
         artifacts: The run's artifacts, to read what was exported.
 
     Returns:
         The text (with a note appended when needed) and the flags raised, each
-        `{"recipe": name, "reason": "not_loaded" | "shallow_use"}`.
+        `{"recipe": name, "reason": "not_loaded" | "shallow_use" | "not_called"}`.
     """
     from helioai.tools.recipes import RECIPE_SIGNATURES
 
     loaded_calls: dict[str, str] = {}  # tool_call_id -> recipe name
-    for m in history:
+    load_positions: dict[str, int] = {}  # tool_call_id -> index in history
+    python_calls: list[tuple[int, str]] = []  # (index in history, code)
+    for i, m in enumerate(history):
         for tc in m.tool_calls or []:
             if tc.name == "load_recipe":
                 name = (tc.arguments or {}).get("name")
                 if name:
                     loaded_calls[tc.id] = name
+                    load_positions[tc.id] = i
+            elif tc.name == "run_python":
+                python_calls.append((i, str((tc.arguments or {}).get("code") or "")))
     loaded_names = set(loaded_calls.values())
 
     exported = _exported_names(artifacts)
@@ -640,8 +679,14 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
         if not raw:
             continue
         try:
-            outputs_field = (json.loads(raw).get("metadata") or {}).get("outputs", "")
-        except (ValueError, TypeError):
+            payload = json.loads(raw)
+            outputs_field = (payload.get("metadata") or {}).get("outputs", "")
+            functions = _recipe_functions(str(payload.get("code") or ""))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        later_code = [code for i, code in python_calls if i > load_positions[call_id]]
+        if functions and later_code and not any(_calls_any(c, functions) for c in later_code):
+            flags.append({"recipe": recipe_name, "reason": "not_called"})
             continue
         tokens = {
             t
@@ -654,12 +699,13 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
     if not flags:
         return text, []
 
-    lines = [
-        f"  - {f['recipe']}: never loaded"
-        if f["reason"] == "not_loaded"
-        else f"  - {f['recipe']}: loaded, but its declared outputs never appeared in what was exported"
-        for f in flags
-    ]
+    reasons = {
+        "not_loaded": "never loaded",
+        "shallow_use": "loaded, but its declared outputs never appeared in what was exported",
+        "not_called": "loaded, but none of its functions was called by any later run_python — "
+        "the computation was rewritten by hand",
+    }
+    lines = [f"  - {f['recipe']}: {reasons[f['reason']]}" for f in flags]
     return (
         f"{text}\n\n"
         "ℹ️ RECIPE CHECK — these exported values resemble a computation that has a "

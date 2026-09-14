@@ -165,6 +165,16 @@ def test_init_options_returns_initialization_options():
     assert isinstance(opts, InitializationOptions)
 
 
+def test_initialize_advertises_the_package_version():
+    """The installed 0.3.0 candidate answered `initialize` with an empty server version:
+    `Server("helioai")` never passed one, so a client showed the name and nothing else."""
+    import helioai
+
+    opts = ms._init_options()
+    assert opts.server_name == "helioai"
+    assert opts.server_version == helioai.__version__
+
+
 def test_arg_helper_found():
     assert ms._arg(["--host", "0.0.0.0", "--port", "9000"], "--host", "127.0.0.1") == "0.0.0.0"
 

@@ -53,6 +53,7 @@ from mcp.types import (
     ToolAnnotations,
 )
 
+import helioai
 import helioai.tools.setup  # noqa: F401 — registers all tools at import time
 from helioai import workspace
 from helioai.config import settings
@@ -306,6 +307,7 @@ async def _get_prompt(ctx: ServerRequestContext, params: GetPromptRequestParams)
 
 server = Server(
     "helioai",
+    version=helioai.__version__,
     on_list_tools=_list_tools,
     on_call_tool=_call_tool,
     on_list_resources=_list_resources,

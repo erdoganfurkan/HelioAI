@@ -40,10 +40,15 @@ opened at the same time to remove it.
 
 None currently.
 
-There is also a uv-only constraint, `torch>=2.6`, in `[tool.uv]`. It exists purely so the
-lockfile resolves a torch with cp313/cp314 wheels — left alone the universal resolve
-settles on 2.4.1, which has none. It is deliberately **not** a `dependencies` entry:
-HelioAI never imports torch, and PyPI users should resolve it themselves.
+`torch>=2.6` is a direct dependency although HelioAI never imports torch: it is reached
+only through `sentence-transformers`. The floor is ours because transformers 5 requires
+`torch>=2.5` and declares it in no core requirement. Installing the 0.3.0 wheel with
+`uv pip` in a fresh environment resolved torch 2.4.1 — uv backtracked torch to escape an
+unrelated conflict (mpmath 1.4 against sympy's `<1.4` cap) where pip backtracked mpmath —
+and transformers then disabled torch at import: the dense search failed and the tool fell
+back to a text scan with no error at the boundary. The floor forces every resolver to the
+same answer. 2.6 is also the first torch with cp313/cp314 wheels, which is what the former
+uv-only constraint existed for.
 
 ## Lifting a cap is not a local change
 

@@ -359,11 +359,15 @@ def _load() -> Settings:
     out_override = int(max_out) if max_out.strip().isdigit() else None
 
     data_dir = Path(os.environ.get("HELIOAI_DATA_DIR", str(_DATA)))
-    workspace_dir = Path(os.environ.get("HELIOAI_WORKSPACE", str(_DATA / "workspace")))
+    # Everything below hangs off data_dir, not off the module default. The index used
+    # to be the exception: HELIOAI_DATA_DIR moved sessions and user homes and left
+    # the Chroma index at the default location, so an installed server pointed at a
+    # prepared data directory reported "index not found" beside the index.
+    workspace_dir = Path(os.environ.get("HELIOAI_WORKSPACE", str(data_dir / "workspace")))
     workspace_ttl = int(os.environ.get("HELIOAI_WORKSPACE_TTL_S", str(86400 * 7)))
-    profile_path = Path(os.environ.get("HELIOAI_PROFILE", str(_DATA / "profile.md")))
+    profile_path = Path(os.environ.get("HELIOAI_PROFILE", str(data_dir / "profile.md")))
     recipes_dir = Path(os.environ.get("HELIOAI_RECIPES_DIR", str(_PKG_RECIPES)))
-    catalogs_dir = Path(os.environ.get("HELIOAI_CATALOGS_DIR", str(_DATA / "catalogs")))
+    catalogs_dir = Path(os.environ.get("HELIOAI_CATALOGS_DIR", str(data_dir / "catalogs")))
     hybrid_enabled = os.environ.get("HELIOAI_RAG_HYBRID", "1") != "0"
 
     dev_token = os.environ.get("HELIOAI_DEV_TOKEN", "")
@@ -386,7 +390,7 @@ def _load() -> Settings:
             provider=os.environ.get("HELIOAI_VISION_PROVIDER", "azure").lower(),
             model=os.environ.get("HELIOAI_VISION_MODEL", ""),
         ),
-        rag=RAGConfig(hybrid_enabled=hybrid_enabled),
+        rag=RAGConfig(hybrid_enabled=hybrid_enabled, chroma_dir=data_dir / "chroma"),
         dev=DevConfig(token=dev_token),
         llm=LLMConfig(
             provider=provider,

@@ -116,6 +116,23 @@ signal below detects. What that qualification does and does not cover is listed 
 
 ### Fixed
 
+- **`HELIOAI_DATA_DIR` did not move the search index.** Sessions and user homes followed
+  it; the Chroma index, the legacy profile and catalog paths stayed at the default
+  location, so an installed server pointed at a prepared data directory reported
+  `ChromaDB index not found` beside the index. Everything now hangs off `data_dir`. In the
+  Docker image this puts the index at `/app/data/chroma` — the same directory as a clone's
+  `data/chroma`, which the compose file already mounts — instead of
+  `/app/data/helioai/chroma`.
+- **`torch` is a declared dependency (`>=2.6`).** HelioAI never imports it, but transformers
+  5 requires `torch>=2.5` without saying so, and `uv pip install` of the wheel in a fresh
+  environment resolved torch 2.4.1 to escape an unrelated `mpmath` conflict. transformers
+  then disabled torch at import, the dense search failed, and `search_parameters` fell
+  back to a text scan with no error at the tool boundary.
+- **The search fallback note names what failed.** It said `RAG index not built` whatever
+  the dense search had raised — on the install above, it told the user to build an index
+  that existed. The note now carries the exception.
+- `helioai-mcp` answers `initialize` with the package version; it used to send an empty
+  string.
 - **`load_data("<full id>")` returned the wrong spacecraft.** Two products ending in the
   same parameter name slugged to the same key and the resolver matched on that suffix:
   asking for `MISSION_B`'s field returned `MISSION_A`'s — right units, plausible numbers,

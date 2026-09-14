@@ -48,6 +48,29 @@ def test_recipes_dir_defaults_to_the_packaged_copy():
     assert settings.recipes.recipes_dir == _PKG_RECIPES
 
 
+def test_data_dir_override_moves_the_index_too(monkeypatch, tmp_path):
+    """`HELIOAI_DATA_DIR` is documented as the one knob that relocates HelioAI's data.
+    It moved sessions and user homes and left the Chroma index at the module default:
+    the installed 0.3.0 candidate, pointed at a prepared data directory with the index
+    inside, answered `ChromaDB index not found at ~/.local/share/helioai/chroma`.
+    """
+    from helioai import config
+
+    monkeypatch.setenv("HELIOAI_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("HELIOAI_LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "probe")
+    for var in ("HELIOAI_WORKSPACE", "HELIOAI_PROFILE", "HELIOAI_CATALOGS_DIR"):
+        monkeypatch.delenv(var, raising=False)
+
+    s = config._load()
+
+    assert s.data_dir == tmp_path
+    assert s.rag.chroma_dir == tmp_path / "chroma"
+    assert s.workspace.workspace_dir == tmp_path / "workspace"
+    assert s.profile.profile_path == tmp_path / "profile.md"
+    assert s.catalogs.catalogs_dir == tmp_path / "catalogs"
+
+
 def test_dot_env_in_the_working_directory_is_read_once_installed():
     """`load_dotenv(_ROOT / ".env")` alone is a no-op once installed: _ROOT is
     site-packages/, which never holds a user's .env. The README instructs

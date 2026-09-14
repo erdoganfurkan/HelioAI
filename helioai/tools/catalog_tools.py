@@ -23,6 +23,28 @@ def _ev_iso(ev, attr_time: str, attr_plain: str) -> str:
     return raw.replace(" ", "T")
 
 
+def _starts_within(ev, start: str | None, stop: str | None) -> bool:
+    """Whether an event's *start* lies in `[start, stop]`; an open side is unbounded.
+
+    Both catalog tools select events by where they begin, deliberately: a superposed
+    epoch analysis aligns events on their onset, and "every ICME of 2015" means the
+    ICMEs that arrived in 2015. An event that started before the window and ended
+    inside it is therefore out, one that started inside and ran past the end is in.
+    The comparison is on 19-character ISO strings, which sort chronologically.
+
+    Args:
+        ev: A speasy event (`start_time`) or a reconstructed one (`start`).
+        start: Inclusive ISO lower bound, or None.
+        stop: Inclusive ISO upper bound, or None.
+    """
+    ev_start = _ev_iso(ev, "start_time", "start")
+    if start and ev_start < start:
+        return False
+    if stop and ev_start > stop:
+        return False
+    return True
+
+
 def _event_value(ev, column: str):
     """Extract a column value from an event (start/stop are virtual columns)."""
     if column == "start":
@@ -376,17 +398,9 @@ async def get_catalog(
 
     nb_total = len(events)
 
-    # 1. Time window filter
+    # 1. Time window filter — by event start, see _starts_within
     if start or stop:
-        filtered: list = []
-        for ev in events:
-            ev_start = _ev_iso(ev, "start_time", "start")
-            if start and ev_start < start:
-                continue
-            if stop and ev_start > stop:
-                continue
-            filtered.append(ev)
-        events = filtered
+        events = [ev for ev in events if _starts_within(ev, start, stop)]
 
     # 2. where filter
     if where and isinstance(where, dict):
@@ -514,12 +528,7 @@ async def get_events_timeseries(
     except Exception as e:
         return {"error": f"Cannot iterate catalog: {e}"}
 
-    filtered = []
-    for ev in events:
-        ev_start = _ev_iso(ev, "start_time", "start")
-        if ev_start < start or ev_start > stop:
-            continue
-        filtered.append(ev)
+    filtered = [ev for ev in events if _starts_within(ev, start, stop)]
 
     if not filtered:
         return {

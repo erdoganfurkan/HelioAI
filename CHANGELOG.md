@@ -52,6 +52,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   carries `origin="correction"`, the web replay shows it as a system note, and the
   exported notebook writes it as HelioAI's note rather than under **You:**. What the
   model sees is byte-for-byte unchanged.
+- **The two catalog tools now state, and share, one window rule.** Both select events
+  by where they *begin* — the convention for a superposed-epoch analysis and for "every
+  ICME of 2015" — but `get_events_timeseries` described its window as "events in this
+  window", which reads as overlap, and each tool carried its own copy of the filter.
+  One helper, one wording, and tests on the edge events.
 
 ### Changed
 

@@ -387,11 +387,11 @@ registry.register(
             },
             "start": {
                 "type": "string",
-                "description": "ISO 8601 start — restrict to events in this window.",
+                "description": "ISO 8601 start — keep events beginning after this time.",
             },
             "stop": {
                 "type": "string",
-                "description": "ISO 8601 stop — restrict to events in this window.",
+                "description": "ISO 8601 stop — keep events beginning before this time.",
             },
             "max_events": {
                 "type": "integer",

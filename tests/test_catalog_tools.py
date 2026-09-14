@@ -639,3 +639,80 @@ async def test_get_events_timeseries_scalar_stats_unchanged(monkeypatch) -> None
     stat = result["per_event_stats"][0]
     assert "mean" in stat
     assert "components" not in stat
+
+
+# ── the window rule: an event is selected by where it STARTS ──────────────────
+#
+# Both catalog tools filter on the event start — the convention for a superposed
+# epoch analysis, whose events are aligned on their onset, and for "every ICME of
+# 2015". The four events below pin the edges: one ending inside the window but
+# starting before it (out), two starting inside (in, whatever their end), one after.
+
+_EDGE_EVENTS = [
+    ("2015-03-16T20:00:00", "2015-03-17T06:00:00"),  # starts before, ends inside → out
+    ("2015-03-17T04:00:00", "2015-03-17T08:00:00"),  # inside → in
+    ("2015-03-17T20:00:00", "2015-03-18T09:00:00"),  # starts inside, ends after → in
+    ("2015-03-19T00:00:00", "2015-03-19T12:00:00"),  # after → out
+]
+_WINDOW = ("2015-03-17T00:00:00", "2015-03-18T00:00:00")
+
+
+def _edge_catalog(monkeypatch, get_data_for_intervals=None):
+    cat_idx = _make_catalog_index("sharedcatalog_41", "shocks", "", 4, "2015-01-01", "2015-12-31")
+    mock_cat = MagicMock()
+    mock_cat.__iter__ = MagicMock(return_value=iter([_make_event(s, e) for s, e in _EDGE_EVENTS]))
+    mock_spz = _make_spz({"sharedcatalog_41": cat_idx}, {})
+
+    def get_data(arg, intervals=None):
+        if intervals is not None:
+            return get_data_for_intervals(intervals)
+        return mock_cat
+
+    mock_spz.get_data.side_effect = get_data
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+
+
+def test_starts_within_selects_on_the_event_start() -> None:
+    from helioai.tools.catalog_tools import _starts_within
+
+    start, stop = _WINDOW
+    verdicts = [_starts_within(_make_event(s, e), start, stop) for s, e in _EDGE_EVENTS]
+    assert verdicts == [False, True, True, False]
+
+
+def test_starts_within_with_one_open_side() -> None:
+    from helioai.tools.catalog_tools import _starts_within
+
+    ev = _make_event("2015-03-17T04:00:00", "2015-03-17T08:00:00")
+    assert _starts_within(ev, "2015-03-17T00:00:00", None)
+    assert _starts_within(ev, None, "2015-03-18T00:00:00")
+    assert not _starts_within(ev, "2015-03-17T05:00:00", None)
+    assert _starts_within(ev, None, None)
+
+
+async def test_get_catalog_window_keeps_the_two_events_that_start_inside(monkeypatch) -> None:
+    _edge_catalog(monkeypatch)
+    result = await get_catalog("amda/sharedcatalog_41", start=_WINDOW[0], stop=_WINDOW[1])
+    assert "error" not in result
+    assert result["nb_events_filtered"] == 2
+    assert [ev["start"] for ev in result["sample"]] == [_EDGE_EVENTS[1][0], _EDGE_EVENTS[2][0]]
+
+
+async def test_get_events_timeseries_applies_the_same_window_rule(monkeypatch) -> None:
+    import numpy as np
+
+    fake_ts = MagicMock()
+    fake_ts.time = np.array(["2015-03-17T05:00:00"], dtype="datetime64[s]")
+    fake_ts.values = np.array([[5.0, -3.0, 2.0]])
+    fake_ts.unit = "nT"
+    selected: list = []
+
+    def for_intervals(intervals):
+        selected.extend(intervals)
+        return [fake_ts for _ in intervals]
+
+    _edge_catalog(monkeypatch, for_intervals)
+    result = await get_events_timeseries("amda/sharedcatalog_41", "amda/imf_gsm", *_WINDOW)
+    assert "error" not in result
+    assert result["n_events_downloaded"] == 2
+    assert [ev.start_time for ev in selected] == [_EDGE_EVENTS[1][0], _EDGE_EVENTS[2][0]]

@@ -20,7 +20,7 @@ import re
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from helioai.core.event_display import describe_tool_call
@@ -65,6 +65,8 @@ class RunEnd:
         capped: The turn budget ran out before the model answered.
         empty: The model returned neither text nor a tool call and the policy stops
             there (the lead's output-budget failure).
+        claims: The numbers the model says its answer states, each with `name`, `value`,
+            `units` and `source`, when it closed with `final_answer`; empty for prose.
     """
 
     final_text: str | None
@@ -73,6 +75,7 @@ class RunEnd:
     usage: dict
     capped: bool = False
     empty: bool = False
+    claims: list[dict] = field(default_factory=list)
 
 
 def _zero_usage() -> dict:
@@ -80,6 +83,74 @@ def _zero_usage() -> dict:
 
 
 SEARCH_TOOLS_NAME = "search_tools"
+FINAL_ANSWER_NAME = "final_answer"
+
+FINAL_ANSWER_DEF = ToolDef(
+    name=FINAL_ANSWER_NAME,
+    description=(
+        "Deliver your final answer together with the list of numbers it states. Call it "
+        "alone, once every other tool call of the turn has returned. `answer` is the full "
+        "text of the reply; `claims` names each quantity you report with its value, units "
+        "and where it comes from."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "answer": {"type": "string", "description": "The complete reply, as prose."},
+            "claims": {
+                "type": "array",
+                "description": "One entry per number stated in the answer.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The export or dataset the number comes from, "
+                            "or a short label when it does not.",
+                        },
+                        "value": {"description": "The number as stated in the answer."},
+                        "units": {"type": "string"},
+                        "source": {
+                            "type": "string",
+                            "description": "The export name it was computed as, "
+                            "'literature' for a published value, 'asserted' for a number "
+                            "you did not compute.",
+                        },
+                    },
+                    "required": ["name", "value"],
+                },
+            },
+        },
+        "required": ["answer"],
+    },
+)
+
+_MAX_CLAIMS = 50
+
+
+def _claims_from(raw: object) -> list[dict]:
+    """Keep the well-formed claims of a `final_answer` call and drop the rest quietly:
+    a malformed entry must not cost the answer it travels with."""
+    if not isinstance(raw, list):
+        return []
+    claims: list[dict] = []
+    for item in raw[:_MAX_CLAIMS]:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("name"), str)
+            or "value" not in item
+        ):
+            continue
+        claims.append(
+            {
+                "name": item["name"].strip(),
+                "value": item["value"],
+                "units": str(item.get("units") or ""),
+                "source": str(item.get("source") or "asserted"),
+            }
+        )
+    return claims
+
 
 SEARCH_TOOLS_DEF = ToolDef(
     name=SEARCH_TOOLS_NAME,
@@ -172,6 +243,18 @@ class Runner:
             assert response is not None
             history.append(response)
 
+            claims: list[dict] = []
+            if policy.final_answer and self._is_final_answer(response):
+                # The answer arrived as a tool call. The history keeps it as the plain
+                # assistant message it is — the export, the replay and the next turn's
+                # context read assistant text, and the wire needs no tool reply for a
+                # call that no longer exists.
+                args = response.tool_calls[0].arguments or {}
+                final_text = str(args.get("answer") or "")
+                claims = _claims_from(args.get("claims"))
+                history[-1] = replace(response, content=final_text, tool_calls=None)
+                response = history[-1]
+
             if not response.tool_calls:
                 final_text = response.content or ""
                 if policy.stop_on_empty_reply and not final_text.strip():
@@ -192,7 +275,7 @@ class Runner:
                             )
                         )
                         continue
-                yield self._end(final_text)
+                yield self._end(final_text, claims=claims)
                 return
 
             if policy.comment_replies and response.content and response.content.strip():
@@ -223,6 +306,12 @@ class Runner:
                 try:
                     if tc.name == SEARCH_TOOLS_NAME and policy.deferred:
                         result = self._search_tools(tc)
+                    elif tc.name == FINAL_ANSWER_NAME and policy.final_answer:
+                        result = ToolResult.failure(
+                            tc.name,
+                            "final_answer must be called alone, once the other tool calls of "
+                            "the turn have returned; call it again by itself",
+                        )
                     elif tc.name in policy.deferred and tc.name not in self.revealed:
                         # The model named a deferred tool without asking for it: the name
                         # was right, so it already knows the tool, and refusing would only
@@ -320,7 +409,14 @@ class Runner:
         shown = [t for t in policy.tools if t.name not in withheld]
         if withheld:
             shown.append(SEARCH_TOOLS_DEF)
+        if policy.final_answer:
+            shown.append(FINAL_ANSWER_DEF)
         return shown
+
+    @staticmethod
+    def _is_final_answer(response: Message) -> bool:
+        calls = response.tool_calls or []
+        return len(calls) == 1 and calls[0].name == FINAL_ANSWER_NAME
 
     def _search_tools(self, tc: ToolCall) -> ToolResult:
         query = str((tc.arguments or {}).get("query") or "").lower()
@@ -350,7 +446,14 @@ class Runner:
         trusted = trusted_args(tc.name, self.ctx, no_network=self.policy.sandbox_no_network)
         return await self.registry.call_tool(tc.name, tc.arguments, trusted=trusted)
 
-    def _end(self, final_text: str | None, *, capped: bool = False, empty: bool = False) -> RunEnd:
+    def _end(
+        self,
+        final_text: str | None,
+        *,
+        capped: bool = False,
+        empty: bool = False,
+        claims: list[dict] | None = None,
+    ) -> RunEnd:
         return RunEnd(
             final_text=final_text,
             turns=self.turns,
@@ -358,4 +461,5 @@ class Runner:
             usage=self.usage,
             capped=capped,
             empty=empty,
+            claims=list(claims or []),
         )

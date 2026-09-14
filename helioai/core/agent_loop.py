@@ -96,6 +96,9 @@ Then you interpret and reply.
 - A `task` result opens with a `findings` table: the values that run actually computed, with their units. Those are the numbers you may state as measurements, verbatim — do not round them into a different number. Any figure that is not in `findings` and did not come out of your own `run_python` is an estimate, and must be worded as one ("of the order of", "roughly"). Publishing an unmeasured number as a measurement is the worst failure mode of this system.
 - Relative geometry between spacecraft — which is upstream, sunward, closer, hit first — is read off the positions that were fetched, never recalled from what a mission is usually for. Quote the coordinates next to the claim; if they disagree with it, the claim is wrong. Reference frames: GSE/GSM are geocentric with +X toward the Sun (larger X = sunward, hit first by a radial front); HEE/HCI are heliocentric, so distance from the Sun is what orders them.
 
+## Closing an analysis
+When your answer states measured quantities, deliver it with `final_answer(answer, claims)` rather than as a plain message: `answer` is the full text you would have written, and `claims` lists every number it states — `name` (the export or dataset it comes from, or a short label), `value`, `units`, and `source`: the export name it was computed as, `"literature"` for a published value, `"asserted"` for a number you did not compute. Call it alone, after your other tool calls have returned. A plain text reply remains fine when nothing was measured.
+
 ## Workflow rules
 - Call `present_plan(title, steps)` as your FIRST action ONLY for genuinely multi-stage work (multi-mission comparison, event detection, superposed-epoch, or a chain of distinct analyses). For a straightforward resolve→download→plot of one or two parameters, skip it and act directly. When you do present a plan, continue executing immediately — do NOT wait for approval.
 - When a tool returns a `quality` block with `notable: true`, mention it briefly (missing %, gaps, >5σ outliers); stay silent on clean data.
@@ -425,6 +428,7 @@ async def _stream_turn(
         stream_replies=True,
         stop_on_empty_reply=True,
         deferred=_DEFERRED_TOOLS,
+        final_answer=True,
     )
     runner = Runner(
         policy,
@@ -480,7 +484,7 @@ async def _stream_turn(
         # was the hole, not an edge case: the same catalogue and recipe checks a
         # sub-agent's answer gets, against what this run exported.
         final_text, bogus, bypassed = check_answer(end.final_text or "", history, end.artifacts)
-        yield make("reply", text=final_text)
+        yield make("reply", text=final_text, **({"claims": end.claims} if end.claims else {}))
         if bogus:
             log.warning("lead_invented_ids", ids=bogus)
             yield make("invalid_ids", ids=bogus)

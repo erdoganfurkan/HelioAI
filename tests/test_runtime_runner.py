@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from support.scripted import ScriptedLLM, ScriptedRegistry, assistant_calls, assistant_text
 
-from helioai.core.llm.base import Message, ToolDef
+from helioai.core.llm.base import Message, ToolCall, ToolDef
 from helioai.runtime.policies import Policy
 from helioai.runtime.runner import RunEnd, Runner
 from helioai.tools.results import ToolResult
@@ -368,3 +368,103 @@ async def test_the_lead_streams_its_answer_and_the_journal_keeps_only_the_reply(
     assert kinds.count("reply_delta") >= 3 and kinds.count("reply") == 1
     journaled = [e["event"] for e in test_store.events("web", "s-stream")]
     assert "reply_delta" not in journaled and journaled.count("reply") == 1
+
+
+# ── final_answer ──────────────────────────────────────────────────────────────────
+
+
+def _final_answer(answer: str, claims: list | None = None) -> Message:
+    return Message(
+        role="assistant",
+        content="",
+        tool_calls=[
+            ToolCall(
+                id="call_fa", name="final_answer", arguments={"answer": answer, "claims": claims}
+            )
+        ],
+    )
+
+
+async def test_final_answer_closes_the_run_with_its_text_and_claims_and_a_plain_history():
+    """The answer arrives as a tool call; the run ends with it, the claims travel on the
+    RunEnd, and the history keeps a plain assistant message — the export, the replay and
+    the next turn read assistant text, and the wire needs no reply to a vanished call."""
+    claims = [
+        {"name": "theta_bn", "value": 57.5, "units": "deg", "source": "theta_bn"},
+        {"name": "r_B", "value": 2.5, "source": "compression_ratio"},
+        {"name": "Dst", "value": -223, "units": "nT", "source": "literature"},
+    ]
+    llm = ScriptedLLM([_final_answer("θ_Bn = 57.5°, r_B = 2.5, Dst −223 nT.", claims)])
+    history = [Message(role="user", content="q")]
+    events, end = await _drain(Runner(_policy(final_answer=True), llm), history)
+
+    assert events == []
+    assert end.final_text == "θ_Bn = 57.5°, r_B = 2.5, Dst −223 nT."
+    assert end.claims == [
+        {"name": "theta_bn", "value": 57.5, "units": "deg", "source": "theta_bn"},
+        {"name": "r_B", "value": 2.5, "units": "", "source": "compression_ratio"},
+        {"name": "Dst", "value": -223, "units": "nT", "source": "literature"},
+    ]
+    assert history[-1].role == "assistant" and history[-1].tool_calls is None
+    assert history[-1].content == end.final_text
+    assert "final_answer" in llm.calls[0]["tools"]
+
+
+async def test_malformed_claims_are_dropped_without_losing_the_answer():
+    llm = ScriptedLLM(
+        [_final_answer("ok", [{"value": 1}, "junk", {"name": "n", "value": 2, "units": None}])]
+    )
+    _, end = await _drain(
+        Runner(_policy(final_answer=True), llm), [Message(role="user", content="q")]
+    )
+    assert end.final_text == "ok"
+    assert end.claims == [{"name": "n", "value": 2, "units": "", "source": "asserted"}]
+
+
+async def test_final_answer_bundled_with_other_calls_is_refused_and_the_run_goes_on():
+    bundled = Message(
+        role="assistant",
+        content="",
+        tool_calls=[
+            ToolCall(id="c0", name="list_recipes", arguments={}),
+            ToolCall(id="c1", name="final_answer", arguments={"answer": "too early"}),
+        ],
+    )
+    llm = ScriptedLLM([bundled, _final_answer("now")])
+    reg = ScriptedRegistry({"list_recipes": {"recipes": []}})
+    history = [Message(role="user", content="q")]
+    events, end = await _drain(Runner(_policy(final_answer=True), llm, registry=reg), history)
+    refusal = next(m for m in history if m.role == "tool" and m.name == "final_answer")
+    assert "alone" in refusal.content
+    assert end.final_text == "now" and end.turns == 2
+    assert [e["data"]["name"] for e in events if e["event"] == "tool_result"] == [
+        "list_recipes",
+        "final_answer",
+    ]
+
+
+async def test_a_policy_without_final_answer_neither_offers_nor_honours_it():
+    llm = ScriptedLLM([assistant_text("plain prose")])
+    _, end = await _drain(Runner(_policy(), llm), [Message(role="user", content="q")])
+    assert "final_answer" not in llm.calls[0]["tools"]
+    assert end.claims == [] and end.final_text == "plain prose"
+
+
+async def test_the_lead_puts_the_claims_on_its_reply_and_journals_them(monkeypatch, tmp_path):
+    from helioai.core import agent_loop
+    from helioai.core.session import SessionStore
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr(agent_loop, "store", test_store)
+    claims = [{"name": "theta_bn", "value": 57.5, "units": "deg", "source": "theta_bn"}]
+    llm = ScriptedLLM([_final_answer("θ_Bn = 57.5°.", claims)])
+
+    live = [ev async for ev in agent_loop.stream_chat(llm, "web", "s-claims", "q")]
+    reply = next(e for e in live if e["event"] == "reply")
+    assert reply["data"]["text"] == "θ_Bn = 57.5°." and reply["data"]["claims"] == [
+        {"name": "theta_bn", "value": 57.5, "units": "deg", "source": "theta_bn"}
+    ]
+    journaled = next(e for e in test_store.events("web", "s-claims") if e["event"] == "reply")
+    assert journaled["data"]["claims"] == reply["data"]["claims"]
+    saved = test_store.get_or_create("web", "s-claims")
+    assert saved[-1].role == "assistant" and saved[-1].content == "θ_Bn = 57.5°."

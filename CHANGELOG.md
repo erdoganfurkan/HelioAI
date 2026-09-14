@@ -126,6 +126,14 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   budget, whether the first turn must call a tool. The two public generators are thin
   wrappers around it and every interface sees exactly the events it saw, in the same
   order — the loop tests and the journal golden did not change.
+- **The answer can carry its numbers.** The lead may close an analysis with
+  `final_answer(answer, claims)`: the reply as prose, plus one entry per number it states
+  — name, value, units and where it comes from (the export it was computed as, a
+  published value, or a plain assertion). The history keeps the answer as an ordinary
+  assistant message, so the export, the replay and the next turn see nothing new; the
+  claims ride on the `reply` event and into the journal, ready to be judged by name
+  rather than found by regex. A plain text reply remains accepted. The lead's prompt
+  gains one paragraph saying when to use it.
 - **The answer streams.** The lead's text is shown as the model writes it — token by
   token in the CLI and in the browser, where a live bubble is re-rendered as Markdown
   once the reply is complete; the notebook keeps rendering the finished answer. Every

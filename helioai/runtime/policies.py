@@ -50,6 +50,10 @@ class Policy:
             them with `search_tools`, or calls one by name. Twenty-one definitions rode
             on every call of a lead turn; the ten formulary and catalogue ones are used
             in a minority of sessions and cost a third of that payload each time.
+        final_answer: Whether the model may close the run with `final_answer(answer,
+            claims)` — the answer plus the list of numbers it states, each with its
+            source — instead of a plain message. Prose is still accepted; the claims are
+            what lets a verdict compare numbers by name instead of by regex.
     """
 
     name: str
@@ -67,6 +71,7 @@ class Policy:
     provider: str | None = None
     model: str | None = None
     deferred: frozenset[str] = frozenset()
+    final_answer: bool = False
 
     @property
     def event_extra(self) -> dict:

@@ -134,6 +134,16 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   claims ride on the `reply` event and into the journal, ready to be judged by name
   rather than found by regex. A plain text reply remains accepted. The lead's prompt
   gains one paragraph saying when to use it.
+- **The plan is held to.** `present_plan` was a display: the loop forwarded the steps to
+  the interfaces and forgot them, so a plan that promised the `theta_bn` recipe and ran
+  hand-written arithmetic instead looked exactly like one that was followed. The plan is
+  now kept as data (`runtime.plan.Plan`) and, when the turn ends, compared with the tools
+  the lead actually called: one `plan_report` event names the planned tools that were
+  used, the ones that were not, and the ones used without being planned, with the share
+  followed. It describes and never blocks — a capped turn reports how far the plan got
+  before its error — and it is journaled and rendered as one line by the three
+  interfaces. Only the lead's own calls count; the scaffolding calls (the plan itself, the
+  skills, `search_tools`, `final_answer`) count for nothing on either side.
 - **One verdict on the answer.** The lead's reply was judged from four places — the
   catalogue ids, the recipe bypass, the numbers in the prose, the figures — each with its
   own event and none aware of the others. `runtime.validator` runs them in one call, and

@@ -45,6 +45,7 @@ from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
 )
 from helioai.logging_config import get_logger
 from helioai.runtime.context import RunContext
+from helioai.runtime.plan import Plan, adherence
 from helioai.runtime.policies import Policy
 from helioai.runtime.runner import RunEnd, Runner
 from helioai.runtime.validator import validate
@@ -442,6 +443,8 @@ async def _stream_turn(
     try:
         end: RunEnd | None = None
         figure_reviews: list[str] = []
+        plan: Plan | None = None
+        tool_calls: list[dict] = []
         async with aclosing(runner.run(history)) as run:
             async for item in run:
                 if isinstance(item, RunEnd):
@@ -453,11 +456,17 @@ async def _stream_turn(
                         yield ev
                 elif item["event"] == "figure_review":
                     figure_reviews.append(item["data"]["text"])
+                elif item["event"] == "plan":
+                    plan = Plan.from_payload(item["data"])
+                elif item["event"] == "tool_call":
+                    tool_calls.append(item)
         assert end is not None
 
         if end.capped:
             log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
             store.save(user_id, session_id, history)
+            if plan is not None:
+                yield make("plan_report", **adherence(plan, tool_calls))
             yield make(
                 "error", message=f"agent loop exceeded {settings.agent.max_iterations} iterations"
             )
@@ -508,6 +517,8 @@ async def _stream_turn(
             if verdict.contradicted:
                 log.warning("lead_claims_contradicted", claims=verdict.contradicted)
             yield make("verdict", **verdict.as_event())
+        if plan is not None:
+            yield make("plan_report", **adherence(plan, tool_calls))
         yield make("done", n_iterations=end.turns)
 
     except asyncio.CancelledError:

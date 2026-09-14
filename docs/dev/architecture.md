@@ -69,6 +69,14 @@ one place they are set), and the four tools that write — `run_python`, `get_ti
 arguments (`tool_exec.trusted_args`), so a tool called over MCP or from a test writes
 where its caller said. The contextvars remain the hot path for everything that only reads.
 
+A lead turn closes with two judgements, both descriptive and neither blocking.
+`runtime.validator.validate` runs the answer checks in one place — catalogue ids, recipe
+bypass, the numbers in the prose, the figure reviews — and, when the model closed with
+`final_answer(answer, claims)`, places each named number against the provenance ledger by
+name with a unit-aware tolerance; the result is one `verdict` event. `runtime.plan.adherence`
+compares the tools the lead called with the plan it presented and emits one `plan_report`.
+Both are journaled with the rest of the turn.
+
 ## Registry
 
 Tools are async functions registered with a JSON Schema:

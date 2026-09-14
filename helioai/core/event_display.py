@@ -221,3 +221,29 @@ def describe_verdict(data: dict) -> tuple[str, list[str]]:
             source = c.get("source") or "asserted"
             lines.append(f"unsourced: {c.get('name')} = {stated} — source: {source}{note}")
     return summary, lines[:8]
+
+
+def describe_plan_report(data: dict) -> str:
+    """One line on how the turn followed its plan, for a `plan_report` event.
+
+    Reads as a sentence a person can act on — "3/4 planned tools used, not
+    get_timeseries; unplanned: find_papers" — rather than a ratio alone. A plan that
+    named no tool is said so; nothing here judges whether the deviation was right.
+
+    Args:
+        data: The event payload.
+
+    Returns:
+        The line, without any styling.
+    """
+    planned, executed = data.get("planned") or [], data.get("executed") or []
+    missed, unplanned = data.get("missed_tools") or [], data.get("unplanned_tools") or []
+    if not planned:
+        used = ", ".join(executed) if executed else "none"
+        return f"plan named no tools — used: {used}"
+    text = f"plan — {len(planned) - len(missed)}/{len(planned)} planned tools used"
+    if missed:
+        text += f", not {', '.join(missed)}"
+    if unplanned:
+        text += f"; unplanned: {', '.join(unplanned)}"
+    return text

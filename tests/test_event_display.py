@@ -222,3 +222,40 @@ def test_describe_verdict_with_every_claim_backed_is_one_line():
         {"matched": 3, "contradicted": 0, "unsourced": 0, "claims": []}
     )
     assert summary.startswith("claims — 3 backed") and lines == []
+
+
+# ── plan report ───────────────────────────────────────────────────────────────
+
+
+def test_describe_plan_report_names_the_skipped_and_the_improvised_tools():
+    from helioai.core.event_display import describe_plan_report
+
+    line = describe_plan_report(
+        {
+            "title": "t",
+            "planned": ["search_parameters", "get_timeseries", "run_python"],
+            "executed": ["search_parameters", "find_papers", "run_python"],
+            "unplanned_tools": ["find_papers"],
+            "missed_tools": ["get_timeseries"],
+            "ratio": 0.67,
+        }
+    )
+    assert line == "plan — 2/3 planned tools used, not get_timeseries; unplanned: find_papers"
+
+
+def test_describe_plan_report_for_a_plan_followed_exactly_is_just_the_count():
+    from helioai.core.event_display import describe_plan_report
+
+    line = describe_plan_report(
+        {"planned": ["run_python"], "executed": ["run_python"], "ratio": 1.0}
+    )
+    assert line == "plan — 1/1 planned tools used"
+
+
+def test_describe_plan_report_says_when_the_plan_named_no_tool():
+    from helioai.core.event_display import describe_plan_report
+
+    assert describe_plan_report({"planned": [], "executed": ["run_python"], "ratio": None}) == (
+        "plan named no tools — used: run_python"
+    )
+    assert describe_plan_report({"planned": [], "executed": []}).endswith("used: none")

@@ -174,6 +174,11 @@ def _render_jupyter_event(ev: dict) -> None:
             lines.append(f"{n}. {step.get('description', '')}{suffix}")
         display(Markdown("\n".join(lines)))
 
+    elif name == "plan_report":
+        from helioai.core.event_display import describe_plan_report
+
+        display(Markdown(f"**📋 {describe_plan_report(data)}**"))
+
     elif name == "figure_review":
         display(Markdown(f"**🔍 figure review** — {data.get('text', '')}"))
 

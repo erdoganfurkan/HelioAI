@@ -35,6 +35,10 @@ KINDS: dict[str, tuple[str, ...]] = {
     "artifact": ("kind", "tool"),
     "skill_loaded": ("name",),
     "plan": ("title", "steps"),
+    # How the turn followed the plan it opened with: the tools the plan named, the ones
+    # the lead called, and the two differences. Descriptive only — emitted once, at the
+    # end of a turn that presented a plan, and never blocks or corrects anything.
+    "plan_report": ("title", "planned", "executed", "unplanned_tools", "missed_tools", "ratio"),
     "figure_review": ("turn", "text"),
     "provenance": ("matched", "contradicted", "derived", "unsourced", "details"),
     # The one judgement on an answer that named its numbers (`final_answer`): each claim
@@ -74,6 +78,7 @@ LEAD_ONLY: frozenset[str] = frozenset(
         "reply_delta",
         "reply",
         "plan",
+        "plan_report",
         "provenance",
         "verdict",
         "sub_agent_start",

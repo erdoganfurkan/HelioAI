@@ -246,6 +246,12 @@ def _render_event(ev: dict) -> None:
             print(f"{pad}  \033[96m{n}.\033[0m {step.get('description', '')}{suffix}")
         print()
 
+    elif name == "plan_report":
+        from helioai.core.event_display import describe_plan_report
+
+        colour = "93" if data.get("missed_tools") or data.get("unplanned_tools") else "90"
+        print(f"{pad}\033[{colour}m📋 {describe_plan_report(data)}\033[0m")
+
     elif name == "figure_review":
         print(f"{pad}\033[95m🔍 figure review: {data.get('text', '')}\033[0m")
 

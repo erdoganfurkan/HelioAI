@@ -272,6 +272,21 @@ function renderEvent(view, ev) {
     // reader, not a trace of what the agent did.
     renderPlan(view, data);
 
+  } else if (event === 'plan_report') {
+    // How the turn followed the plan it opened with. A timeline line, not a chat
+    // bubble: it is a trace of what the agent did against what it said.
+    const planned = data.planned || [], missed = data.missed_tools || [], unplanned = data.unplanned_tools || [];
+    let text;
+    if (!planned.length) {
+      text = `plan named no tools — used: ${(data.executed || []).join(', ') || 'none'}`;
+    } else {
+      text = `plan — ${planned.length - missed.length}/${planned.length} planned tools used`;
+      if (missed.length) text += `, not ${missed.join(', ')}`;
+      if (unplanned.length) text += `; unplanned: ${unplanned.join(', ')}`;
+    }
+    const deviated = missed.length || unplanned.length;
+    appendTlEvent(view, deviated ? '⚠' : '✓', text, deviated ? 'tl-issue' : 'tl-ok');
+
   } else if (event === 'figure_review') {
     renderFigureReview(view, data.text);
 

@@ -143,6 +143,10 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   default directory to the configured one, never overwrites, and can be re-run. The
   `search_parameters` error names the legacy copy when it exists, so an upgraded
   install is not sent into an hour-long rebuild.
+- `plasmapy>=2026.2` (the version the lock already resolved); classifiers now say
+  `Development Status :: 4 - Beta`, `Python :: 3 :: Only`, the three operating systems
+  (the sandbox is only real on Linux), `Framework :: Jupyter` and `Typing :: Typed`, and
+  the wheel ships a `py.typed` marker.
 - The session database gains `messages.origin` and `messages.name` columns, added
   automatically the first time an existing database is opened. `name` records which
   tool produced a `tool` message; readers no longer have to recognise a tool by the

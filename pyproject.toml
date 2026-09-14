@@ -15,17 +15,27 @@ license = { text = "MIT" }
 authors = [{ name = "Furkan Erdogan", email = "furkan.erdogan.pro@gmail.com" }]
 keywords = ["heliophysics", "plasma", "space physics", "AI agent", "MCP"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    # Beta, not Alpha: a published package with a documentation site, a security
+    # policy, a provenance ledger and a thousand tests undersold itself.
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    # The sandbox is only real on Linux (SECURITY.md); the other two run the fallback.
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Framework :: Jupyter",
+    "Typing :: Typed",
 ]
 dependencies = [
     "speasy>=1.4",
-    "plasmapy>=2024.5",
+    "plasmapy>=2026.2",
     "chromadb>=0.5",
     "sentence-transformers>=3.0",
     "openai>=1.30",

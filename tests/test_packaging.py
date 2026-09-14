@@ -226,3 +226,9 @@ def test_example_notebook_code_parses(path):
             ast.parse(wrapped)
         except SyntaxError as exc:
             raise AssertionError(f"{path.name} cell {i} is not valid Python: {exc}") from exc
+
+
+def test_the_package_ships_its_typed_marker():
+    """`py.typed` is what lets a downstream type checker read our annotations at all
+    (PEP 561); the `Typing :: Typed` classifier promises it."""
+    assert (PACKAGE_DIR / "py.typed").exists()

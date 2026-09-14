@@ -722,6 +722,8 @@ async function resumeSession(sid, itemEl) {
     messages.forEach(m => {
       if (m.role === 'user') {
         view.chat.append(el('div', 'msg-user', m.content));
+      } else if (m.role === 'system') {
+        view.chat.append(el('div', 'msg-system', m.content));
       } else if (m.role === 'assistant') {
         // Artifacts come before the text even when the text is empty: a turn cut short
         // still produced its figure and its script, and the replay must show them.

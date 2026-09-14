@@ -418,7 +418,11 @@ async def stream_subagent(
                         retried_bogus_ids = True
                         log.warning("subagent_invented_ids_retry", role=role, ids=bogus_now)
                         history.append(
-                            Message(role="user", content=unknown_id_correction(bogus_now))
+                            Message(
+                                role="user",
+                                content=unknown_id_correction(bogus_now),
+                                origin="correction",
+                            )
                         )
                         continue
                 break

@@ -138,6 +138,16 @@ async def test_lead_retries_once_on_an_invented_id(monkeypatch, tmp_path, fake_l
     reply = [e for e in events if e["event"] == "reply"][-1]["data"]["text"]
     assert real in reply and "AUTOMATED CORRECTION" not in reply
 
+    # The correction reaches the model as a user turn — that is the only role the
+    # provider clients forward from history — but it is HelioAI's, not the person's,
+    # and the persisted copy must say so or the replay shows it as a question.
+    assert correction.origin == "correction"
+    persisted = SessionStore(tmp_path / "sessions.db").get_or_create("u", "s")
+    synthetic = [m for m in persisted if m.origin == "correction"]
+    assert len(synthetic) == 1 and bogus in synthetic[0].content
+    human = [m for m in persisted if m.role == "user" and m.origin is None]
+    assert [m.content for m in human] == ["MMS1 FGM survey B in GSM"]
+
 
 @pytest.mark.asyncio
 async def test_lead_gives_up_after_one_retry(monkeypatch, tmp_path, fake_llm_factory):

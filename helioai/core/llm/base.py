@@ -148,12 +148,20 @@ class Message:
         cached_tokens: The subset of `prompt_tokens` served from the provider's
             prompt cache. Priced differently by every provider, so it is kept
             apart from the total rather than folded into it.
+        origin: Who really wrote a `user` message when it was not the person.
+            `None` for the human and the model; `"correction"` for the automated
+            note the loop injects when an answer quotes ids the catalogue does
+            not have. The provider clients only forward `user` and `assistant`
+            turns from history, so a synthetic message must keep the user role to
+            be seen at all — this field is what lets the replay and the notebook
+            export tell it from a question. Persisted by `SessionStore`.
     """
 
     role: Literal["system", "user", "assistant", "tool"]
     content: str = ""
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
+    origin: str | None = None
     # Telemetry about the response, not part of the conversation: `SessionStore`
     # deliberately does not persist these, so a reloaded history reports no cost.
     prompt_tokens: int = 0

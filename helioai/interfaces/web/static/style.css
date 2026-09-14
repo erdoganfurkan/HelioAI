@@ -535,3 +535,6 @@ select:focus { border-color: var(--accent); }
 
 /* Measured values under a finished sub-agent — the evidence, next to the summary. */
 .tl-findings { margin: 2px 0 0 1.6em; padding: 0; list-style: none; font-family: monospace; font-size: 0.85em; opacity: 0.85; }
+
+/* A note HelioAI injected into the conversation (an automated correction): neither bubble. */
+.msg-system { align-self: center; max-width: 80%; margin: 4px 0; padding: 6px 10px; font-size: 0.85em; opacity: 0.8; border-left: 3px solid var(--accent, #888); white-space: pre-wrap; }

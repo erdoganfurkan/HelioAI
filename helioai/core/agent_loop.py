@@ -439,7 +439,11 @@ async def _stream_turn(
                 if bogus and not retried_bogus_ids:
                     retried_bogus_ids = True
                     log.warning("lead_invented_ids_retry", ids=bogus, turn=turn)
-                    history.append(Message(role="user", content=unknown_id_correction(bogus)))
+                    history.append(
+                        Message(
+                            role="user", content=unknown_id_correction(bogus), origin="correction"
+                        )
+                    )
                     continue
                 yield {"event": "reply", "data": {"text": final_text}}
                 if bogus:

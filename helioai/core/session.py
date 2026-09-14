@@ -9,6 +9,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC
 from pathlib import Path
 
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS messages (
     content      TEXT NOT NULL DEFAULT '',
     tool_calls   TEXT,
     tool_call_id TEXT,
+    origin       TEXT,
     FOREIGN KEY (user_id, session_id)
         REFERENCES sessions(user_id, session_id) ON DELETE CASCADE
 );
@@ -44,7 +46,12 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_seq
     ON messages(user_id, session_id, seq);
 """
 
-_MIGRATE = "ALTER TABLE sessions ADD COLUMN workspace_dir TEXT"
+# Additive only, each one tried on its own: a column that already exists raises and
+# is skipped, so an old database gains what it lacks and a new one is left alone.
+_MIGRATIONS = (
+    "ALTER TABLE sessions ADD COLUMN workspace_dir TEXT",
+    "ALTER TABLE messages ADD COLUMN origin TEXT",
+)
 
 
 def _dump_tool_calls(tcs: list[ToolCall] | None) -> str | None:
@@ -90,10 +97,11 @@ class SessionStore:
     def _init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
-            try:
-                conn.execute(_MIGRATE)
-            except Exception:
-                pass
+            for statement in _MIGRATIONS:
+                try:
+                    conn.execute(statement)
+                except Exception:
+                    pass
             conn.commit()
 
     @contextmanager
@@ -158,7 +166,7 @@ class SessionStore:
     def _load(self, user_id: str, session_id: str) -> list[Message]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT role, content, tool_calls, tool_call_id "
+                "SELECT role, content, tool_calls, tool_call_id, origin "
                 "FROM messages WHERE user_id = ? AND session_id = ? ORDER BY seq",
                 (user_id, session_id),
             ).fetchall()
@@ -168,8 +176,9 @@ class SessionStore:
                 content=content or "",
                 tool_calls=_load_tool_calls(tool_calls),
                 tool_call_id=tool_call_id,
+                origin=origin,
             )
-            for role, content, tool_calls, tool_call_id in rows
+            for role, content, tool_calls, tool_call_id, origin in rows
         ]
 
     def save(self, user_id: str, session_id: str, history: list[Message]) -> None:
@@ -190,8 +199,8 @@ class SessionStore:
                 "DELETE FROM messages WHERE user_id = ? AND session_id = ?", (user_id, session_id)
             )
             conn.executemany(
-                "INSERT INTO messages(user_id, session_id, seq, role, content, tool_calls, tool_call_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages(user_id, session_id, seq, role, content, tool_calls, "
+                "tool_call_id, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         user_id,
@@ -201,6 +210,7 @@ class SessionStore:
                         m.content or "",
                         _dump_tool_calls(m.tool_calls),
                         m.tool_call_id,
+                        m.origin,
                     )
                     for i, m in enumerate(history)
                 ],
@@ -334,9 +344,9 @@ def strip_orphan_tool_calls(history: list[Message]) -> list[Message]:
         if len(live_tcs) == len(m.tool_calls):
             cleaned.append(m)
         elif live_tcs:
-            cleaned.append(Message(role=m.role, content=m.content, tool_calls=live_tcs))
+            cleaned.append(replace(m, tool_calls=live_tcs))
         elif m.content:
-            cleaned.append(Message(role=m.role, content=m.content))
+            cleaned.append(replace(m, tool_calls=None))
         # else: drop the message entirely (no content, no answered tool_calls)
     return cleaned
 

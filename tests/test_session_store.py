@@ -260,3 +260,63 @@ def test_reset_forgets_the_turn_lock(db: Path) -> None:
     lock = store.turn_lock("u", "s1")
     store.reset("u", "s1")
     assert store.turn_lock("u", "s1") is not lock
+
+
+def test_origin_round_trips(db: Path) -> None:
+    """`origin` is what tells an injected correction from the user's own question once
+    the history is read back; losing it on save would re-credit the person with it."""
+    store = SessionStore(db)
+    h = store.get_or_create("u", "s")
+    h.append(Message(role="user", content="plot Bz"))
+    h.append(Message(role="assistant", content="Use cda/BOGUS."))
+    h.append(Message(role="user", content="⚠️ AUTOMATED CORRECTION …", origin="correction"))
+    store.save("u", "s", h)
+
+    reloaded = SessionStore(db).get_or_create("u", "s")
+    assert [m.origin for m in reloaded] == [None, None, "correction"]
+
+
+def test_a_database_from_before_the_origin_column_is_migrated_on_open(db: Path) -> None:
+    """Existing installs carry a `messages` table without `origin`; opening it must add
+    the column silently and read the old rows as human messages."""
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+            user_id TEXT NOT NULL, session_id TEXT NOT NULL,
+            created_at REAL NOT NULL DEFAULT (julianday('now')),
+            updated_at REAL NOT NULL DEFAULT (julianday('now')),
+            workspace_dir TEXT, PRIMARY KEY (user_id, session_id));
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '', tool_calls TEXT, tool_call_id TEXT);
+        INSERT INTO sessions(user_id, session_id) VALUES ('u', 'old');
+        INSERT INTO messages(user_id, session_id, seq, role, content)
+            VALUES ('u', 'old', 0, 'user', 'legacy question');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = SessionStore(db)
+    history = store.get_or_create("u", "old")
+    assert [(m.role, m.content, m.origin) for m in history] == [("user", "legacy question", None)]
+    history.append(Message(role="user", content="note", origin="correction"))
+    store.save("u", "old", history)
+    assert SessionStore(db).get_or_create("u", "old")[-1].origin == "correction"
+
+
+def test_strip_orphans_keeps_origin() -> None:
+    h = [
+        Message(
+            role="assistant",
+            content="text",
+            tool_calls=[ToolCall(id="x", name="t", arguments={})],
+            origin=None,
+        ),
+        Message(role="user", content="fix it", origin="correction"),
+    ]
+    cleaned = strip_orphan_tool_calls(h)
+    assert cleaned[0].tool_calls is None and cleaned[0].content == "text"
+    assert cleaned[1].origin == "correction"

@@ -848,3 +848,34 @@ def test_streams_stay_bound_to_their_session_in_the_real_app_js():
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     assert "OK web session streams" in proc.stdout
+
+
+# ── an injected correction replays as a system note, not as the user's question ──
+
+
+def test_session_messages_show_an_automated_correction_as_a_system_note(monkeypatch, tmp_path):
+    from helioai.core.llm.base import Message
+    from helioai.core.session import SessionStore
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    test_store.save(
+        "web",
+        "sess-corr",
+        [
+            Message(role="user", content="MMS1 FGM in GSM?"),
+            Message(role="assistant", content="Use cda/BOGUS/id."),
+            Message(
+                role="user",
+                content="⚠️ AUTOMATED CORRECTION — not in the catalogue",
+                origin="correction",
+            ),
+            Message(role="assistant", content="Use cda/MMS1_FGM_SRVY_L2/b_gsm."),
+        ],
+    )
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+    from helioai.interfaces.web.app import app
+
+    msgs = TestClient(app).get("/api/sessions/sess-corr/messages").json()["messages"]
+    assert [m["role"] for m in msgs] == ["user", "assistant", "system", "assistant"]
+    assert msgs[2]["origin"] == "correction"
+    assert all("AUTOMATED CORRECTION" not in m["content"] for m in msgs if m["role"] == "user")

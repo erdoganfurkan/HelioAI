@@ -46,6 +46,12 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   event the lead re-emits carried the prose summary but dropped `findings` — the table
   of values the run actually computed, the one part of the report with an origin. The
   CLI, the notebook and the browser now list them under the sub-agent's line.
+- **The automated "these ids are not in the catalogue" correction replayed as a
+  question the user had asked.** The loop injects it as a `user` message because that
+  is the only role the provider clients forward from history; the persisted copy now
+  carries `origin="correction"`, the web replay shows it as a system note, and the
+  exported notebook writes it as HelioAI's note rather than under **You:**. What the
+  model sees is byte-for-byte unchanged.
 
 ### Changed
 
@@ -54,6 +60,8 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   default directory to the configured one, never overwrites, and can be re-run. The
   `search_parameters` error names the legacy copy when it exists, so an upgraded
   install is not sent into an hour-long rebuild.
+- The session database gains a `messages.origin` column, added automatically the
+  first time an existing database is opened.
 
 ## [0.2.1] — 2026-08-14
 

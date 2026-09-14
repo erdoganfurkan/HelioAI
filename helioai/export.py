@@ -723,7 +723,11 @@ def build_notebook(user_id: str, session_id: str):
     convo: list[str] = ["## Conversation"]
     for m in history:
         text = (m.content or "").strip()
-        if m.role == "user" and text:
+        if m.role == "user" and text and m.origin:
+            # Injected by the loop, not typed by the reader: kept — it explains why the
+            # next answer changed — but not attributed to them.
+            convo.append(f"_Automated note ({m.origin}):_ {text}")
+        elif m.role == "user" and text:
             convo.append(f"**You:** {text}")
         elif m.role == "assistant" and text:
             convo.append(f"**HelioAI:** {text}")

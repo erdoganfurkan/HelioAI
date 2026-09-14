@@ -237,7 +237,13 @@ async def get_session_messages(session_id: str, user_id: str = Depends(require_u
     for m in history:
         if m.role == "user":
             _flush("")
-            out.append({"role": "user", "content": m.content})
+            if m.origin:
+                # HelioAI's own note (an automated correction), sent with the user role
+                # because that is the only role the providers forward — shown as a
+                # system line so the person is not credited with writing it.
+                out.append({"role": "system", "origin": m.origin, "content": m.content})
+            else:
+                out.append({"role": "user", "content": m.content})
         elif m.role == "assistant" and m.content:
             _flush(m.content)
         elif m.role == "tool" and m.content:

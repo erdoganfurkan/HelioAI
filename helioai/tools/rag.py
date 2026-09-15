@@ -390,6 +390,21 @@ def _is_auxiliary(param_id: str, text: str) -> bool:
 # magnetometer product, because its text says "magnetic field" too.
 _NON_SCIENCE_PREFIXES = ("hk_",)
 
+# A question about where a spacecraft IS. The MEC ephemeris files carry, next to the
+# position vector, a dozen positions computed with a field model — the min-B point of
+# the field line, its footpoints, the field-line apex — whose descriptions all say
+# "GSM position of …". Six of them (BRST/SRVY × three field models) filled the whole
+# top-6 for "MMS1 spacecraft position" while the position vector itself sat at rank 165.
+_POSITION_QUERY = re.compile(
+    r"\b(position|location|where (is|was|were)|orbit|trajectory|ephemeris|coordinates?)\b",
+    re.I,
+)
+_MODEL_DERIVED_TEXT = re.compile(
+    r"min-?b point|footpoint|foot point|field ?line|threading|apex|magnetic equator|"
+    r"conjugate|l-?shell|l\*|mlt\b|magnetic local time|invariant latitude|model field",
+    re.I,
+)
+
 
 def _rerank_penalty(query: str, candidate: dict) -> int:
     """0 = keep, higher = push down. Never drops, only reorders.
@@ -421,7 +436,47 @@ def _rerank_penalty(query: str, candidate: dict) -> int:
         candidate["id"], candidate.get("description", "")
     ):
         penalty += 2
+    if (
+        _POSITION_QUERY.search(query)
+        and not _MODEL_DERIVED_TEXT.search(query)
+        and _MODEL_DERIVED_TEXT.search(candidate.get("description", ""))
+    ):
+        penalty += 2
     return penalty
+
+
+def _variant_key(param_id: str) -> str:
+    """What makes two ids the same product in another mode or model.
+
+    `MMS1_MEC_BRST_L2_EPHT89D/mms1_mec_r_gsm` and `MMS1_MEC_SRVY_L2_EPHTS04D/
+    mms1_mec_r_gsm` are one variable of one instrument under two cadences and two field
+    models. Key: provider, the dataset up to its first mode/model token, the variable.
+    """
+    parts = param_id.split("/")
+    if len(parts) < 3:
+        return param_id
+    provider, dataset, variable = parts[0], parts[1], "/".join(parts[2:])
+    stem = re.split(r"_(?:BRST|SRVY|FAST|SLOW|EPHT\w+|L[0-9]\w*)(?:_|$)", dataset, maxsplit=1)[0]
+    return f"{provider}/{stem}/{variable}"
+
+
+def _collapse_variants(candidates: list[dict]) -> list[dict]:
+    """Keep the best-ranked variant of a product and list the others under `also_in`.
+
+    Six variants of `mms1_mec_pmin_gsm` were six of the six results: nothing else could
+    be seen. The variants are still there — the model picks a cadence by dataset name
+    from `also_in` — but they cost one slot instead of six.
+    """
+    kept: list[dict] = []
+    by_key: dict[str, dict] = {}
+    for c in candidates:
+        key = _variant_key(c["id"])
+        if key in by_key:
+            by_key[key].setdefault("also_in", []).append(c["id"])
+            continue
+        by_key[key] = c
+        kept.append(c)
+    return kept
 
 
 def _apply_domain_rerank(query: str, candidates: list[dict]) -> list[dict]:
@@ -560,8 +615,8 @@ def _fuse_query(
 
     # Applied before the cut, deliberately: the correct product for "Wind proton
     # density" ranked 24th, so demoting inside an already-truncated top-5 would change
-    # nothing.
-    return _apply_domain_rerank(query, candidates)[:top_k]
+    # nothing. Variants are collapsed after the rerank so the best-placed one is kept.
+    return _collapse_variants(_apply_domain_rerank(query, candidates))[:top_k]
 
 
 def search_batch(

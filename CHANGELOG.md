@@ -127,6 +127,15 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   described the way a position question is asked; and a search filtered on a provider the
   index does not hold says so, with the providers it does. **Run `helioai index` once to
   pick them up.**
+- **A position question gets the position, once.** For "MMS1 spacecraft position" the
+  six variants of `mms1_mec_pmin_gsm` — the min-B point of the field line, computed with
+  a model, under two cadences and three field models — were the whole top-6, and the
+  position vector `mms1_mec_r_gsm` ranked 165th. A product whose description says it is
+  a model-derived point (min-B, footpoint, field line, apex…) is pushed down on a
+  position query unless the query asks for it, and the variants of one product (same
+  provider, instrument and variable across BRST/SRVY and field models) cost one slot,
+  the others listed under `also_in`. Measured on the live index: `ssc/mms1` then
+  `mms1_mec_r_gsm` for the query that used to return six `pmin_gsm`.
 - **A search result lists the variables of the dataset it found.** The top hit of each
   `search_parameters` query carries `dataset_variables`: every indexed variable of its
   dataset by name (`cda/WI_H1_SWE` → `Proton_Np_moment`, `Proton_VX_nonlin`,

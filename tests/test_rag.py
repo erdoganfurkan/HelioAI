@@ -756,3 +756,54 @@ def test_a_filter_on_a_provider_the_index_never_held_says_so(isolated_rag, monke
     fine = speasy_tools._search_parameters_sync(query="density", provider="cda")
     assert "provider_note" not in fine
     assert rag_module.indexed_providers() == {"cda": 5, "amda": 1}
+
+
+# ── position queries ───────────────────────────────────────────────────────────
+
+
+def test_a_position_query_puts_the_position_vector_above_the_model_derived_points():
+    """ "MMS1 spacecraft position": the six `pmin_gsm` variants — the min-B point of the
+    field line, a model quantity — filled the whole top-6 while the position vector sat
+    at rank 165. Same relevance, the derived product is pushed down."""
+    r_gsm = {
+        "id": "cda/MMS1_MEC_SRVY_L2_EPHT89D/mms1_mec_r_gsm",
+        "description": "GSM position vector of mms1 (km).",
+    }
+    pmin = {
+        "id": "cda/MMS1_MEC_SRVY_L2_EPHT89D/mms1_mec_pmin_gsm",
+        "description": "GSM position of min-B point of field threading the mms1 spacecraft.",
+    }
+    assert rag_module._rerank_penalty(
+        "MMS1 spacecraft position", pmin
+    ) > rag_module._rerank_penalty("MMS1 spacecraft position", r_gsm)
+    assert rag_module._rerank_penalty(
+        "MMS1 min-B point position", pmin
+    ) == rag_module._rerank_penalty("MMS1 min-B point position", r_gsm), "asked for, not penalised"
+    assert rag_module._rerank_penalty("MMS1 magnetic field", pmin) == rag_module._rerank_penalty(
+        "MMS1 magnetic field", r_gsm
+    ), "not a position query"
+
+
+def test_variants_of_one_product_cost_one_slot_and_list_the_others():
+    ids = [
+        "cda/MMS1_MEC_BRST_L2_EPHT89D/mms1_mec_pmin_gsm",
+        "cda/MMS1_MEC_BRST_L2_EPHT89Q/mms1_mec_pmin_gsm",
+        "cda/MMS1_MEC_SRVY_L2_EPHTS04D/mms1_mec_pmin_gsm",
+        "cda/MMS1_MEC_SRVY_L2_EPHT89D/mms1_mec_r_gsm",
+        "cda/MMS1_FPI_FAST_L2_DIS-MOMS/mms1_dis_numberdensity_fast",
+        "cda/MMS1_FPI_BRST_L2_DIS-MOMS/mms1_dis_numberdensity_brst",
+        "amda/mms1_b_gsm",
+    ]
+    out = rag_module._collapse_variants([{"id": i} for i in ids])
+    assert [c["id"] for c in out] == [
+        "cda/MMS1_MEC_BRST_L2_EPHT89D/mms1_mec_pmin_gsm",
+        "cda/MMS1_MEC_SRVY_L2_EPHT89D/mms1_mec_r_gsm",
+        "cda/MMS1_FPI_FAST_L2_DIS-MOMS/mms1_dis_numberdensity_fast",
+        "cda/MMS1_FPI_BRST_L2_DIS-MOMS/mms1_dis_numberdensity_brst",
+        "amda/mms1_b_gsm",
+    ]
+    assert out[0]["also_in"] == [
+        "cda/MMS1_MEC_BRST_L2_EPHT89Q/mms1_mec_pmin_gsm",
+        "cda/MMS1_MEC_SRVY_L2_EPHTS04D/mms1_mec_pmin_gsm",
+    ]
+    assert "also_in" not in out[1], "a different variable name is a different product"

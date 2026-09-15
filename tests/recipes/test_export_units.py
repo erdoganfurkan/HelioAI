@@ -135,42 +135,102 @@ def _exporting_runs(recipe) -> dict[str, dict]:
     rh = recipe("rankine_hugoniot")
     rh.namespace["rh_jump"](17.43, 45.12, 411.3, 514.1, 10.0, 25.27, 8.34, 45.0)
     runs["rankine_hugoniot"] = rh
-    timing = recipe("shock_timing_2sc")
     t1 = np.datetime64("2015-03-17T04:00:00")
-    out = timing.namespace["timing_2sc"](
-        t1,
-        t1 + np.timedelta64(2000, "s"),
-        np.array([1.5e6, 2e5, 0.0]),
-        np.array([2.5e6, 2e5, 3e4]),
-        np.array([1.0, 0.0, 0.0]),
+    runs["shock_timing_2sc"] = recipe(
+        "shock_timing_2sc",
+        t1=t1,
+        t2=t1 + np.timedelta64(2000, "s"),
+        r1=np.array([1.5e6, 2e5, 0.0]),
+        r2=np.array([2.5e6, 2e5, 3e4]),
+        n_hat=np.array([1.0, 0.0, 0.0]),
     )
-    timing.namespace["export"]("lag_s", np.array([out["lag_s"]]), units="s")
-    timing.namespace["export"](
-        "shock_speed_timing", np.array([out["shock_speed_km_s"]]), units="km/s"
-    )
-    timing.namespace["export"](
-        "transverse_separation", np.array([out["transverse_separation_km"]]), units="km"
-    )
-    runs["shock_timing_2sc"] = timing
     return runs
 
 
-def test_every_recorded_unit_parses_and_every_blank_one_is_declared_dimensionless(recipe):
-    """What the ledger will hold, recipe by recipe: a unit astropy understands, or a
-    blank the shelf declares dimensionless by name. Every exporting recipe must appear."""
+# The physical dimension each dimensioned export must carry. `walen_slope` in "nT" or
+# `P_dyn_nPa` in "km/s" would parse; they would still be wrong provenance.
+EXPECTED_DIMENSION: dict[str, str] = {
+    "theta_bn": "angle",
+    "theta_bn_std_deg": "angle",
+    "normal_spread_deg": "angle",
+    "B_up_mean_nT": "magnetic flux density",
+    "B_dn_mean_nT": "magnetic flux density",
+    "Bn_std_nT": "magnetic flux density",
+    "mvab_lambda_min": "nT2",
+    "mvab_dphi_min_int": "angle",
+    "mvab_dphi_min_max": "angle",
+    "mvab_dBn": "magnetic flux density",
+    "V_HT": "speed",
+    "V_shock": "speed",
+    "V_A": "speed",
+    "c_s": "speed",
+    "U_upstream": "speed",
+    "r_mp_RE": "length",
+    "P_dyn_nPa": "pressure",
+    "P_applied_nPa": "pressure",
+    "P_mag_sw_nPa": "pressure",
+    "P_total_sw_nPa": "pressure",
+    "B_msp_ref_nT": "magnetic flux density",
+    "lag_s": "time",
+    "shock_speed_timing": "speed",
+    "along_normal_separation": "length",
+    "transverse_separation": "length",
+    "pitch_angles_median_deg": "angle",
+    "pitch_angles_mean_deg": "angle",
+    "pad_bin_edges_deg": "angle",
+}
+
+# Exports whose unit is whatever the input data carried: checked against the input.
+INHERITED_FROM_INPUT: dict[str, str] = {
+    "epoch_median": "nT",
+    "epoch_q25": "nT",
+    "epoch_q75": "nT",
+    "epoch_ci_low": "nT",
+    "epoch_ci_high": "nT",
+    "cusum": "1/(cm2 s sr MeV)",
+}
+
+
+def _dimension_matches(unit: str, expected: str) -> bool:
+    if expected == "nT2":
+        return u.Unit(unit).is_equivalent(u.nT**2)
+    return u.get_physical_type(u.Unit(unit)) == expected
+
+
+def test_every_recorded_unit_has_the_dimension_of_the_quantity_or_is_declared_dimensionless(
+    recipe,
+):
+    """What the ledger will hold, recipe by recipe: the dimension of the quantity named,
+    the unit of the data it was computed from, or a blank the shelf declares
+    dimensionless by name. Every exporting recipe must appear, and every export must be
+    accounted for by one of the three tables."""
     runs = _exporting_runs(recipe)
     silent = [name for name, run in runs.items() if not run.exports]
     assert silent == [], f"these recipes exported nothing on their exporting path: {silent}"
     for name, run in runs.items():
         for key, entry in run.exports.items():
             unit = entry["units"]
-            if unit == "":
-                assert key in DIMENSIONLESS, (
-                    f"{name} exports {key} without a unit; add it to DIMENSIONLESS with a "
-                    "reason, or pass one"
+            if key in DIMENSIONLESS:
+                assert unit == "", f"{name}.{key} is dimensionless but recorded as {unit!r}"
+            elif key in EXPECTED_DIMENSION:
+                assert _dimension_matches(unit, EXPECTED_DIMENSION[key]), (
+                    f"{name}.{key} recorded as {unit!r}, expected a {EXPECTED_DIMENSION[key]}"
+                )
+            elif key in INHERITED_FROM_INPUT:
+                assert u.Unit(unit) == u.Unit(INHERITED_FROM_INPUT[key]), (
+                    f"{name}.{key} recorded as {unit!r}, the data carried "
+                    f"{INHERITED_FROM_INPUT[key]!r}"
                 )
             else:
-                u.Unit(unit)
+                raise AssertionError(
+                    f"{name} exports {key}; say what it is in DIMENSIONLESS, "
+                    "EXPECTED_DIMENSION or INHERITED_FROM_INPUT"
+                )
+
+
+def test_the_zscore_cusum_is_recorded_dimensionless_whatever_the_flux_carries(recipe):
+    run = recipe("sep_onset_poisson_cusum", flux=_sep_flux(), method="zscore")
+    assert run.exports["cusum"]["units"] == ""
 
 
 def test_a_bare_unit_string_on_the_shelf_would_be_caught():

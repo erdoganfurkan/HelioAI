@@ -189,3 +189,23 @@ assert _par["transverse_separation_km"] < 1.0, _par["transverse_separation_km"]
 # And no normal at all is an error, not a guess.
 assert "error" in timing_2sc(_t1, _t2, _wind, _ace, [0.0, 0.0, 0.0])
 assert "error" in timing_2sc(_t1, _t2, _wind, _ace, [1.0, 2.0])
+
+
+# ── Run ────────────────────────────────────────────────────────────────────────
+# Bind t1, t2, r1, r2, n_hat (and optionally V_shock_rh) before this script — through
+# run_recipe(inputs=...) or as globals — and the block below computes and exports;
+# with nothing bound it does nothing, so the self-check above never enters a ledger.
+
+_bound = {k: globals().get(k) for k in ("t1", "t2", "r1", "r2", "n_hat")}
+if all(v is not None for v in _bound.values()):
+    out = timing_2sc(**_bound, V_shock_rh=globals().get("V_shock_rh"))
+    if "error" in out:
+        print("shock_timing_2sc:", out["error"])
+    else:
+        export("lag_s", np.array([out["lag_s"]]), units="s")  # noqa: F821 — sandbox preamble
+        export("shock_speed_timing", np.array([out["shock_speed_km_s"]]), units="km/s")  # noqa: F821
+        export("along_normal_separation", np.array([out["along_normal_separation_km"]]), units="km")  # noqa: F821
+        export("transverse_separation", np.array([out["transverse_separation_km"]]), units="km")  # noqa: F821
+        for w in out["warnings"]:
+            print("!", w)
+        print(out.get("verdict"), out.get("mismatch"))

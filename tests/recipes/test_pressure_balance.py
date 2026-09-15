@@ -120,7 +120,7 @@ def test_run_block_does_not_export_without_bound_inputs(recipe):
 
 
 def test_pressure_balance_standoff_is_close_to_shue_for_north_south_neutral_imf(recipe):
-    """With standard P_dyn and Bz=0, pressure balance is 4.5% below Shue's r0.
+    """With standard P_dyn and Bz=0, pressure balance stays close to Shue's r0.
 
     The 15% band is a judgment-call sanity check, not a calibration.
     """
@@ -130,4 +130,6 @@ def test_pressure_balance_standoff_is_close_to_shue_for_north_south_neutral_imf(
     _, shue_r = mp_shue1998(result["P_dyn_nPa"], 0.0, theta_deg=0.0)
 
     assert float(shue_r[0]) == pytest.approx(10.895567869889632)
+    gap_percent = 100 * (float(shue_r[0]) - result["r_mp_RE"]) / float(shue_r[0])
+    assert gap_percent == pytest.approx(5.51018, rel=0.001)
     assert result["r_mp_RE"] == pytest.approx(float(shue_r[0]), rel=0.15)

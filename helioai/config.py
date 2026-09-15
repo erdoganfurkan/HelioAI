@@ -168,10 +168,52 @@ class AgentConfig:
     it always did. Parsed from `HELIOAI_ROLE_MODELS="parameter_hunter=groq:llama-3.3-70b-
     versatile,data_analyst=opencode"` — the model part is optional and defaults to the
     provider's configured model.
+
+    `experiments` names the behaviours of `EXPERIMENTS` that are switched on, from
+    `HELIOAI_EXPERIMENTS`. Empty — the default — is the loop as it behaved before any of
+    them existed.
     """
 
     max_iterations: int = 10
     role_models: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+    experiments: frozenset[str] = frozenset()
+
+
+EXPERIMENTS: frozenset[str] = frozenset(
+    {"deferred_tools", "final_answer", "search_budget", "search_variables"}
+)
+"""The behaviours that change what the model sees or is told, each off by default.
+
+Every one of them was committed on the strength of a single live run and never measured
+against the loop it replaced; together they turned out to answer an ordinary question
+worse than that loop did. They stay in the code as named experiments so that each can be
+switched on alone and compared on the same questions, N runs each:
+
+- `deferred_tools`: the lead sees the formulary and catalogue tools only after asking
+  for them with `search_tools`, and its prompt says so.
+- `final_answer`: the lead may close with `final_answer(answer, claims)`, and its prompt
+  asks it to when it states measured numbers.
+- `search_budget`: a `data_analyst` past three lookups (a `plasma_physicist` past two)
+  with nothing downloaded receives a correction listing the ids it already has.
+- `search_variables`: the top hit of a parameter search lists every variable of its
+  dataset.
+"""
+
+
+def _parse_experiments(raw: str) -> frozenset[str]:
+    """Parse HELIOAI_EXPERIMENTS='final_answer,deferred_tools' → the set of names.
+
+    Unknown names are an error, not a warning: an experiment that silently does nothing
+    would be measured as if it did, and the comparison would be wrong without anyone
+    knowing.
+    """
+    names = frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
+    unknown = names - EXPERIMENTS
+    if unknown:
+        raise ValueError(
+            f"HELIOAI_EXPERIMENTS: unknown {sorted(unknown)}; known: {sorted(EXPERIMENTS)}"
+        )
+    return names
 
 
 @dataclass
@@ -470,6 +512,7 @@ def _load() -> Settings:
         agent=AgentConfig(
             max_iterations=max_iterations,
             role_models=_parse_role_models(os.environ.get("HELIOAI_ROLE_MODELS", "")),
+            experiments=_parse_experiments(os.environ.get("HELIOAI_EXPERIMENTS", "")),
         ),
     )
 

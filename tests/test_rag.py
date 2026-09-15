@@ -715,10 +715,13 @@ def test_an_amda_id_has_no_dataset_level_to_list(isolated_rag):
 def test_search_parameters_attaches_the_dataset_variables_to_the_top_hit_only(
     isolated_rag, monkeypatch
 ):
-    """The model that found `Proton_Np_moment` reads the SWE variable list in the same
-    result and stops guessing names like `Proton_Temp`."""
+    """Under the `search_variables` experiment, the model that found `Proton_Np_moment`
+    reads the SWE variable list in the same result and stops guessing names like
+    `Proton_Temp`."""
+    from helioai.config import settings
     from helioai.tools import speasy_tools
 
+    monkeypatch.setattr(settings.agent, "experiments", frozenset({"search_variables"}))
     _seed_swe(isolated_rag)
     hits = [
         {"id": "cda/WI_H1_SWE/Proton_Np_moment", "name": "nm", "score": 1.0},
@@ -740,6 +743,23 @@ def test_search_parameters_attaches_the_dataset_variables_to_the_top_hit_only(
 
     batch = speasy_tools._search_parameters_sync(queries=["density", "velocity"])
     assert all("dataset_variables" in g["results"][0] for g in batch["groups"])
+
+
+def test_search_results_carry_no_dataset_variables_unless_the_experiment_is_on(
+    isolated_rag, monkeypatch
+):
+    """The default payload is the one the loop always sent: the variable list was added
+    on the strength of one run and is measured before it is kept."""
+    from helioai.config import settings
+    from helioai.tools import speasy_tools
+
+    monkeypatch.setattr(settings.agent, "experiments", frozenset())
+    _seed_swe(isolated_rag)
+    hits = [{"id": "cda/WI_H1_SWE/Proton_Np_moment", "name": "nm", "score": 1.0}]
+    monkeypatch.setattr(rag_module, "search", lambda *a, **k: [dict(h) for h in hits])
+
+    single = speasy_tools._search_parameters_sync(query="wind swe density")
+    assert "dataset_variables" not in single["results"][0]
 
 
 def test_a_filter_on_a_provider_the_index_never_held_says_so(isolated_rag, monkeypatch):

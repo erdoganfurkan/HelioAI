@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from helioai.config import settings
 from helioai.tools.offload import run_blocking, speasy_gate
 
 log = logging.getLogger(__name__)
@@ -502,11 +503,11 @@ def _provider_note(provider: str | None) -> str | None:
 def _with_dataset_variables(results: list[dict]) -> list[dict]:
     """Attach the sibling variables of the top hit's dataset to that hit.
 
-    Only the first hit: the point is to show the model what the dataset it found holds,
-    not to quadruple the payload. Best effort — an index without a BM25 corpus adds
-    nothing.
+    Only under the `search_variables` experiment, and only on the first hit: the point
+    is to show the model what the dataset it found holds, not to quadruple the payload.
+    Best effort — an index without a BM25 corpus adds nothing.
     """
-    if not results:
+    if not results or "search_variables" not in settings.agent.experiments:
         return results
     try:
         from helioai.tools.rag import dataset_variables

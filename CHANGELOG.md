@@ -331,6 +331,21 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Changed
 
+- **Four behaviours that change what the model sees or is told are now named experiments,
+  off by default: `HELIOAI_EXPERIMENTS=deferred_tools,final_answer,search_budget,
+  search_variables`.** Each shipped on the strength of a single live run; together they
+  answered an ordinary question worse than the loop they replaced, and nothing could say
+  which one cost what — the nineteen recorded runs of that question since June spread
+  θ_Bn from 44° to 80°, so one run per branch is noise, not a comparison. With the
+  variable unset the lead's prompt, its tool set, the roles' prompts and skills, the
+  search budgets and the search payload are the pre-experiment ones; naming an experiment
+  changes exactly its prompt text and its `Policy` field (`tests/test_experiments.py`). An
+  unknown name is an error at startup. `run_recipe` stays registered and reachable; the
+  wording that told the roles to prefer it over reading a recipe is not switchable text
+  and is not the default. `scripts/bench_live.py` runs a fixed question set N times per
+  configuration and scores the sessions from the journal — shock time, θ_Bn ± σ, turns,
+  lookups, tokens, whether the answer names the candidates it rejected — so an experiment
+  is switched back on by measurement, one at a time.
 - **The recipes were reviewed by a heliophysicist and corrected; their numbers change.**
   Each correction shipped with a synthetic test whose answer is known, red before the
   fix, and the shelf now has one contract: a recipe reads its inputs with

@@ -11,21 +11,14 @@ allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_r
 A text description of a plot is not a figure. To produce a figure, call run_python with `plt.show()`.
 
 ## RULE ZERO-BIS — a computation with a recipe is NEVER hand-written, even when you already know the formula
-Knowing the physics is not the point — for any task in the table below, run the recipe as shipped
-with `run_recipe(name, inputs)`, unconditionally. `inputs` binds what the recipe reads, each value
-a Python expression evaluated in the sandbox: `run_recipe("theta_bn", inputs={"B": "load_data('b')",
-"shock_time": "np.datetime64('2015-03-17T04:00:00')"})` — the recipe derives its own averaging
-windows, computes, and exports; its exports are the numbers you report. For a recipe that is a
-library of functions (`rankine_hugoniot`, `shock_timing_2sc`, `pressure_balance`) add `call`, one
-expression applying its function to the inputs. `load_recipe(name)` is for *reading* a recipe when
-you need to know what it expects; do not paste its source into `run_python`. A recipe carries
-calibrated parameters (averaging windows, physical constants) and a self-test that code written
-from memory does not have. Getting the formula right from memory and still being wrong is exactly
-how this table earned its entries: a hand-written Rankine-Hugoniot on this same event guessed an
-eV→K conversion instead of using the constant, picked averaging windows the recipe's own
-calibration table flags as the worst combination, and landed 10% off a compression ratio the recipe
-gets exactly; three runs of θ_Bn on one shock, windows chosen by hand, gave 54.85°, 59.95° and
-64.27°.
+Knowing the physics is not the point — `load_recipe(name)` before writing a single line for any
+task in the table below, unconditionally. A recipe carries calibrated parameters (averaging
+windows, physical constants) and a self-test that code written from memory does not have. Getting
+the formula right from memory and still being wrong is exactly how this table earned its entries:
+a hand-written Rankine-Hugoniot on this same event guessed an eV→K conversion instead of using the
+constant, picked averaging windows the recipe's own calibration table flags as the worst
+combination, and landed 10% off a compression ratio the recipe gets exactly. Load first, adapt
+second — never the other way around.
 
 ## RULE ONE — download outside the sandbox, always
 Call `get_timeseries` (or `get_events_timeseries`) BEFORE `run_python` — the sandbox has a 60 s
@@ -39,7 +32,7 @@ using one also gives you provenance.
 
 | Task | Recipe |
 |---|---|
-| Shock normal angle θ_Bn | `theta_bn` — bind `B` (the downloaded series) and `shock_time`; the recipe derives 8-minute windows clear of the ramp and refuses a window that contains it. Bind `B_up`/`B_dn` yourself only when the user specifies the windows. |
+| Shock normal angle θ_Bn | `theta_bn` |
 | Discontinuity / current-sheet normal (minimum variance) | `mvab` |
 | Shock jump conditions, compression ratio, shock speed | `rankine_hugoniot` — **also picks the upstream/downstream averaging windows**; call `upstream_downstream(t, values, shock_time)` per quantity and never pass averages you computed yourself. Choosing those windows by hand is where this analysis goes wrong: a generous guard band with a long window sounds careful, lands in the decaying sheath, and returns a compression of 1.89 instead of 2.59 with every downstream number wrong. |
 | Rotational vs tangential discontinuity | `walen_test` |
@@ -69,23 +62,9 @@ method is recorded with its source.
   file, because everything else is a read-only overlay that looks writable and is not.
 - `plt.show()` → REQUIRED; it is what saves the figure to disk.
 
-## Resolve the id first (if needed) — two searches, then download
+## Resolve the id first (if needed)
 If the id is missing, vague, or malformed (extra path segments like `cda/ACE/MAG/AC_H0_MFI/...`),
-`search_parameters` with a plain-English query — one batched call for all the parameters you
-need — and pick from what comes back. The top hit of each query carries `dataset_variables`:
-every variable its dataset holds. **Read that list before searching again**: a variable that is
-not in it does not exist under that dataset (Wind SWE has no `Proton_Temp`; its temperature is
-`Proton_W_nonlin`, a thermal speed; its velocity is `Proton_VX/VY/VZ_nonlin`, not a vector). A
-hit's `also_in` lists the same variable in other cadences and field models.
-
-Budget: **two searches**. If the exact product is still not there, take the best dataset you
-were shown and use its variables as they are named. **Never assemble an id by hand** — the
-guessed `MMS1_MEC_SRVY_L2/mms1_mec_r_gsm` dropped the `_EPHT89D` the real dataset carries and
-failed; the correct id was in the results of the first search. Past the budget with nothing
-downloaded, you receive a correction listing the ids you already have: use them.
-
-Spacecraft position: `ssc/<spacecraft>` (e.g. `ssc/mms1`, `ssc/wind`) is the SSCWeb trajectory
-in km — GSE by default. Prefer it to an instrument's own ephemeris variable.
+`search_parameters` with a plain-English query and pick the shortest matching id.
 
 ## Canonical template — download then plot
 ```python
@@ -136,22 +115,13 @@ If `get_timeseries` returns a `quality` block with `notable: true`, report it (m
 
 ## Superposed epoch (catalog → SEA)
 1. `get_events_timeseries(catalog_id, param_id, start, stop)` — persists all events, returns a `dataset` key.
-2. `run_recipe("superposed_epoch", inputs={"events": "load_data('<param_last_segment>_events')", "component": 2})`
-   — `component` 0/1/2 for Bx/By/Bz (a scalar is handled). The recipe keeps a data gap a gap and
-   exports the median, quartiles, a bootstrap CI and the count of contributing events per epoch.
-   Never re-fetch — events are already persisted.
+2. `load_recipe("superposed_epoch")`.
+3. run_python: `events = load_data("<param_last_segment>_events")` (list of `ns(time, values, start, stop)`),
+   set `component` (0/1/2 for Bx/By/Bz, scalar handled too), paste the recipe. Never re-fetch — events are already persisted.
 
 ## Event detection
-For an interplanetary shock whose time you do not know yet: download B, then
-`run_recipe("theta_bn", inputs={"B": "load_data('<b>')"})` **with no `shock_time`** — the recipe
-lists the largest |B| jumps of the interval (time, jump, ratio) and stops. Look at them against
-the plot, name the one you take **and the others you rejected** in your report (the question
-"around 2004-11-07" has several jumps that day; say which is the shock and why: n, V, T jump
-with it), then run the recipe again with `shock_time` set. Do not hunt the ramp with a series
-of hand-written `run_python` cells: one run spent nine turns doing that.
-
-For other events, implement threshold / derivative / boundary criteria in run_python; report
-event times and key signature values (ΔP/P, ΔB/B…).
+Implement threshold / derivative / boundary criteria in run_python; report event times and key
+signature values (ΔP/P, ΔB/B…).
 
 | Event | Signatures | Parameters |
 |---|---|---|

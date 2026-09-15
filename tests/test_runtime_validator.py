@@ -167,11 +167,13 @@ async def test_the_lead_follows_a_claimed_reply_with_one_verdict_and_journals_it
     are judged against the session's own ledger, and the `verdict` lands in the journal
     after the `reply`. A prose answer produces no verdict at all."""
     from helioai import workspace
+    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.llm.base import Message, ToolCall
     from helioai.core.session import SessionStore
     from tests.support.scripted import ScriptedLLM
 
+    monkeypatch.setattr(settings.agent, "experiments", frozenset({"final_answer"}))
     monkeypatch.setattr("helioai.tools.rag.unknown_ids", lambda ids: [])
     monkeypatch.setattr("helioai.tools.rag.extract_ids", lambda text: [])
     test_store = SessionStore(tmp_path / "sessions.db")

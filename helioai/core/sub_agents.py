@@ -46,6 +46,9 @@ class SubAgentRole:
 
     `allowed_tools` is enforced, not advisory — a role calling outside its set
     gets an error naming what it may use, and the tool is never dispatched.
+
+    `search_budget` is the role's lookup allowance before it must touch data; it only
+    takes effect under the `search_budget` experiment, and is 0 (no limit) otherwise.
     """
 
     name: str
@@ -97,17 +100,11 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "You specialise in data analysis, visualisation, multi-mission comparison, "
             "and plasma event detection. "
             "For a standard named computation (theta_Bn, MVAB normal, Rankine-Hugoniot, Walén test, "
-            "pressure balance, pitch-angle, superposed epoch), run the recipe as shipped with "
-            "run_recipe(name, inputs) — unconditionally, even when you already know the formula: "
-            'bind the inputs as expressions (e.g. {"B": "load_data(\'b\')", "shock_time": '
-            "\"np.datetime64('2015-03-17T04:00')\"}) and let the recipe compute and export. "
-            "load_recipe is for reading a recipe, not for pasting it into run_python. A recipe "
-            "carries calibrated parameters (averaging windows, physical constants) and a self-test "
-            "that code written from memory does not have; only write custom code when no recipe "
-            "matches. "
-            "Use search_parameters if any parameter id is missing or unclear — one batched call, "
-            "two at most; the top hit lists its dataset's variables, read them instead of "
-            "searching again, and never assemble an id by hand. "
+            "pressure balance, pitch-angle, superposed epoch), load_recipe FIRST and reuse it — "
+            "unconditionally, even when you already know the formula. A recipe carries calibrated "
+            "parameters (averaging windows, physical constants) and a self-test that code written "
+            "from memory does not have; only write custom code when no recipe matches. "
+            "Use search_parameters if any parameter id is missing or unclear. "
             "CRITICAL — to avoid sandbox timeouts: always call get_timeseries BEFORE run_python "
             "to download data outside the sandbox, then access it via load_data('name') inside run_python. "
             "NEVER call spz.get_data() inside run_python for data you can download with get_timeseries first. "
@@ -129,8 +126,9 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "run_recipe",
             "run_python",
         ),
-        # Three lookups, then download: a run spent all twelve turns on search_parameters
-        # re-asking for ids it had been handed on its first call.
+        # Three lookups, then download (under the `search_budget` experiment): a run spent
+        # all twelve turns on search_parameters re-asking for ids it had been handed on its
+        # first call.
         search_budget=3,
         # 8 was not enough for a multi-spacecraft job: discovering that a CDA
         # ephemeris does not cover the requested year costs a turn per candidate,
@@ -170,11 +168,10 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "plasmapy (imported as `pf`) and astropy units (imported as `u`). "
             "Example: pf.gyrofrequency(B=40*u.nT, particle='p+').to(u.Hz). "
             "For a standard named computation — shock jump conditions, theta_Bn, "
-            "Walen test, magnetopause standoff — run the recipe as shipped with "
-            "run_recipe(name, inputs, call), unconditionally, even when you already "
-            "know the formula: the recipes carry their scientific reference and "
-            "calibrated parameters, so a derivation is attributable instead of "
-            "improvised. load_recipe is for reading one. "
+            "Walen test, magnetopause standoff — call load_recipe first, "
+            "unconditionally, even when you already know the formula: the "
+            "recipes carry their scientific reference and calibrated parameters, "
+            "so a derivation is attributable instead of improvised. "
             "Return values with units and physical interpretation."
         ),
         # list_recipes/load_recipe were missing, so this role could not reach the
@@ -438,7 +435,9 @@ async def stream_subagent(
             sub_agent_ctx=ctx,
             provider=provider,
             model=role_model[1] if role_model else None,
-            search_budget=role_cfg.search_budget,
+            search_budget=(
+                role_cfg.search_budget if "search_budget" in settings.agent.experiments else 0
+            ),
         )
         runner = Runner(
             policy,

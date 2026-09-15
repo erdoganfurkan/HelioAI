@@ -458,9 +458,11 @@ async def test_a_policy_without_final_answer_neither_offers_nor_honours_it():
 
 
 async def test_the_lead_puts_the_claims_on_its_reply_and_journals_them(monkeypatch, tmp_path):
+    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
 
+    monkeypatch.setattr(settings.agent, "experiments", frozenset({"final_answer"}))
     test_store = SessionStore(tmp_path / "sessions.db")
     monkeypatch.setattr(agent_loop, "store", test_store)
     claims = [{"name": "theta_bn", "value": 57.5, "units": "deg", "source": "theta_bn"}]

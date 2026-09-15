@@ -335,7 +335,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
       normal, the magnetic compression ratio, the two window means, a bootstrap spread of
       the angle and the normal, and the std of B·n̂. The naive "coplanarity residual" is
       identically zero for this estimator and is documented as such rather than exported.
-      The placeholder demo no longer runs under `run_recipe`.
+      The placeholder demo no longer runs under `run_recipe`. Run with the series alone,
+      the recipe lists the largest |B| jumps of the interval (`find_shock_candidates`:
+      time, jump, ratio) and stops, so the crossing time is picked from a list rather
+      than hunted with hand-written cells — a live run spent nine of its twelve turns on
+      that hunt.
     - `mvab`: the Sonnerup & Scheible (1998, eq. 8.23–8.24) angular uncertainties of the
       normal and Δ⟨B·n⟩, on the covariance convention of the reference (÷N); λ_min ≈ 0
       is now "planar — normal unique, uncertainty undefined", λ_int ≈ λ_min "degenerate",

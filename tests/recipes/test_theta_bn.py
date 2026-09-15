@@ -153,3 +153,47 @@ def test_theta_bn_placeholder_demo_runs_only_as_a_bare_script(recipe):
     run = recipe("theta_bn", __name__="__main__")
 
     assert run.value("theta_bn") == pytest.approx([80.24], abs=0.01)
+
+
+# ── finding the shock before computing its angle ───────────────────────────────
+
+
+def test_find_shock_candidates_puts_the_constructed_shock_first(recipe):
+    """The live run spent nine of twelve turns hunting the ramp with run_python cells;
+    the recipe lists the largest |B| jumps so the analyst picks one and moves on."""
+    series, _, _ = _shock_series()
+    find = recipe("theta_bn").namespace["find_shock_candidates"]
+    cands = find(series, n=3)
+    assert cands, "the constructed shock is a 10 → 22.9 nT step"
+    top = cands[0]
+    assert abs(np.datetime64(top["time"]) - SHOCK_TIME) <= np.timedelta64(60, "s")
+    assert top["jump_nT"] > 10 and top["ratio"] > 2
+    assert top["B_before_nT"] < top["B_after_nT"]
+
+
+def test_find_shock_candidates_separates_two_shocks_and_ignores_gaps(recipe):
+    t = np.datetime64("2015-03-17T00:00:00", "s") + np.arange(4000) * np.timedelta64(3, "s")
+    mag = np.full(t.size, 5.0)
+    first = np.datetime64("2015-03-17T01:00:00", "s")
+    second = np.datetime64("2015-03-17T02:30:00", "s")
+    mag[t >= first] = 12.0
+    mag[t >= second] = 20.0
+    mag[(t > first + np.timedelta64(10, "m")) & (t < first + np.timedelta64(20, "m"))] = np.nan
+    series = SimpleNamespace(time=t, values=mag)
+    find = recipe("theta_bn").namespace["find_shock_candidates"]
+    cands = find(series, n=5)
+    times = [np.datetime64(c["time"]) for c in cands]
+    assert len(cands) == 2, cands
+    assert abs(times[0] - second) <= np.timedelta64(60, "s"), "the 8 nT step is larger"
+    assert abs(times[1] - first) <= np.timedelta64(60, "s")
+    assert all(np.isfinite(c["jump_nT"]) for c in cands), "a gap edge is not a jump"
+
+
+def test_a_series_without_a_shock_time_lists_candidates_and_exports_nothing(recipe, capsys):
+    series, _, _ = _shock_series()
+    run = recipe("theta_bn", B=series)
+    out = capsys.readouterr().out
+    assert run.exports == {}, "no angle is computed until a time is chosen"
+    assert "shock_time not set" in out and "pick one" in out
+    assert "2015-03-17T04:00" in out, out
+    assert run.namespace["shock_candidates"][0]["ratio"] > 2

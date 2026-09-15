@@ -1,6 +1,6 @@
 # name: theta_bn
 # description: Compute the shock normal angle theta_Bn from upstream and downstream magnetic field vectors.
-# inputs: B_up (array of shape (N,3) or (3,) in nT, upstream), B_dn (array of shape (N,3) or (3,), downstream); or B (series with .time and .values) plus shock_time; optional guard_min, span_min
+# inputs: B_up (array of shape (N,3) or (3,) in nT, upstream), B_dn (array of shape (N,3) or (3,), downstream); or B (series with .time and .values) plus shock_time; or B alone to list shock candidates; optional guard_min, span_min, n_candidates
 # outputs: theta_bn (deg), shock_normal, compression_ratio (magnetic |<B_dn>|/|<B_up>|), B_up_mean_nT, B_dn_mean_nT, theta_bn_std_deg, normal_spread_deg, Bn_std_nT
 # reference: Coplanarity theorem (Colburn & Sonett 1966); Schwartz (1998), "Shock and Discontinuity Normals, Mach Numbers and Related Parameters", ISSI SR-001, ch. 10.
 
@@ -19,6 +19,14 @@ Usage with a measured crossing time, preferred because the recipe owns the windo
     shock_time = np.datetime64("2015-03-17T04:00:00")
     # Then run this script. It uses 8-minute windows separated from the shock by
     # the 2-minute guard band, rejecting windows that still contain the ramp.
+
+Usage when the crossing time is not known yet — find it first, do not hunt for it with
+hand-written run_python cells (one live run spent nine of its twelve turns on that):
+    B = load_data("b3gsm")
+    # Run this script with B alone: it prints the n_candidates largest |B| jumps over
+    # one-minute windows (time, jump in nT, downstream/upstream ratio) and stops. Look
+    # at them against the plot, pick one, then run again with shock_time set to it.
+    # The same list is available as a function: find_shock_candidates(B, n=5).
 
 Usage with windows already chosen by the analyst:
     B_up = var.values[mask_up]     # (N,3) over the upstream interval, or its mean 3-vector
@@ -184,6 +192,74 @@ def theta_bn(B_up, B_dn):
     }
 
 
+CANDIDATE_STEP_MIN = 1.0
+
+
+def find_shock_candidates(B, n=5, search=None, step_min=CANDIDATE_STEP_MIN):
+    """The n largest |B| jumps of a series, as candidate shock crossings.
+
+    A fast forward shock is a step in |B| of a few nT completed within seconds; on a
+    day of 3-s data the biggest one-minute jumps are where to look. This is a screening
+    list, not a detection: a discontinuity, a sheath structure or a data edge can jump
+    too, and a reverse or slow shock steps down. Look at the candidates on the plot and
+    choose; the recipe never chooses for you.
+
+    Parameters
+    ----------
+    B : series with `.time` (datetime64) and `.values` ((N,) or (N, 3)), as `load_data`
+        returns it, or a `(t, values)` pair.
+    n : how many candidates to return, best first.
+    search : optional (start, stop) datetime64 pair restricting the search.
+    step_min : the window, in minutes, over which a jump is measured.
+
+    Returns
+    -------
+    list of dicts {time, jump_nT, ratio, B_before_nT, B_after_nT}, largest jump first.
+    A step spreads over every sample within `step_min` of it on either side, so
+    candidates closer than 2·step_min to a larger one are the same step and are merged.
+    """
+    if isinstance(B, tuple):
+        t, values = B
+    else:
+        t, values = B.time, B.values
+    t = np.asarray(t)
+    v = np.asarray(values, dtype=float)
+    mag = np.linalg.norm(v, axis=1) if v.ndim > 1 else v
+    if search is not None:
+        keep = (t >= np.datetime64(search[0])) & (t <= np.datetime64(search[1]))
+        t, mag = t[keep], mag[keep]
+    if t.size < 3:
+        return []
+    step = np.timedelta64(int(step_min * 60), "s")
+    t_s = t.astype("datetime64[s]")
+    before = np.searchsorted(t_s, t_s - step, side="left")
+    after = np.searchsorted(t_s, t_s + step, side="right") - 1
+    finite = np.isfinite(mag)
+    jumps = np.full(mag.shape, np.nan)
+    ok = finite & finite[before] & finite[after] & (after > before)
+    jumps[ok] = mag[after][ok] - mag[before][ok]
+    order = np.argsort(-np.nan_to_num(jumps, nan=-np.inf))
+    out = []
+    for i in order:
+        if not np.isfinite(jumps[i]) or jumps[i] <= 0:
+            break
+        if any(abs(t_s[i] - np.datetime64(c["time"], "s")) <= 2 * step for c in out):
+            continue
+        b0, b1 = float(mag[before[i]]), float(mag[after[i]])
+        out.append(
+            {
+                "time": str(t_s[i]),
+                "jump_nT": round(float(jumps[i]), 3),
+                "ratio": round(b1 / b0, 3) if b0 > 0 else float("nan"),
+                "B_before_nT": round(b0, 3),
+                "B_after_nT": round(b1, 3),
+            }
+        )
+        if len(out) >= n:
+            break
+    return out
+
+
 def shock_windows(shock_time, guard_min: float = GUARD_MIN, span_min: float = SPAN_MIN):
     """The four magnetic-field averaging window edges, derived from the shock time alone.
 
@@ -327,6 +403,18 @@ try:
         B_up, B_dn, _windows = windows_from_series(_B, _shock_time, _guard_min, _span_min)
         print(f"upstream window: {_fmt_time(_windows[0])} to {_fmt_time(_windows[1])}")
         print(f"downstream window: {_fmt_time(_windows[2])} to {_fmt_time(_windows[3])}")
+    elif _B is not None:
+        shock_candidates = find_shock_candidates(_B, n=int(globals().get("n_candidates", 5)))
+        if not shock_candidates:
+            print("theta_bn: no |B| jump found in B — check the interval and the data")
+        else:
+            print("theta_bn: shock_time not set — the largest |B| jumps, to choose from:")
+            for _c in shock_candidates:
+                print(
+                    f"  {_c['time']}  +{_c['jump_nT']} nT  "
+                    f"({_c['B_before_nT']} → {_c['B_after_nT']} nT, ratio {_c['ratio']})"
+                )
+            print("pick one, then run again with shock_time = np.datetime64('<time>')")
     else:
         if __name__ == "__main__":
             B_up = np.array([5.0, -2.0, 1.0])

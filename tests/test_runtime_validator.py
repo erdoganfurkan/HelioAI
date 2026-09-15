@@ -246,3 +246,33 @@ def test_the_claims_tolerance_is_the_prose_checkers():
     assert status == "matched"
     status, _ = judge_claim(_claim("compression_ratio", 2.61), ledger)
     assert status == "contradicted", "0.5 % is still the line"
+
+
+# ── what the SEA live run taught (2026-09-15, 099f5c2) ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "label", ["dimensionless (normalized epoch)", "events per epoch point", "events", "ratio"]
+)
+def test_a_label_on_a_dimensionless_export_is_not_an_irreconcilable_unit(label):
+    """`peak_tau = 0.606, units: "dimensionless (normalized epoch)"` against an export
+    recorded with "" came back unsourced: the label does not parse as a unit. A word on a
+    dimensionless quantity is a label, not a dimension; the value is what to compare."""
+    ledger = [_entry("peak_tau", 0.6060606)]
+    status, _ = judge_claim(_claim("peak_tau", 0.606, label, "peak_tau"), ledger)
+    assert status == "matched"
+    status, _ = judge_claim(_claim("peak_tau", 0.9, label, "peak_tau"), ledger)
+    assert status == "contradicted", "the label does not shield a wrong number either"
+
+
+def test_a_blank_ledger_unit_means_unknown_so_the_value_alone_is_judged():
+    """Most `run_python` exports carry no unit; a claim that names one is more specific
+    than the ledger, not wrong. Only two units that both parse can be incompatible."""
+    ledger = [_entry("Bmag_up", 9.7)]
+    status, _ = judge_claim(_claim("B_up", 9.7, "nT", "Bmag_up"), ledger)
+    assert status == "matched"
+    status, _ = judge_claim(_claim("B_up", 12.0, "nT", "Bmag_up"), ledger)
+    assert status == "contradicted"
+    ledger = [_entry("theta_bn", 57.16, "deg")]
+    status, _ = judge_claim(_claim("theta_bn", 57.2, "degre", "theta_bn"), ledger)
+    assert status == "unsourced", "a misspelling against a real unit is left unjudged"

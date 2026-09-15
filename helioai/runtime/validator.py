@@ -219,15 +219,18 @@ def _in_ledger_units(value: float, claim_units: str, ledger_units: str) -> float
     """The claim's value expressed in the ledger's units.
 
     Two blanks, or two identical strings, need no conversion; anything else goes through
-    astropy. A unit that does not parse leaves the claim unjudged (None) rather than
-    accused — a spelling is not a contradiction. Two units that parse and cannot be
-    converted into each other (`deg` against `km/s`) are one, and return `_INCOMPATIBLE`.
+    astropy. A blank ledger unit means the export did not say — a `run_python` export
+    without `units=`, or a ratio — so the claim's value is compared as is, whatever it
+    was labelled: the SEA live run claimed `peak_tau = 0.606 "dimensionless (normalized
+    epoch)"` against an export recorded blank and was told the units could not be
+    reconciled. A claim unit that does not parse against a ledger unit that does leaves
+    the claim unjudged (None) rather than accused — a spelling is not a contradiction.
+    Two units that parse and cannot be converted into each other (`deg` against `km/s`)
+    are one, and return `_INCOMPATIBLE`.
     """
     a, b = claim_units.strip(), ledger_units.strip()
-    if a.lower() == b.lower():
+    if a.lower() == b.lower() or not a or not b:
         return value
-    if not a or not b:
-        return value if not a else None
     try:
         import astropy.units as u
 

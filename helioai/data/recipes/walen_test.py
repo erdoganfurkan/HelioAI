@@ -1,7 +1,7 @@
 # name: walen_test
 # description: Walén test — compare plasma velocity in the de Hoffmann-Teller frame with the Alfvén velocity to identify rotational discontinuities.
-# inputs: V (ion velocity array shape (N,3) in km/s), B (magnetic field array shape (N,3) in nT), n_cm3 (ion density array shape (N,) in cm⁻³)
-# outputs: walen_slope (dimensionless), walen_R2 (dimensionless), V_HT (km/s)
+# inputs: V (ion velocity array shape (N,3) in km/s), B (magnetic field array shape (N,3) in nT), n_cm3 (ion density array shape (N,) in cm⁻³), frame (optional, "ht" or "mean")
+# outputs: walen_slope (dimensionless), walen_R2 (dimensionless), V_HT (km/s), ht_residual (dimensionless)
 # reference: Walén (1944), Ark. Mat. Astron. Fys. 30A; Sonnerup et al. (1987), JGR 92, 12137; Khrabrov & Sonnerup (1998), ISSI SR-001, ch. 9; Paschmann & Sonnerup (2008), ISSI SR-008, ch. 3.
 
 """Walén test for rotational discontinuities.
@@ -28,11 +28,14 @@ MP = 1.6726e-27               # kg (proton mass)
 CM3_TO_M3 = 1e6               # 1 cm⁻³ = 1e6 m⁻³
 
 # Paschmann & Sonnerup (2008), ISSI SR-008 ch. 3: |slope| ≳ 0.7-0.8
-# with high correlation is commonly taken as RD evidence. These are deliberately
-# named constants so event specialists can tune the convention.
-RD_SLOPE_THRESHOLD = 0.7
+# with high correlation is commonly taken as RD evidence. The upper bound is the
+# symmetric counterpart around unity; event specialists may tighten it.
+RD_SLOPE_MIN = 0.7
+RD_SLOPE_MAX = 1.3
 RD_R2_THRESHOLD = 0.8
 PARTIAL_SLOPE_THRESHOLD = 0.4
+PARTIAL_R2_THRESHOLD = 0.5
+HT_CORRELATION_THRESHOLD = 0.9
 
 
 def alfven_velocity(B_nT, n_cm3):
@@ -107,8 +110,50 @@ def _regression(x, y):
     return slope, intercept, float(R2)
 
 
+def _correlation(a, b):
+    a = np.asarray(a, dtype=float).ravel()
+    b = np.asarray(b, dtype=float).ravel()
+    finite = np.isfinite(a) & np.isfinite(b)
+    a = a[finite]
+    b = b[finite]
+    if a.size < 2:
+        return None
+
+    a0 = a - a.mean()
+    b0 = b - b.mean()
+    denominator = np.sqrt(np.dot(a0, a0) * np.dot(b0, b0))
+    if denominator <= 0:
+        return None
+    return float(np.dot(a0, b0) / denominator)
+
+
+def ht_frame_quality(V, B, V_HT):
+    """Quality measures for the de Hoffmann-Teller frame.
+
+    Khrabrov & Sonnerup (1998) compare the convective electric field
+    ``E_c = -v × B`` with the HT-frame field ``E_HT = -V_HT × B``. The
+    correlation says whether a single HT velocity explains the observed
+    electric field; the residual ratio says how much motional field remains
+    after transforming into that frame.
+    """
+    residual_e = np.cross(V - V_HT, B)
+    convective_e = np.cross(V, B)
+    residual_rms = np.sqrt(np.mean(np.einsum("ij,ij->i", residual_e, residual_e)))
+    convective_rms = np.sqrt(np.mean(np.einsum("ij,ij->i", convective_e, convective_e)))
+    if convective_rms <= 0:
+        ht_residual = 0.0 if residual_rms <= 0 else None
+    else:
+        ht_residual = float(residual_rms / convective_rms)
+
+    E_c = -convective_e
+    E_HT = -np.cross(np.broadcast_to(V_HT, V.shape), B)
+    return ht_residual, _correlation(E_c, E_HT)
+
+
 def _rounded(value):
-    return None if value is None else round(float(value), 4)
+    if value is None or not np.isfinite(value):
+        return None
+    return round(float(value), 4)
 
 
 def walen_test(V, B, n_cm3, frame="ht"):
@@ -131,8 +176,8 @@ def walen_test(V, B, n_cm3, frame="ht"):
     -------
     dict
         Global stacked slope and R², per-component slopes and R², the frame
-        used, V_HT when solved, and the physical interpretation. Degenerate HT
-        inputs return an ``error`` key and no slope.
+        used, V_HT and HT quality when solved, and the physical interpretation.
+        Degenerate HT inputs return an ``error`` key and no slope.
     """
     V = np.asarray(V, dtype=float)
     B = np.asarray(B, dtype=float)
@@ -158,8 +203,11 @@ def walen_test(V, B, n_cm3, frame="ht"):
             return {"error": error, "frame": frame}
         dV = V - V_HT
         dVA = VA
+        ht_residual, ht_correlation = ht_frame_quality(V, B, V_HT)
     else:
         V_HT = None
+        ht_residual = None
+        ht_correlation = None
         dV = V - V.mean(axis=0)
         dVA = VA - VA.mean(axis=0)
 
@@ -176,12 +224,24 @@ def walen_test(V, B, n_cm3, frame="ht"):
         component_R2[name] = _rounded(c_R2)
         component_intercepts[name] = _rounded(c_intercept)
 
-    if abs(slope) >= RD_SLOPE_THRESHOLD and R2 >= RD_R2_THRESHOLD:
+    abs_slope = abs(slope)
+    if RD_SLOPE_MIN <= abs_slope <= RD_SLOPE_MAX and R2 >= RD_R2_THRESHOLD:
         interpretation = "consistent with a rotational discontinuity (Walén relation satisfied)"
-    elif PARTIAL_SLOPE_THRESHOLD <= abs(slope) < RD_SLOPE_THRESHOLD:
+    elif abs_slope > RD_SLOPE_MAX:
+        interpretation = (
+            "super-Alfvénic correlation — slope far above 1; check density/composition "
+            "(anisotropy or heavy ions change V_A) before calling this an RD"
+        )
+    elif PARTIAL_SLOPE_THRESHOLD <= abs_slope < RD_SLOPE_MIN and R2 >= PARTIAL_R2_THRESHOLD:
         interpretation = "partial Alfvénic correlation"
     else:
         interpretation = "not Alfvénic"
+
+    if ht_correlation is not None and ht_correlation < HT_CORRELATION_THRESHOLD:
+        interpretation += (
+            f" — HT frame is poor (E-field correlation {ht_correlation:.2f}) "
+            "— Walén slope not meaningful"
+        )
 
     result = {
         "slope": round(float(slope), 4),
@@ -196,6 +256,8 @@ def walen_test(V, B, n_cm3, frame="ht"):
     }
     if V_HT is not None:
         result["V_HT"] = V_HT.tolist()
+        result["ht_residual"] = _rounded(ht_residual)
+        result["ht_correlation"] = _rounded(ht_correlation)
     return result
 
 
@@ -206,6 +268,20 @@ def walen_test(V, B, n_cm3, frame="ht"):
 #   var_n = load_data("ion_n")       # ion density, cm^-3, shape (N,)
 # Then bind V, B and n_cm3 to those arrays and run this recipe. The optional
 # global `frame = "mean"` reproduces the legacy mean-subtracted comparison.
+
+if __name__ == "__main__" and "export" not in globals():
+
+    def export(name, data, units=""):
+        return None
+
+    rng = np.random.default_rng(42)
+    N = 200
+    t = np.linspace(0, np.pi, N)
+    B = np.column_stack([5 + 3 * np.cos(t), -2 + np.sin(t), 1 + 0.5 * np.sin(2 * t)])
+    n_cm3 = 5 + rng.normal(0, 0.3, N)
+    V_HT_demo = np.array([-400.0, 30.0, -10.0])
+    V = V_HT_demo + alfven_velocity(B, n_cm3) + rng.normal(0, 5, (N, 3))
+
 
 V, B, n_cm3 = globals().get("V"), globals().get("B"), globals().get("n_cm3")
 frame = globals().get("frame", "ht")
@@ -219,15 +295,6 @@ if V is not None and B is not None and n_cm3 is not None:
         export("walen_R2", np.array([result["R2"]]), "")
         if "V_HT" in result:
             export("V_HT", np.asarray(result["V_HT"]), "km/s")
+        if result.get("ht_residual") is not None:
+            export("ht_residual", np.array([result["ht_residual"]]), "")
         print(result)
-
-
-if __name__ == "__main__":
-    rng = np.random.default_rng(42)
-    N = 200
-    t = np.linspace(0, np.pi, N)
-    B_demo = np.column_stack([5 + 3 * np.cos(t), -2 + np.sin(t), 1 + 0.5 * np.sin(2 * t)])
-    n_demo = 5 + rng.normal(0, 0.3, N)
-    V_HT_demo = np.array([-400.0, 30.0, -10.0])
-    V_demo = V_HT_demo + alfven_velocity(B_demo, n_demo) + rng.normal(0, 5, (N, 3))
-    print(walen_test(V_demo, B_demo, n_demo))

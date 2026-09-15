@@ -132,13 +132,11 @@ async def test_a_function_recipe_is_applied_through_call_on_wind_swe_shaped_seri
 async def test_a_recipe_that_guards_its_demo_behind_main_does_not_run_the_demo(
     tmp_path, recipes_dir
 ):
-    """pressure_balance demonstrates itself under `if __name__ == "__main__":`. Pasted
-    into run_python that demo runs and exports numbers nobody asked for; through
-    run_recipe only the caller's own `call` exports."""
+    """pressure_balance demonstrates itself under `if __name__ == "__main__"`.
+    Through run_recipe the bound-input run block executes, but the demo stays off."""
     result = await run_recipe(
         "pressure_balance",
         inputs={"n_sw": 12.0, "V_sw": 600.0, "B_sw": 5.0},
-        call="mp_standoff(n_sw, V_sw, B_sw)",
         _plot_dir=str(tmp_path),
         _run_idx=0,
     )
@@ -146,7 +144,9 @@ async def test_a_recipe_that_guards_its_demo_behind_main_does_not_run_the_demo(
     assert 6 < result["exports"]["r_mp_RE"]["mean"] < 9, (
         "a compressed magnetopause, not the demo's 10"
     )
-    assert result["stdout"].count("Magnetopause standoff") == 1, "one run: the call, not the demo"
+    assert result["stdout"].count("Magnetopause standoff") == 1, (
+        "one run: the run block, not the demo"
+    )
 
 
 # ── what the tool refuses, before any process is spawned ───────────────────────────

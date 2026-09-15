@@ -275,6 +275,12 @@ def _render_event(ev: dict) -> None:
         for line in lines:
             print(f"{pad}  \033[{colour}m{line}\033[0m")
 
+    elif name == "correction":
+        ids = ", ".join(data.get("ids") or [])
+        print(
+            f"{pad}\033[90m↩ correction sent to the model — ids not in the catalogue: {ids}\033[0m"
+        )
+
     elif name == "invalid_ids":
         print(f"\n{pad}\033[91m⚠ ids not in the catalogue — do not use:\033[0m")
         for pid in data.get("ids") or []:

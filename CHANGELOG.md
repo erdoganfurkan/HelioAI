@@ -215,7 +215,10 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   verdicts and everything a sub-agent did. Sessions recorded before the journal existed
   keep the old view (`legacy_replay.py`), used only when there is no journal. The stream
   now opens with a `user` event carrying the question; the CLI and the notebook leave it
-  unrendered.
+  unrendered. The automated correction the loop sends the model when an answer quotes
+  ids that exist in no catalogue is a `correction` event too, so a replay shows what the
+  model was told as a system note rather than losing it — the one thing the journal did
+  not carry.
 - **A tool call returns a typed result.** `registry.call_tool` used to serialise every
   tool's dict to JSON on the spot, and five readers downstream — the history, the artifact
   extractor, the figure review, the MCP server, the event display — each parsed that text

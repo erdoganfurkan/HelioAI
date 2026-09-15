@@ -61,6 +61,11 @@ KINDS: dict[str, tuple[str, ...]] = {
         "figure_reviews",
         "claims",
     ),
+    # HelioAI's own note appended to the conversation when an answer quoted ids that
+    # exist in no catalogue: the model gets one more turn with it. It travels to the
+    # model as a `user` message (`Message.origin == "correction"`) and used to be the one
+    # thing a replay from the journal lost — the export always had it.
+    "correction": ("ids", "text"),
     "invalid_ids": ("ids",),
     "recipe_bypassed": ("recipes",),
     "sub_agent_start": ("task_id", "role", "description"),

@@ -45,6 +45,7 @@ const JOURNAL = [
   { event: 'user', data: { text: 'Replayed question' } },
   { event: 'tool_call', data: { turn: 1, name: 'load_recipe', arguments: {}, display: 'theta_bn' } },
   { event: 'tool_result', data: { turn: 1, name: 'load_recipe', summary: '{}', display: 'name theta_bn' } },
+  { event: 'correction', data: { ids: ['cda/BOGUS/x'], text: 'AUTOMATED CORRECTION — cda/BOGUS/x is not in the catalogue' } },
   { event: 'plan', data: { title: 'Replayed plan', steps: [{ description: 'load', tool: 'load_recipe' }] } },
   { event: 'reply', data: { text: 'Replayed answer', claims: [{ name: 'theta_bn', value: 62.7, units: 'deg', source: 'theta_bn' }] } },
   { event: 'provenance', data: { matched: 1, contradicted: 0, derived: 0, unsourced: 0, details: [] } },
@@ -150,6 +151,8 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   assert.ok(document.getElementById('ad-body').textContent.includes('plan — 1/2 planned tools used, not run_python'),
     'the plan report is replayed as a timeline line');
   assert.equal(chatArea.querySelectorAll('.msg-user').length, 1, 'one bubble per user event on replay');
+  assert.equal(chatArea.querySelectorAll('.msg-system').length, 1, 'the correction replays as a system note, not a question');
+  assert.ok(chatArea.querySelector('.msg-system').textContent.includes('cda/BOGUS/x'));
 
   console.log('OK web session streams');
 })().catch(e => { console.error(e); process.exit(1); });

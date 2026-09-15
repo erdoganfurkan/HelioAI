@@ -326,6 +326,11 @@ function renderEvent(view, ev) {
       row.append(box);
     }
 
+  } else if (event === 'correction') {
+    // HelioAI's own note to the model, shown the way the legacy replay shows the
+    // persisted message: neither bubble. Journaled, so a reload keeps it.
+    view.chat.append(el('div', 'msg-system', data.text));
+
   } else if (event === 'invalid_ids') {
     // A sub-agent quoting parameter ids that exist in no catalogue is the most
     // damaging thing it can produce, so this one is a banner, not a timeline line.

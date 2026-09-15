@@ -267,13 +267,9 @@ class Runner:
                     if bogus:
                         retried_bogus_ids = True
                         log.warning("invented_ids_retry", agent=policy.name, ids=bogus, turn=turn)
-                        history.append(
-                            Message(
-                                role="user",
-                                content=unknown_id_correction(bogus),
-                                origin="correction",
-                            )
-                        )
+                        note = unknown_id_correction(bogus)
+                        history.append(Message(role="user", content=note, origin="correction"))
+                        yield make("correction", ids=bogus, text=note, **extra)
                         continue
                 yield self._end(final_text, claims=claims)
                 return

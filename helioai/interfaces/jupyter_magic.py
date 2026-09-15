@@ -199,6 +199,10 @@ def _render_jupyter_event(ev: dict) -> None:
         summary, lines = describe_verdict(data)
         display(Markdown("\n".join([f"**⚖ {summary}**", *(f"- {line}" for line in lines)])))
 
+    elif name == "correction":
+        ids = ", ".join(f"`{i}`" for i in data.get("ids") or [])
+        display(Markdown(f"_↩ correction sent to the model — ids not in the catalogue: {ids}_"))
+
     elif name == "invalid_ids":
         ids = "\n".join(f"- `{i}`" for i in data.get("ids") or [])
         display(

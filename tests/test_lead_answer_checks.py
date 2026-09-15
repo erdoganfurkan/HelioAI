@@ -184,6 +184,10 @@ async def test_lead_retries_once_on_an_invented_id(monkeypatch, tmp_path, fake_l
     assert not [e for e in events if e["event"] == "invalid_ids"]
     reply = [e for e in events if e["event"] == "reply"][-1]["data"]["text"]
     assert real in reply and "AUTOMATED CORRECTION" not in reply
+    kinds = [e["event"] for e in events]
+    assert kinds.count("correction") == 1 and kinds.index("correction") < kinds.index("reply")
+    journaled = SessionStore(tmp_path / "sessions.db").events("u", "s")
+    assert [e["data"]["ids"] for e in journaled if e["event"] == "correction"] == [[bogus]]
 
     # The correction reaches the model as a user turn — that is the only role the
     # provider clients forward from history — but it is HelioAI's, not the person's,

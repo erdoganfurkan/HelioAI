@@ -201,10 +201,15 @@ async def test_an_answer_quoting_an_unknown_id_buys_one_corrected_turn(monkeypat
     )
     llm = ScriptedLLM([assistant_text("use cda/BOGUS/x"), assistant_text("use cda/REAL/x")])
     history = [Message(role="user", content="q")]
-    _, end = await _drain(runtime_runner.Runner(_policy(), llm), history)
+    events, end = await _drain(runtime_runner.Runner(_policy(), llm), history)
     assert end.final_text == "use cda/REAL/x" and end.turns == 2
     correction = history[2]
     assert correction.role == "user" and correction.origin == "correction"
+    # The note is also an event, so a replay from the journal shows what the model was
+    # told — the persisted message alone was the one thing the journal lost.
+    noted = [e for e in events if e["event"] == "correction"]
+    assert len(noted) == 1
+    assert noted[0]["data"] == {"ids": ["cda/BOGUS/x"], "text": correction.content}
 
 
 # ── progressive disclosure ───────────────────────────────────────────────────────

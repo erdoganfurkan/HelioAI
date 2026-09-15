@@ -179,11 +179,11 @@ def test_magnetopause_standoff_shrinks_with_dynamic_pressure(recipe):
     ns = recipe("pressure_balance").namespace
     quiet = ns["mp_standoff"](n_sw=5.0, V_sw=400.0, B_sw=5.0)
     storm = ns["mp_standoff"](n_sw=20.0, V_sw=700.0, B_sw=15.0)
-    assert 8.0 < quiet < 12.0
-    assert storm < quiet
+    assert 8.0 < quiet["r_mp_RE"] < 12.0
+    assert storm["r_mp_RE"] < quiet["r_mp_RE"]
     # r ∝ P_dyn^(-1/6): a 4× density rise alone shrinks r by 4^(1/6) ≈ 1.26
     dense = ns["mp_standoff"](n_sw=20.0, V_sw=400.0, B_sw=5.0)
-    assert quiet / dense == pytest.approx(4 ** (1 / 6), rel=0.03)
+    assert quiet["r_mp_RE"] / dense["r_mp_RE"] == pytest.approx(4 ** (1 / 6), rel=0.03)
 
 
 # ── pitch_angle_dist ──────────────────────────────────────────────────────────

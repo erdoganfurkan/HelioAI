@@ -1,7 +1,7 @@
 # name: pitch_angle_dist
 # description: Compute the pitch angle of a particle population given particle velocity vectors and local magnetic field vectors, then plot the pitch angle distribution (PAD).
-# inputs: V_particles (array (N,3) km/s), B_field (array (N,3) or (3,) nT), n_bins (int, default 18)
-# outputs: pa_deg (pitch angles in degrees, array N), counts (histogram counts per bin), pad_plot (figure)
+# inputs: V (array (N,3) km/s), B (array (N,3) or (3,) nT), n_bins (int, default 18), bins ("cos" or "deg", default "cos"), label (plot title)
+# outputs: pitch_angles_median_deg, pitch_angles_mean_deg, n_particles, pad_counts, pad_bin_edges_deg, pad_anisotropy
 # reference: Pitch angle α = arccos(V·B / |V||B|); see Baumjohann & Treumann (1996), Basic Space Plasma Physics, ch. 2.
 
 """Pitch angle distribution (PAD).
@@ -14,17 +14,45 @@ local magnetic field direction:
 This recipe computes PADs for particle data obtained from MMS-FPI, Cluster-PEACE,
 Van Allen Probes-MagEIS, or similar instruments.
 
-Requirements:
-- V_particles : shape (N, 3), particle velocity in instrument or GSE frame (km/s)
-- B_field     : shape (N, 3) or (3,), magnetic field in the same frame (nT)
+Equal-width bins in cos(α) have equal solid angle:
 
-Usage: load_recipe("pitch_angle_dist") returns this source. Paste it into run_python
-and call:
+    dΩ = 2π sin(α) dα = −2π d(cos(α))
+
+An isotropic population therefore has equal expected counts in every bin, without
+a 1/sin(α) correction. The plot shows particle counts per steradian, not flux or
+phase-space density. Its x-axis remains α in degrees: arccos-transformed edges
+give wider bins near the poles and narrower bins near 90°, as required for equal
+solid angle. The angular widths must not be mistaken for unequal acceptance.
+
+For backward comparison, bins="deg" retains uniform degree bins and the old
+division by sin(α) at each bin centre. That correction magnifies the absolute
+Poisson fluctuations of sparsely populated polar bins; it cannot reduce their
+large relative uncertainty. Polar spikes in that legacy plot need not be beams.
+
+Requirements:
+- V : shape (N, 3), particle velocity in instrument or GSE frame (km/s)
+- B : shape (N, 3) or (3,), magnetic field in the same frame (nT)
+
+Usage: run_recipe("pitch_angle_dist", inputs={"V": ..., "B": ...}) applies the
+bound inputs. Alternatively, load the source and call:
     pa, counts, edges = compute_pad(V_particles, B_field)
+
+The result still unpacks as that three-element tuple. It also exposes all six
+exported quantities as named attributes, e.g. result.pad_anisotropy.
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+
+class PADResult(tuple):
+    """Preserve three-value unpacking while retaining every provenance quantity."""
+
+    def __new__(cls, pa_deg, counts, edges, values):
+        result = super().__new__(cls, (pa_deg, counts, edges))
+        for name, value in values.items():
+            setattr(result, name, value)
+        return result
 
 
 def compute_pad(
@@ -32,22 +60,51 @@ def compute_pad(
     B_field: "np.ndarray",
     n_bins: int = 18,
     label: str = "PAD",
-) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
+    *,
+    bins: str = "cos",
+) -> PADResult:
     """Compute and plot a pitch angle distribution.
 
     Parameters
     ----------
     V_particles : (N, 3) array of particle velocities (km/s)
     B_field     : (N, 3) or (3,) array of magnetic field vectors (nT)
-    n_bins      : number of pitch angle bins (default 18 → 10° bins)
+    n_bins      : number of pitch angle bins (default 18)
     label       : plot title suffix
+    bins        : "cos" (default), equal solid angle, or "deg", legacy 10° bins
+                  for n_bins=18 with the pole-noise-amplifying 1/sin correction
 
     Returns
     -------
     pa_deg : (N,) pitch angles in degrees
-    counts : (n_bins,) histogram counts
-    edges  : (n_bins+1,) bin edges in degrees
+    counts : (n_bins,) raw counts for "cos"; sine-corrected counts for "deg"
+    edges  : (n_bins+1,) increasing bin edges in degrees
+
+    Raises
+    ------
+    ValueError
+        If n_bins is not a positive integer or bins is not "cos" or "deg".
+
+    Notes
+    -----
+    The returned PADResult also carries pitch_angles_median_deg and
+    pitch_angles_mean_deg (degrees), n_particles (valid particles), pad_counts
+    (raw counts in either scheme), pad_bin_edges_deg (degrees), and pad_anisotropy.
+    These quantities are exported with units when the sandbox export helper exists.
+
+    Anisotropy is mean(counts at the two poles) / mean(counts at the equator).
+    The equator uses the central two bins for even n_bins, or the central bin
+    for odd n_bins. In "deg" mode it uses the legacy sine-corrected counts,
+    not the unequal-solid-angle raw counts. Values >1 indicate field-aligned
+    populations and <1 indicate pancakes; the chosen angular acceptance depends
+    on n_bins. A populated pole with an empty equator gives infinity; both empty,
+    or fewer than three bins, gives NaN. No pseudocount is added.
     """
+    if bins not in ("cos", "deg"):
+        raise ValueError('bins must be "cos" or "deg"')
+    if not isinstance(n_bins, (int, np.integer)) or n_bins < 1:
+        raise ValueError("n_bins must be a positive integer")
+
     V = np.asarray(V_particles, dtype=float)
     B = np.asarray(B_field, dtype=float)
 
@@ -70,19 +127,39 @@ def compute_pad(
     pa_deg[~mask] = np.nan
 
     valid = pa_deg[~np.isnan(pa_deg)]
-    counts_raw, edges = np.histogram(valid, bins=n_bins, range=(0, 180))
+    if bins == "cos":
+        cos_edges = np.linspace(-1.0, 1.0, n_bins + 1)
+        # Negating cos(α) orders bins by increasing α, including the 90° boundary.
+        counts_raw, _ = np.histogram(-cos_alpha[~np.isnan(pa_deg)], bins=cos_edges)
+        edges = np.degrees(np.arccos(-cos_edges))
+        counts = counts_raw
+        plot_counts = counts / (4 * np.pi / n_bins)
+    else:
+        counts_raw, edges = np.histogram(valid, bins=n_bins, range=(0, 180))
+        bin_centers = 0.5 * (edges[:-1] + edges[1:])
+        sin_alpha = np.sin(np.radians(bin_centers))
+        sin_alpha = np.where(sin_alpha < 1e-10, 1e-10, sin_alpha)
+        counts = counts_raw / sin_alpha
+        plot_counts = counts
     bin_centers = 0.5 * (edges[:-1] + edges[1:])
-    sin_alpha = np.sin(np.radians(bin_centers))
-    sin_alpha = np.where(sin_alpha < 1e-10, 1e-10, sin_alpha)
-    counts = counts_raw / sin_alpha
+
+    polar = np.mean(counts[[0, -1]])
+    equatorial = np.mean(counts[(n_bins - 1) // 2:n_bins // 2 + 1])
+    if n_bins < 3 or (polar == 0 and equatorial == 0):
+        anisotropy = float("nan")
+    elif equatorial == 0:
+        anisotropy = float("inf")
+    else:
+        anisotropy = float(polar / equatorial)
+    median = float(np.median(valid)) if len(valid) else float("nan")
+    mean = float(np.mean(valid)) if len(valid) else float("nan")
 
     # Plot
-    plt.style.use("dark_background")
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.bar(bin_centers, counts, width=edges[1] - edges[0], color="#4fc3f7",
+    ax.bar(bin_centers, plot_counts, width=np.diff(edges), color="#1976b9",
            edgecolor="#30363d", linewidth=0.5, alpha=0.85)
     ax.set_xlabel("Pitch angle (°)", fontsize=9)
-    ax.set_ylabel("Counts", fontsize=9)
+    ax.set_ylabel("Particles sr⁻¹" if bins == "cos" else "Counts / sin(α) (legacy)", fontsize=9)
     ax.set_xlim(0, 180)
     ax.set_xticks(range(0, 181, 30))
     ax.set_title(label, fontsize=10)
@@ -90,15 +167,34 @@ def compute_pad(
     plt.tight_layout()
     plt.show()
 
-    export("pitch_angles_median_deg", np.array([float(np.nanmedian(pa_deg))]))
-    export("pitch_angles_mean_deg", np.array([float(np.nanmean(pa_deg))]))
-    export("n_particles", np.array([float(len(valid))]))
+    values = {
+        "pitch_angles_median_deg": median,
+        "pitch_angles_mean_deg": mean,
+        "n_particles": len(valid),
+        "pad_counts": counts_raw,
+        "pad_bin_edges_deg": edges,
+        "pad_anisotropy": anisotropy,
+    }
+    if "export" in globals():
+        for name, value in values.items():
+            export(name, np.atleast_1d(value), "deg" if name.endswith("_deg") else "")
 
-    print(f"Median pitch angle : {np.nanmedian(pa_deg):.1f}°")
-    print(f"Mean pitch angle   : {np.nanmean(pa_deg):.1f}°")
+    print(f"Median pitch angle : {median:.1f}°")
+    print(f"Mean pitch angle   : {mean:.1f}°")
     print(f"Valid particles    : {len(valid)} / {len(pa_deg)}")
 
-    return pa_deg, counts, edges
+    return PADResult(pa_deg, counts, edges, values)
+
+
+# ── Run on bound inputs only ─────────────────────────────────────────────────
+V = globals().get("V")
+B = globals().get("B")
+if V is not None and B is not None:
+    result = compute_pad(
+        V, B, n_bins=globals().get("n_bins", 18),
+        bins=globals().get("bins", "cos"),
+        label=globals().get("label", "Pitch angle distribution"),
+    )
 
 
 # ── Example (isotropic distribution) ─────────────────────────────────────────

@@ -36,6 +36,7 @@ RD_R2_THRESHOLD = 0.8
 PARTIAL_SLOPE_THRESHOLD = 0.4
 PARTIAL_R2_THRESHOLD = 0.5
 HT_CORRELATION_THRESHOLD = 0.9
+E_NEGLIGIBLE_REL = 1e-8
 
 
 def alfven_velocity(B_nT, n_cm3):
@@ -140,10 +141,12 @@ def ht_frame_quality(V, B, V_HT):
     convective_e = np.cross(V, B)
     residual_rms = np.sqrt(np.mean(np.einsum("ij,ij->i", residual_e, residual_e)))
     convective_rms = np.sqrt(np.mean(np.einsum("ij,ij->i", convective_e, convective_e)))
-    if convective_rms <= 0:
-        ht_residual = 0.0 if residual_rms <= 0 else None
-    else:
-        ht_residual = float(residual_rms / convective_rms)
+    V_rms = np.sqrt(np.mean(np.einsum("ij,ij->i", V, V)))
+    B_rms = np.sqrt(np.mean(np.einsum("ij,ij->i", B, B)))
+    if convective_rms <= E_NEGLIGIBLE_REL * V_rms * B_rms:
+        return 0.0, 1.0
+
+    ht_residual = float(residual_rms / convective_rms)
 
     E_c = -convective_e
     E_HT = -np.cross(np.broadcast_to(V_HT, V.shape), B)

@@ -83,6 +83,24 @@ def test_ht_frame_recovers_a_moving_rotational_discontinuity(recipe):
     assert all(s == pytest.approx(1.0, abs=0.05) for s in result["component_slopes"].values())
 
 
+def test_zero_convective_electric_field_is_a_trivially_exact_ht_frame(recipe):
+    ns = recipe("walen_test").namespace
+    b = _nonzero_mean_rotating_field()
+    n_cm3 = np.full(b.shape[0], 5.0)
+    v = _alfven_velocity(b, n_cm3)
+
+    result = ns["walen_test"](v, b, n_cm3)
+
+    assert result["slope"] == pytest.approx(1.0, abs=0.02)
+    assert result["R2"] == pytest.approx(1.0, abs=1e-4)
+    assert result["ht_residual"] == pytest.approx(0.0, abs=1e-12)
+    assert result["ht_correlation"] == pytest.approx(1.0, abs=1e-12)
+    assert (
+        result["interpretation"]
+        == "consistent with a rotational discontinuity (Walén relation satisfied)"
+    )
+
+
 def test_negative_walen_slope_is_still_a_rotational_discontinuity(recipe):
     ns = recipe("walen_test").namespace
     b = _nonzero_mean_rotating_field()

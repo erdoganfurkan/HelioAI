@@ -375,6 +375,7 @@ async def stream_subagent(
             artifacts=[],
             findings={},
             usage={},
+            capped=False,
         )
         return
 
@@ -478,6 +479,7 @@ async def stream_subagent(
             error=final_text if capped else None,
             artifacts=end.artifacts,
             usage={**end.usage, "provider": provider},
+            capped=capped,
         )
 
     except Exception as e:
@@ -493,6 +495,7 @@ async def stream_subagent(
             error=str(e),
             artifacts=[],
             usage={**(runner.usage if runner is not None else _zero_usage()), "provider": provider},
+            capped=False,
         )
 
     finally:

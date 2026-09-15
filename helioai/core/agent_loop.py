@@ -445,7 +445,7 @@ async def _stream_turn(
         end: RunEnd | None = None
         figure_reviews: list[str] = []
         plan: Plan | None = None
-        tool_calls: list[dict] = []
+        trace: list[dict] = []
         async with aclosing(runner.run(history)) as run:
             async for item in run:
                 if isinstance(item, RunEnd):
@@ -459,15 +459,15 @@ async def _stream_turn(
                     figure_reviews.append(item["data"]["text"])
                 elif item["event"] == "plan":
                     plan = Plan.from_payload(item["data"])
-                elif item["event"] == "tool_call":
-                    tool_calls.append(item)
+                elif item["event"] in ("tool_call", "sub_agent_end"):
+                    trace.append(item)
         assert end is not None
 
         if end.capped:
             log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
             store.save(user_id, session_id, history)
             if plan is not None:
-                yield make("plan_report", **adherence(plan, tool_calls, known=tool_names))
+                yield make("plan_report", **adherence(plan, trace, known=tool_names))
             yield make(
                 "error", message=f"agent loop exceeded {settings.agent.max_iterations} iterations"
             )
@@ -519,7 +519,7 @@ async def _stream_turn(
                 log.warning("lead_claims_contradicted", claims=verdict.contradicted)
             yield make("verdict", **verdict.as_event())
         if plan is not None:
-            yield make("plan_report", **adherence(plan, tool_calls, known=tool_names))
+            yield make("plan_report", **adherence(plan, trace, known=tool_names))
         yield make("done", n_iterations=end.turns)
 
     except asyncio.CancelledError:
@@ -634,6 +634,7 @@ async def _run_task(
                 "error": end_data.get("error"),
                 "findings": end_data.get("findings", {}),
                 "usage": usage,
+                "capped": bool(end_data.get("capped", False)),
             }
     except Exception as e:
         log.exception("tool_call_failed", turn=turn, tool=tc.name)
@@ -646,6 +647,7 @@ async def _run_task(
             "error": str(e),
             "findings": {},
             "usage": {},
+            "capped": False,
         }
     if result is None:
         result = ToolResult.failure(tc.name, "sub-agent ended without a report")

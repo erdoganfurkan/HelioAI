@@ -120,6 +120,33 @@ def calls_made(events: Iterable[dict]) -> tuple[list[str], list[str]]:
     return list(own), list(delegated)
 
 
+def delegations_made(events: Iterable[dict]) -> list[dict]:
+    """How each delegation of the turn ended: the role, its turns, whether it was capped.
+
+    A plan written in delegations alone ("task (data_analyst)") is always followed by
+    delegating, so the tools say nothing; what a reader wants to know is whether the
+    role finished. The run after the Runner extraction is the case: the librarian hit
+    its four-turn cap, was re-delegated and finished in two — visible in the trace,
+    invisible in a count of tools.
+
+    Args:
+        events: The turn's events; the lead's own `sub_agent_end` re-emissions count
+            (those without a `sub_agent_ctx`).
+
+    Returns:
+        `[{role, n_iterations, capped}]` in order of completion.
+    """
+    return [
+        {
+            "role": ev["data"].get("role", ""),
+            "n_iterations": int(ev["data"].get("n_iterations") or 0),
+            "capped": bool(ev["data"].get("capped", False)),
+        }
+        for ev in events
+        if ev.get("event") == "sub_agent_end" and "sub_agent_ctx" not in ev["data"]
+    ]
+
+
 def adherence(plan: Plan, events: Iterable[dict], known: Collection[str] | None = None) -> dict:
     """Compare what the run did with what the plan said.
 
@@ -131,10 +158,11 @@ def adherence(plan: Plan, events: Iterable[dict], known: Collection[str] | None 
     Returns:
         The `plan_report` payload — `title`, `planned` (the tools the plan named),
         `executed` (the tools the lead called itself), `delegated` (the tools its
-        sub-agents called), `unplanned_tools` (the lead's own calls that were never
-        planned, `task` excepted), `missed_tools` (planned, called by neither) and
-        `ratio`, the share of planned tools that were called, or None when the plan
-        named no tool and there is nothing to hold the run to.
+        sub-agents called), `delegations` (each sub-agent run: role, turns, capped),
+        `unplanned_tools` (the lead's own calls that were never planned, `task`
+        excepted), `missed_tools` (planned, called by neither) and `ratio`, the share
+        of planned tools that were called, or None when the plan named no tool and
+        there is nothing to hold the run to.
     """
     planned = plan.tools(known)
     own, delegated = calls_made(events)
@@ -145,6 +173,7 @@ def adherence(plan: Plan, events: Iterable[dict], known: Collection[str] | None 
         "planned": planned,
         "executed": own,
         "delegated": delegated,
+        "delegations": delegations_made(events),
         "unplanned_tools": [t for t in own if t not in planned and t != DELEGATION],
         "missed_tools": [t for t in planned if t not in done],
         "ratio": round(len(followed) / len(planned), 2) if planned else None,

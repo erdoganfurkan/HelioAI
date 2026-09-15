@@ -92,6 +92,7 @@ def test_a_plan_followed_to_the_letter_reports_a_full_ratio_and_no_differences()
         "planned": ["search_parameters", "get_timeseries", "run_python"],
         "executed": ["search_parameters", "get_timeseries", "run_python"],
         "delegated": [],
+        "delegations": [],
         "unplanned_tools": [],
         "missed_tools": [],
         "ratio": 1.0,
@@ -306,3 +307,47 @@ def test_the_leads_own_improvisation_is_still_unplanned():
 def test_without_a_known_set_every_word_of_a_tool_field_is_taken_as_a_tool():
     plan = Plan.from_payload({"title": "t", "steps": [{"description": "d", "tool": "a + b"}]})
     assert adherence(plan, [])["planned"] == ["a", "b"]
+
+
+# ── the delegations themselves ─────────────────────────────────────────────────────
+
+
+def _sub_end(role: str, n: int, capped: bool, **data) -> dict:
+    return events.make(
+        "sub_agent_end",
+        task_id=f"t-{role}",
+        role=role,
+        summary="",
+        n_iterations=n,
+        error="cap" if capped else None,
+        findings={},
+        usage={},
+        capped=capped,
+        **data,
+    )
+
+
+def test_the_report_says_how_each_delegation_ended():
+    """The run after the Runner extraction: the librarian hit its 4-turn cap, was
+    re-delegated and finished in 2. A count of tools cannot show that; the report
+    now can."""
+    plan = Plan.from_payload(
+        {"title": "t", "steps": [{"description": "d", "tool": "task (data_analyst)"}]}
+    )
+    turn = [
+        _call("task"),
+        _sub("run_python", "data_analyst"),
+        _sub_end("data_analyst", 5, False),
+        _call("task"),
+        _sub_end("librarian", 4, True),
+        _call("task"),
+        _sub_end("librarian", 2, False),
+        _sub_end("data_analyst", 3, True, sub_agent_ctx={"role": "x", "task_id": "nested"}),
+    ]
+    report = adherence(plan, turn, known=KNOWN)
+    assert report["delegations"] == [
+        {"role": "data_analyst", "n_iterations": 5, "capped": False},
+        {"role": "librarian", "n_iterations": 4, "capped": True},
+        {"role": "librarian", "n_iterations": 2, "capped": False},
+    ], "a nested sub-agent's end is not one of the lead's delegations"
+    assert report["ratio"] == 1.0 and report["unplanned_tools"] == []

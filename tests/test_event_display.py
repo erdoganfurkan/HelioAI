@@ -259,3 +259,20 @@ def test_describe_plan_report_says_when_the_plan_named_no_tool():
         "plan named no tools — used: run_python"
     )
     assert describe_plan_report({"planned": [], "executed": []}).endswith("used: none")
+
+
+def test_describe_plan_report_names_the_capped_role_and_counts_the_rest():
+    from helioai.core.event_display import describe_plan_report
+
+    line = describe_plan_report(
+        {
+            "planned": ["task"],
+            "executed": ["task"],
+            "delegations": [
+                {"role": "data_analyst", "n_iterations": 5, "capped": False},
+                {"role": "librarian", "n_iterations": 4, "capped": True},
+                {"role": "librarian", "n_iterations": 2, "capped": False},
+            ],
+        }
+    )
+    assert line == "plan — 1/1 planned tools used; 3 delegations, librarian capped"

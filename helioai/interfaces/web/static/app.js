@@ -284,7 +284,13 @@ function renderEvent(view, ev) {
       if (missed.length) text += `, not ${missed.join(', ')}`;
       if (unplanned.length) text += `; unplanned: ${unplanned.join(', ')}`;
     }
-    const deviated = missed.length || unplanned.length;
+    const delegations = data.delegations || [];
+    const capped = delegations.filter(d => d.capped).map(d => d.role || '?');
+    if (delegations.length) {
+      text += `; ${delegations.length} delegation${delegations.length > 1 ? 's' : ''}`;
+      if (capped.length) text += `, ${capped.join(', ')} capped`;
+    }
+    const deviated = missed.length || unplanned.length || capped.length;
     appendTlEvent(view, deviated ? '⚠' : '✓', text, deviated ? 'tl-issue' : 'tl-ok');
 
   } else if (event === 'figure_review') {

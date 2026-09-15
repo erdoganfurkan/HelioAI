@@ -249,7 +249,9 @@ def _render_event(ev: dict) -> None:
     elif name == "plan_report":
         from helioai.core.event_display import describe_plan_report
 
-        colour = "93" if data.get("missed_tools") or data.get("unplanned_tools") else "90"
+        capped = any(d.get("capped") for d in data.get("delegations") or [])
+        flagged = data.get("missed_tools") or data.get("unplanned_tools") or capped
+        colour = "93" if flagged else "90"
         print(f"{pad}\033[{colour}m📋 {describe_plan_report(data)}\033[0m")
 
     elif name == "figure_review":

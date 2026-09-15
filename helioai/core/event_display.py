@@ -245,10 +245,24 @@ def describe_plan_report(data: dict) -> str:
     missed, unplanned = data.get("missed_tools") or [], data.get("unplanned_tools") or []
     if not planned:
         used = ", ".join(executed) if executed else "none"
-        return f"plan named no tools — used: {used}"
-    text = f"plan — {len(planned) - len(missed)}/{len(planned)} planned tools used"
-    if missed:
-        text += f", not {', '.join(missed)}"
-    if unplanned:
-        text += f"; unplanned: {', '.join(unplanned)}"
+        text = f"plan named no tools — used: {used}"
+    else:
+        text = f"plan — {len(planned) - len(missed)}/{len(planned)} planned tools used"
+        if missed:
+            text += f", not {', '.join(missed)}"
+        if unplanned:
+            text += f"; unplanned: {', '.join(unplanned)}"
+    return text + _delegations_clause(data.get("delegations") or [])
+
+
+def _delegations_clause(delegations: list[dict]) -> str:
+    """ "; 2 delegations, librarian capped" — the roles that ran out of turns are named,
+    the ones that finished are only counted."""
+    if not delegations:
+        return ""
+    capped = [d.get("role") or "?" for d in delegations if d.get("capped")]
+    n = len(delegations)
+    text = f"; {n} delegation{'s' if n > 1 else ''}"
+    if capped:
+        text += f", {', '.join(capped)} capped"
     return text

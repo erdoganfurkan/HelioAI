@@ -52,7 +52,8 @@ const JOURNAL = [
   { event: 'verdict', data: { matched: 0, contradicted: 1, unsourced: 0, unknown_ids: [], recipe_flags: [], figure_reviews: [],
     claims: [{ status: 'contradicted', name: 'theta_bn', value: 62.7, units: 'deg', source: 'theta_bn', ledger: 57.16, ledger_units: 'deg' }] } },
   { event: 'plan_report', data: { title: 'Replayed plan', planned: ['load_recipe', 'run_python'], executed: ['load_recipe'],
-    delegated: [], unplanned_tools: [], missed_tools: ['run_python'], ratio: 0.5 } },
+    delegated: [], delegations: [{ role: 'librarian', n_iterations: 4, capped: true }],
+    unplanned_tools: [], missed_tools: ['run_python'], ratio: 0.5 } },
   { event: 'done', data: { n_iterations: 1 } },
 ];
 
@@ -148,7 +149,7 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   assert.ok(document.getElementById('ad-body').textContent.includes('load_recipe'), 'the tool trace is in the dock');
   assert.ok(document.getElementById('ad-body').textContent.includes('theta_bn stated 62.7 deg, the session computed 57.16 deg'),
     'the verdict on the claims is replayed with both numbers');
-  assert.ok(document.getElementById('ad-body').textContent.includes('plan — 1/2 planned tools used, not run_python'),
+  assert.ok(document.getElementById('ad-body').textContent.includes('plan — 1/2 planned tools used, not run_python; 1 delegation, librarian capped'),
     'the plan report is replayed as a timeline line');
   assert.equal(chatArea.querySelectorAll('.msg-user').length, 1, 'one bubble per user event on replay');
   assert.equal(chatArea.querySelectorAll('.msg-system').length, 1, 'the correction replays as a system note, not a question');

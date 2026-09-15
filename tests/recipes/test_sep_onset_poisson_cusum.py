@@ -120,7 +120,7 @@ def test_zscore_cusum_export_is_dimensionless_even_with_flux_units(recipe):
 
 
 def test_missing_samples_do_not_confirm_an_onset(recipe):
-    flux = _sep_flux(n=180)
+    flux = _sep_flux(n=260)
     flux.values[:] = 20.0
     flux.values[:121] = np.random.default_rng(3).poisson(20, 121)
     flux.values[121] = 20.0
@@ -131,6 +131,33 @@ def test_missing_samples_do_not_confirm_an_onset(recipe):
 
     assert run.namespace["onset_time"] is None
     assert np.isnan(run.value("onset_index"))
+
+
+def test_detector_restarts_after_a_long_gap_that_straddles_evidence(recipe, capsys):
+    flux = _sep_flux(n=211)
+    background_delta = np.sqrt(25.0 * 121.0 / 120.0)
+    flux.values[:120:2] = 20.0 - background_delta
+    flux.values[1:120:2] = 20.0 + background_delta
+    flux.values[120] = 20.0
+    flux.values[121] = 1000.0
+    flux.values[122:151] = np.nan
+    flux.values[151:] = 20.0
+
+    run = recipe(
+        "sep_onset_poisson_cusum",
+        flux=flux,
+        robust=False,
+        h=10.0,
+        m_consecutive=30,
+    )
+
+    assert run.namespace["mu"] == pytest.approx(20.0)
+    assert run.namespace["mu_d"] == pytest.approx(30.0)
+    assert run.namespace["onset_time"] is None
+    assert run.namespace["onset_indeterminate"] is True
+    assert np.isnan(run.value("onset_index"))
+    assert run.value("cusum")[151] == 0.0
+    assert "onset_indeterminate = True" in capsys.readouterr().out
 
 
 def test_zero_mad_background_falls_back_to_standard_deviation_for_zscore(recipe, capsys):

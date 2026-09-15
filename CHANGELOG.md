@@ -118,6 +118,15 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Added
 
+- **Spacecraft positions are searchable: the 314 SSCWeb trajectories are indexed.** An
+  SSC inventory node has neither `xmlid` nor `description`, so the indexer skipped every
+  one of them and the index held no spacecraft position at all — "where was MMS1" could
+  only be answered from an instrument's own ephemeris variable, and the `provider="ssc"`
+  the prompt offered returned other providers' hits with no word that SSC was empty.
+  Each trajectory is now `ssc/<id>` (the id `spz.get_data` downloads: GSE km by default),
+  described the way a position question is asked; and a search filtered on a provider the
+  index does not hold says so, with the providers it does. **Run `helioai index` once to
+  pick them up.**
 - **A search result lists the variables of the dataset it found.** The top hit of each
   `search_parameters` query carries `dataset_variables`: every indexed variable of its
   dataset by name (`cda/WI_H1_SWE` → `Proton_Np_moment`, `Proton_VX_nonlin`,

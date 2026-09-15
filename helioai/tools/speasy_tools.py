@@ -474,6 +474,31 @@ def _strip_score(results: list[dict]) -> list[dict]:
     return [{k: v for k, v in r.items() if k != "score"} for r in results]
 
 
+def _provider_note(provider: str | None) -> str | None:
+    """A sentence when the provider asked for has nothing in the index.
+
+    A filtered search that finds nothing under `ssc` and appends CDA hits marked
+    `outside_filter` reads as "the filter held, nothing matched"; the truth on the live
+    index was that no SSC product had ever been indexed. Say which providers are.
+    """
+    if not provider:
+        return None
+    try:
+        from helioai.tools.rag import indexed_providers
+
+        counts = indexed_providers()
+    except Exception:
+        return None
+    if not counts or counts.get(provider):
+        return None
+    have = ", ".join(f"{p} ({n})" for p, n in sorted(counts.items()))
+    return (
+        f"provider {provider!r} has no product in the index — indexed providers: {have}. "
+        "The hits below are from other providers; rebuild with `helioai index --rebuild` "
+        f"if {provider!r} should be there."
+    )
+
+
 def _with_dataset_variables(results: list[dict]) -> list[dict]:
     """Attach the sibling variables of the top hit's dataset to that hit.
 
@@ -574,8 +599,10 @@ def _search_parameters_sync(
             from helioai.tools.rag import search_batch as rag_search_batch
 
             batch = rag_search_batch(queries, top_k=top_k, provider=provider)
+            note = _provider_note(provider)
             return {
                 "provider": provider,
+                **({"provider_note": note} if note else {}),
                 "groups": [
                     {
                         "query": q,
@@ -606,9 +633,11 @@ def _search_parameters_sync(
         from helioai.tools.rag import search as rag_search
 
         results = rag_search(query, top_k=top_k, provider=provider)
+        note = _provider_note(provider)
         return {
             "query": query,
             "provider": provider,
+            **({"provider_note": note} if note else {}),
             "results": _with_dataset_variables(_apply_window(_strip_score(results), window)),
         }
     except Exception as e:

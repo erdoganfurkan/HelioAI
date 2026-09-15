@@ -272,3 +272,47 @@ def test_region_for_falls_back_to_the_table() -> None:
     from helioai.indexer import _region_for
 
     assert _region_for("amda/psp_mag_rtn", {}) == "Heliosphere.Inner"
+
+
+# ── SSC trajectories ───────────────────────────────────────────────────────────
+
+
+def _make_ssc_trajectory(uid: str, name: str) -> _FakeSpeasyIndex:
+    """An SSC node as speasy builds it: no xmlid, no description, no CATDESC."""
+    node = _FakeSpeasyIndex()
+    node.Id = uid
+    node.Resolution = "60"
+    node.Geometry = "None"
+    node.start_date = "2015-03-13T04:31:30.000Z"
+    node.stop_date = "2027-04-12T00:02:30.000Z"
+    node.__spz_name__ = name
+    node.__spz_uid__ = uid
+    node.__spz_type__ = "ParameterIndex"
+    return node
+
+
+def test_walk_indexes_an_ssc_trajectory_under_the_id_speasy_downloads() -> None:
+    """The general walk needs `xmlid and description`; an SSC node has neither, so the
+    314 trajectories were never indexed and no position query could reach them."""
+    tree = _make_tree(Trajectories=_make_tree(mms1=_make_ssc_trajectory("mms1", "MMS 1")))
+    docs: list[dict] = []
+    _walk(tree, "ssc", docs, set(), _FakeSpeasyIndex)
+    assert [d["id"] for d in docs] == ["ssc/mms1"]
+    doc = docs[0]
+    assert "MMS 1" in doc["text"] and "position" in doc["text"] and "trajectory" in doc["text"]
+    assert "GSM" in doc["text"] and "km" in doc["text"]
+    assert doc["meta"]["provider"] == "ssc" and doc["meta"]["units"] == "km"
+    assert doc["meta"]["start_time"] == "2015-03-13T04:31:30" and doc["meta"]["region"]
+
+
+def test_an_ssc_trajectory_is_indexed_once_and_a_cda_node_is_untouched_by_the_rule() -> None:
+    tree = _make_tree(Trajectories=_make_tree(mms1=_make_ssc_trajectory("mms1", "MMS 1")))
+    docs: list[dict] = []
+    seen: set[str] = set()
+    _walk(tree, "ssc", docs, seen, _FakeSpeasyIndex)
+    _walk(tree, "ssc", docs, seen, _FakeSpeasyIndex)
+    assert len(docs) == 1
+    cda = _make_tree(ds=_make_tree(p=_make_param("DS/p", "a field", "nT")))
+    cda_docs: list[dict] = []
+    _walk(cda, "cda", cda_docs, set(), _FakeSpeasyIndex)
+    assert [d["id"] for d in cda_docs] == ["cda/DS/p"]

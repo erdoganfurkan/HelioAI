@@ -172,6 +172,21 @@ _CROSS_PROVIDER_EXTRA = 2
 DATASET_VARIABLES_CAP = 40
 
 
+def indexed_providers() -> dict[str, int]:
+    """How many products the index holds per provider prefix.
+
+    What `provider=` can filter on. The prompt offered `ssc` for a year while the index
+    held no SSC product at all, and a filtered search came back with CDA hits marked
+    `outside_filter` and no word that the provider asked for was empty.
+    """
+    if _load_bm25() is None:
+        return {}
+    counts: dict[str, int] = {}
+    for pid in _bm25_ids:
+        counts[_provider_of(pid)] = counts.get(_provider_of(pid), 0) + 1
+    return counts
+
+
 def dataset_of(product_id: str) -> str | None:
     """The dataset a product id belongs to: `cda/WI_H1_SWE/Proton_W_nonlin` → `cda/WI_H1_SWE`.
 

@@ -740,3 +740,19 @@ def test_search_parameters_attaches_the_dataset_variables_to_the_top_hit_only(
 
     batch = speasy_tools._search_parameters_sync(queries=["density", "velocity"])
     assert all("dataset_variables" in g["results"][0] for g in batch["groups"])
+
+
+def test_a_filter_on_a_provider_the_index_never_held_says_so(isolated_rag, monkeypatch):
+    """`provider="ssc"` on the live index returned CDA hits marked outside_filter and no
+    word that SSC had zero products; the model read it as "nothing matched"."""
+    from helioai.tools import speasy_tools
+
+    _seed_swe(isolated_rag)
+    hits = [{"id": "cda/WI_H1_SWE/Proton_Np_moment", "name": "nm", "outside_filter": True}]
+    monkeypatch.setattr(rag_module, "search", lambda *a, **k: [dict(h) for h in hits])
+    out = speasy_tools._search_parameters_sync(query="mms1 position", provider="ssc")
+    assert "provider 'ssc' has no product in the index" in out["provider_note"]
+    assert "cda (5)" in out["provider_note"] and "amda (1)" in out["provider_note"]
+    fine = speasy_tools._search_parameters_sync(query="density", provider="cda")
+    assert "provider_note" not in fine
+    assert rag_module.indexed_providers() == {"cda": 5, "amda": 1}

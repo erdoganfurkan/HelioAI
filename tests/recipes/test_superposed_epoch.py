@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -58,6 +59,37 @@ def _events(
 def _hole_mask(n_grid):
     tau = np.linspace(0.0, 1.0, n_grid)
     return (0.4 <= tau) & (tau <= 0.5)
+
+
+def _constant_events(unit_values):
+    """Flat event collection for testing unit conversion before compositing."""
+    out = []
+    for i, (value, units) in enumerate(unit_values):
+        t = np.datetime64("2015-03-17T00:00:00") + np.timedelta64(i, "D")
+        t = t + np.arange(11).astype("timedelta64[m]")
+        out.append(
+            SimpleNamespace(
+                time=t,
+                values=np.full(t.size, value),
+                start=str(t[0]),
+                stop=str(t[-1]),
+                units=units,
+            )
+        )
+    return out
+
+
+def _run_superposed_epoch_with_exports(**inputs):
+    src = (
+        Path(__file__).resolve().parents[2] / "helioai" / "data" / "recipes" / "superposed_epoch.py"
+    ).read_text(encoding="utf-8")
+    exports = {}
+
+    def export(name, data, units=""):
+        exports[name] = {"value": np.asarray(data), "units": units}
+
+    namespace = {"__name__": "recipe", "export": export, **inputs}
+    return src, namespace, exports
 
 
 def test_superposed_epoch_does_not_bridge_a_hole_shared_by_all_events(recipe):
@@ -166,6 +198,36 @@ def test_superposed_epoch_infers_units_from_event_collection(recipe):
 
     for name in ("epoch_median", "epoch_q25", "epoch_q75", "epoch_ci_low", "epoch_ci_high"):
         assert run.exports[name]["units"] == "nT"
+
+
+def test_superposed_epoch_converts_compatible_event_units_before_compositing(recipe):
+    events = _constant_events([(1.0, "nT")] * 3 + [(0.001, "uT")] * 3)
+
+    run = recipe("superposed_epoch", events=events, n_grid=11, n_boot=20)
+
+    assert run.exports["epoch_median"]["units"] == "nT"
+    assert np.allclose(run.value("epoch_median"), 1.0)
+
+
+def test_superposed_epoch_refuses_incompatible_event_units(recipe):
+    events = _constant_events([(1.0, "nT"), (400.0, "km/s"), (1.0, "nT")])
+    src, namespace, exports = _run_superposed_epoch_with_exports(
+        events=events, n_grid=11, n_boot=20
+    )
+
+    with pytest.raises(ValueError, match="events carry incompatible units: nT, km/s"):
+        exec(compile(src, "superposed_epoch.py", "exec"), namespace)
+
+    assert exports == {}
+
+
+def test_superposed_epoch_converts_event_units_to_caller_unit(recipe):
+    events = _constant_events([(1.0, "nT")] * 6)
+
+    run = recipe("superposed_epoch", events=events, units="pT", n_grid=11, n_boot=20)
+
+    assert run.exports["epoch_median"]["units"] == "pT"
+    assert np.allclose(run.value("epoch_median"), 1000.0)
 
 
 def test_superposed_epoch_uses_event_start_stop_for_epoch_boundaries(recipe):

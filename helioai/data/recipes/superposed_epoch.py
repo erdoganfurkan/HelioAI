@@ -23,6 +23,11 @@ A bootstrap over events estimates a pointwise 95% confidence interval on the
 median composite. The default n_boot=200 is a quick-look setting, with about
 five draws per 2.5% tail; raise it for publication-quality intervals.
 
+If the event collection carries units, the recipe composites only after every
+event has been converted to one common unit: either the caller's `units`, or the
+first event unit when `units` is not bound. Incompatible unit collections are
+refused because no warning can repair a median of unlike dimensions.
+
 Usage inside run_python:
     events = load_data("imf_gsm_events")   # list of ns(time, values, start, stop)
     # Then run this script. Set component=0 to select a single column of multi-component data.
@@ -30,6 +35,66 @@ Usage inside run_python:
 
 import numpy as np
 import matplotlib.pyplot as plt
+
+try:
+    import astropy.units as u
+except ImportError:
+    u = None
+
+
+def _unit_label(unit):
+    """Return the unit string attached to one event."""
+    return str(unit or "")
+
+
+def _unit_list_for_message(units):
+    """Preserve unit encounter order for refusal messages."""
+    out = []
+    for unit in units:
+        label = _unit_label(unit) or "<missing>"
+        if label not in out:
+            out.append(label)
+    return ", ".join(out)
+
+
+def _unit_conversion_factors(events, requested_units):
+    """Choose export units and per-event scale factors before any composite.
+
+    Values with different physical units cannot be numerically composited until
+    they share a unit. If Astropy cannot prove and perform that conversion, the
+    recipe refuses the composite rather than warning and exporting meaningless
+    medians.
+    """
+    source_units = [_unit_label(getattr(ev, "units", "")) for ev in events]
+    present = [unit for unit in source_units if unit]
+    target = _unit_label(requested_units) if requested_units else (present[0] if present else "")
+
+    if not present:
+        return [1.0] * len(events), target
+
+    if any(not unit for unit in source_units):
+        raise ValueError(f"events carry incompatible units: {_unit_list_for_message(source_units)} — composite refused")
+
+    message_units = source_units
+    if target and target not in source_units:
+        message_units = [*source_units, target]
+
+    if all(unit == target for unit in source_units):
+        return [1.0] * len(events), target
+
+    if u is None:
+        raise ValueError(f"events carry incompatible units: {_unit_list_for_message(message_units)} — composite refused")
+
+    try:
+        target_unit = u.Unit(target)
+        factors = [(1.0 * u.Unit(unit)).to(target_unit).value for unit in source_units]
+    except Exception as exc:
+        raise ValueError(
+            f"events carry incompatible units: {_unit_list_for_message(message_units)} — composite refused"
+        ) from exc
+
+    return [float(factor) for factor in factors], target
+
 
 # ── parameters ────────────────────────────────────────────────────────────────
 n_grid = int(globals().get("n_grid", 100))          # number of epoch bins
@@ -45,15 +110,7 @@ events = globals().get("events")
 if events is None:
     raise ValueError('bind `events` before running this recipe, for example events = load_data("<param>_events")')
 events = list(events)
-if not units:
-    event_units = sorted({str(getattr(ev, "units", "")) for ev in events if getattr(ev, "units", "")})
-    if len(event_units) == 1:
-        units = event_units[0]
-    elif len(event_units) > 1:
-        print(f"Warning: event units disagree ({', '.join(event_units)}); exporting data arrays without units")
-        units = ""
-    else:
-        units = ""
+unit_factors, units = _unit_conversion_factors(events, units)
 if n_grid < 2:
     raise ValueError("n_grid must be at least 2")
 if min_events < 1:
@@ -218,9 +275,9 @@ def _bootstrap_median_ci(matrix, min_events, n_boot, seed):
 tau_grid = np.linspace(0.0, 1.0, n_grid)
 matrix = []   # one row per event
 
-for ev in events:
+for ev, unit_factor in zip(events, unit_factors):
     t_sec = _to_float_seconds(ev.time)
-    y = _select_component(ev.values, component)
+    y = _select_component(ev.values, component) * unit_factor
 
     if len(t_sec) < 2:
         continue

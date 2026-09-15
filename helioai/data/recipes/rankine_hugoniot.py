@@ -257,9 +257,14 @@ def rh_jump(
     """
     c = _rh_core(n_u, n_d, V_u, V_d, B_u, B_d, T_u, T_d)
 
-    for key in ("V_shock", "r", "B_ratio", "mom_residual", "V_A", "c_s",
-                "U_upstream", "M_A", "M_ms", "r_predicted", "r_mismatch"):
-        export(key, np.array([c[key]]))  # noqa: F821 — sandbox preamble
+    # Every export carries its unit: the provenance ledger is compared unit-aware to the
+    # numbers the answer states, and a speed recorded without "km/s" cannot vouch for
+    # "V_shock = 579 km/s". Ratios, Mach numbers and the two residuals (fractions, not
+    # percentages — the print below multiplies by 100, the ledger does not) are "".
+    for key in ("V_shock", "V_A", "c_s", "U_upstream"):
+        export(key, np.array([c[key]]), "km/s")  # noqa: F821 — sandbox preamble
+    for key in ("r", "B_ratio", "mom_residual", "M_A", "M_ms", "r_predicted", "r_mismatch"):
+        export(key, np.array([c[key]]), "")  # noqa: F821 — sandbox preamble
 
     print(f"Shock velocity   : {c['V_shock']:.1f} km/s (spacecraft frame)")
     print(f"Upstream inflow  : {c['U_upstream']:.1f} km/s (shock frame)")

@@ -1,8 +1,8 @@
 # name: theta_bn
 # description: Compute the shock normal angle theta_Bn from upstream and downstream magnetic field vectors.
-# inputs: B_up (array of shape (N,3) or (3,) in nT, upstream), B_dn (array of shape (N,3) or (3,), downstream); or B (series with .time and .values) plus shock_time
-# outputs: theta_bn, shock_normal, compression_ratio, B_up_mean_nT, B_dn_mean_nT, theta_bn_std_deg, normal_spread_deg, Bn_std_nT
-# reference: Coplanarity theorem (Colburn & Sonnett 1966); Schwartz (1998), "Shock and Discontinuity Normals, Mach Numbers and Related Parameters", ISSI SR-001, ch. 10.
+# inputs: B_up (array of shape (N,3) or (3,) in nT, upstream), B_dn (array of shape (N,3) or (3,), downstream); or B (series with .time and .values) plus shock_time; optional guard_min, span_min
+# outputs: theta_bn (deg), shock_normal, compression_ratio (magnetic |<B_dn>|/|<B_up>|), B_up_mean_nT, B_dn_mean_nT, theta_bn_std_deg, normal_spread_deg, Bn_std_nT
+# reference: Coplanarity theorem (Colburn & Sonett 1966); Schwartz (1998), "Shock and Discontinuity Normals, Mach Numbers and Related Parameters", ISSI SR-001, ch. 10.
 
 """Shock normal angle theta_Bn.
 
@@ -36,14 +36,22 @@ the recipe reports repeatability diagnostics instead: bootstrap scatter in theta
 68th-percentile angular spread of the bootstrap normals, and the standard deviation of
 B · n̂ across both windows. Mean-vector inputs report these diagnostics as None and do not
 export them.
+
+The bootstrap resamples rows i.i.d.; that understates uncertainty for correlated plasma
+data, and it does not measure the live window-choice spread (54.85-64.27° on one shock).
+The shock_time path addresses that separate failure by fixing the windows and applying
+abrupt-step and trend checks. WINDOW_TREND_MAX is the allowed first-half to second-half
+|B| trend as a fraction of the between-window |B| jump. Those checks are heuristics,
+not proof that a window is stationary.
 """
 
 import numpy as np
 
 GUARD_MIN = 2.0
 SPAN_MIN = 8.0
+WINDOW_TREND_MAX = 0.25
 
-if "export" not in globals():
+if __name__ == "__main__" and "export" not in globals():
 
     def export(name, data, units=""):
         """No-op outside the HelioAI sandbox so the recipe can be run standalone."""
@@ -145,8 +153,8 @@ def theta_bn(B_up, B_dn):
     -------
     dict with theta_bn_deg (degrees, 0-90), geometry ("quasi-parallel" below
     45 deg, "quasi-perpendicular" above), shock_normal (unit 3-vector),
-    compression_ratio (|<B_dn>| / |<B_up>|), B_up_mean_nT and B_dn_mean_nT
-    (the vectors actually used), and series-only diagnostics theta_bn_std_deg,
+    compression_ratio (the magnetic compression |<B_dn>| / |<B_up>|),
+    B_up_mean_nT and B_dn_mean_nT (the vectors actually used), and series-only diagnostics theta_bn_std_deg,
     normal_spread_deg and Bn_std_nT. On a NaN or zero input, or on collinear or
     identical vectors, the normal is undefined and the dict carries an "error"
     key and nothing else: a NaN used to flow through to theta_bn_deg and,
@@ -217,12 +225,23 @@ def _max_magnitude_step(rows):
     return float(np.max(jumps[valid[1:] & valid[:-1]]))
 
 
+def _magnitude_trend(rows):
+    mag = np.linalg.norm(rows, axis=1)
+    valid_mag = mag[np.isfinite(mag) & (np.abs(mag) < 1e30)]
+    if len(valid_mag) < 3:
+        return 0.0
+    split = len(valid_mag) // 2
+    return float(abs(np.mean(valid_mag[split:]) - np.mean(valid_mag[:split])))
+
+
 def windows_from_series(B, shock_time, guard_min=GUARD_MIN, span_min=SPAN_MIN):
     """Select upstream/downstream magnetic-field rows from a series and a shock time.
 
     The caller supplies only the crossing time. This function owns the averaging
     windows, rejects windows with too few finite vector samples, and refuses a
-    window whose largest single-step |B| jump looks like the shock ramp.
+    window whose largest single-step |B| jump or first-half/second-half |B|
+    trend looks like the shock ramp. These are abrupt-step and trend checks,
+    not proof that a window is stationary.
 
     Parameters
     ----------
@@ -255,6 +274,12 @@ def windows_from_series(B, shock_time, guard_min=GUARD_MIN, span_min=SPAN_MIN):
                 raise ValueError(
                     f"{label} window overlaps the ramp — move shock_time or increase guard_min"
                 )
+            trend = _magnitude_trend(rows)
+            if trend > WINDOW_TREND_MAX * total_jump:
+                raise ValueError(
+                    f"{label} window is not stationary (trend of {trend:.2f} nT across it) "
+                    "— it likely contains the ramp; move shock_time or increase guard_min"
+                )
 
     return u_rows, d_rows, windows
 
@@ -284,7 +309,7 @@ def _fmt_time(t):
 # Analyst-chosen windows are still accepted for backwards compatibility:
 #   B_up = var.values[(var.time >= t_up0) & (var.time <= t_up1)]
 #   B_dn = var.values[(var.time >= t_dn0) & (var.time <= t_dn1)]
-# The placeholders below are used only when neither route is defined.
+# The placeholder demo below is only for a bare `python theta_bn.py` run.
 
 _B_up = globals().get("B_up")
 _B_dn = globals().get("B_dn")
@@ -292,6 +317,7 @@ _B = globals().get("B")
 _shock_time = globals().get("shock_time")
 _guard_min = globals().get("guard_min", GUARD_MIN)
 _span_min = globals().get("span_min", SPAN_MIN)
+result = None
 
 try:
     if _B_up is not None and _B_dn is not None:
@@ -302,14 +328,20 @@ try:
         print(f"upstream window: {_fmt_time(_windows[0])} to {_fmt_time(_windows[1])}")
         print(f"downstream window: {_fmt_time(_windows[2])} to {_fmt_time(_windows[3])}")
     else:
-        B_up = globals().get("B_up", np.array([5.0, -2.0, 1.0]))
-        B_dn = globals().get("B_dn", np.array([15.0, -8.0, 4.0]))
+        if __name__ == "__main__":
+            B_up = np.array([5.0, -2.0, 1.0])
+            B_dn = np.array([15.0, -8.0, 4.0])
+        else:
+            print("theta_bn: define B_up and B_dn, or B and shock_time, before running this recipe")
 
-    result = theta_bn(B_up, B_dn)
+    if "B_up" in globals() and "B_dn" in globals():
+        result = theta_bn(B_up, B_dn)
 except ValueError as _e:
     result = {"error": str(_e)}
 
-if "error" in result:
+if result is None:
+    pass
+elif "error" in result:
     print("theta_bn:", result["error"])
 else:
     _export_result(result)

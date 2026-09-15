@@ -1,8 +1,8 @@
 # name: pressure_balance
 # description: Determine the magnetopause standoff distance from Chapman-Ferraro pressure balance.
 # inputs: n_sw (solar wind density cm-3), V_sw (solar wind speed km/s), B_sw (IMF magnitude nT), B0_nT (optional surface equatorial dipole field nT), f_cf (optional Chapman-Ferraro field factor), r_ref (optional reference distance R_E), B_msp_ref (optional magnetosphere field nT at r_ref)
-# outputs: r_mp_RE (R_earth), P_dyn_nPa (nPa), P_mag_sw_nPa (nPa), P_total_sw_nPa (nPa), B_msp_ref_nT (nT)
-# reference: Chapman & Ferraro (1931); Alken et al. (2021), Earth Planets Space 73, 49; Schield (1969), JGR 74, 1275; Shue et al. (1998), JGR 103, 17691.
+# outputs: r_mp_RE (R_earth), P_dyn_nPa (nPa), P_applied_nPa (nPa), P_mag_sw_nPa (nPa), P_total_sw_nPa (nPa), B_msp_ref_nT (nT)
+# reference: Chapman & Ferraro (1931); Spreiter, Summers & Alksne (1966), Planet. Space Sci. 14, 223; Alken et al. (2021), Earth Planets Space 73, 49; Schield (1969), JGR 74, 1275; Shue et al. (1998), JGR 103, 17691.
 
 """Magnetopause pressure balance.
 
@@ -10,20 +10,23 @@ The subsolar magnetopause standoff distance r_mp is estimated from the
 Chapman-Ferraro pressure balance between the solar wind and the compressed
 dayside geomagnetic field:
 
-    P_dyn + P_mag_sw ≈ P_mag_msp(r_mp)
+    P_applied + P_mag_sw ≈ P_mag_msp(r_mp)
 
 where:
-    P_dyn       = k ρ V²                 solar wind dynamic pressure
+    P_dyn       = ρ V²                   standard solar wind dynamic pressure
+    P_applied   = K P_dyn                stagnation pressure used in the balance
     P_mag_sw    = B_sw² / (2 μ₀)          solar wind magnetic pressure
     P_mag_msp   = B_msp(r)² / (2 μ₀)      magnetospheric magnetic pressure
 
 For a dipole, the field scales as B_dip(r) = B0 (R_E / r)^3, so the magnetic
 pressure scales as r^-6. At the subsolar magnetopause the Chapman-Ferraro
-current approximately doubles the field. With B0 = 30 800 nT from the IGRF-13
-epoch-2020 dipole scale and f_CF = 2.0, the derived reference field is
-61.6 nT at 10 R_E. Schield (1969) discusses a larger effective factor, about
-2.44, when tail and ring-current contributions are included; keep f_cf
-explicit if that assumption is wanted.
+current approximately doubles the field. With B0 = 29 806 nT from the IGRF-13
+epoch-2020 dipole coefficients and f_CF = 2.0, the derived reference field is
+59.6 nT at 10 R_E. The older 30 800 nT value is a common textbook round number
+(Kivelson & Russell, 1995, Table 6.1); pass it as B0_nT if that convention is
+wanted. Schield (1969) discusses a larger effective factor, about 2.44, when
+tail and ring-current contributions are included; keep f_cf explicit if that
+assumption is wanted.
 
 Usage through run_recipe:
     run_recipe("pressure_balance", inputs={"n_sw": 5, "V_sw": 400, "B_sw": 5})
@@ -47,8 +50,10 @@ NT_T = 1e-9            # nT → T
 KMS_MS = 1e3           # km/s → m/s
 PA_NPA = 1e9           # Pa → nPa
 
-# Alken et al. (2021), IGRF-13 epoch 2020 dipole scale: B0 ≈ 29 900–31 000 nT.
-B0_NT = 30_800.0
+# Spreiter, Summers & Alksne (1966): stagnation-pressure coefficient.
+K_STAGNATION = 0.88
+# Alken et al. (2021), IGRF-13 epoch 2020 dipole coefficients: |g10,g11,h11|.
+B0_NT = 29_806.0
 # Chapman & Ferraro (1931) dayside current doubles the dipole field at the nose.
 F_CF = 2.0
 BZ_NOTE = (
@@ -80,8 +85,8 @@ def mp_standoff(
         pressure from |B| but deliberately does not use IMF Bz orientation.
     B0_nT : float, optional
         Equatorial dipole field at Earth's surface in nT. The default,
-        30 800 nT, follows the IGRF-13 epoch-2020 dipole scale reported by
-        Alken et al. (2021).
+        29 806 nT, is computed from the IGRF-13 epoch-2020 dipole coefficients
+        reported by Alken et al. (2021).
     f_cf : float, optional
         Chapman-Ferraro enhancement of the dayside field. The default 2.0 is
         the classical current-sheet doubling; Schield (1969) discusses about
@@ -97,15 +102,18 @@ def mp_standoff(
     Returns
     -------
     dict
-        r_mp_RE, solar-wind pressure terms in nPa, the B_msp_ref_nT actually
-        used, bz_ignored=True, and a note pointing to mp_shue1998 for Bz-aware
-        empirical comparisons.
+        r_mp_RE, standard and applied solar-wind pressure terms in nPa, the
+        B_msp_ref_nT actually used, bz_ignored=True, and a note pointing to
+        mp_shue1998 for Bz-aware empirical comparisons.
+
+        Changed: returns a dict (was a float); result["r_mp_RE"] is the former
+        return value.
     """
     rho = n_sw * CM3_M3 * MP
-    k = 0.88
-    P_dyn = k * rho * (V_sw * KMS_MS) ** 2
+    P_dyn = rho * (V_sw * KMS_MS) ** 2
+    P_applied = K_STAGNATION * P_dyn
     P_mag_sw = (B_sw * NT_T) ** 2 / (2 * MU0)
-    P_sw_total = P_dyn + P_mag_sw
+    P_sw_total = P_applied + P_mag_sw
 
     if B_msp_ref is None:
         B_msp_ref_nT = f_cf * B0_nT * (1.0 / r_ref) ** 3
@@ -118,6 +126,7 @@ def mp_standoff(
     result = {
         "r_mp_RE": float(r_mp),
         "P_dyn_nPa": float(P_dyn * PA_NPA),
+        "P_applied_nPa": float(P_applied * PA_NPA),
         "P_mag_sw_nPa": float(P_mag_sw * PA_NPA),
         "P_total_sw_nPa": float(P_sw_total * PA_NPA),
         "B_msp_ref_nT": float(B_msp_ref_nT),
@@ -128,13 +137,15 @@ def mp_standoff(
     if "export" in globals():
         export("r_mp_RE", np.array([result["r_mp_RE"]]), "R_earth")
         export("P_dyn_nPa", np.array([result["P_dyn_nPa"]]), "nPa")
+        export("P_applied_nPa", np.array([result["P_applied_nPa"]]), "nPa")
         export("P_mag_sw_nPa", np.array([result["P_mag_sw_nPa"]]), "nPa")
         export("P_total_sw_nPa", np.array([result["P_total_sw_nPa"]]), "nPa")
         export("B_msp_ref_nT", np.array([result["B_msp_ref_nT"]]), "nT")
 
     print(f"Dynamic pressure      : {result['P_dyn_nPa']:.3f} nPa")
+    print(f"Applied pressure      : {result['P_applied_nPa']:.3f} nPa")
     print(f"SW magnetic pressure  : {result['P_mag_sw_nPa']:.3f} nPa")
-    print(f"Total SW pressure     : {result['P_total_sw_nPa']:.3f} nPa")
+    print(f"Total applied pressure: {result['P_total_sw_nPa']:.3f} nPa")
     print(f"Reference MSP field   : {result['B_msp_ref_nT']:.1f} nT at {r_ref:g} R_E")
     print(f"Magnetopause standoff : {result['r_mp_RE']:.2f} R_E")
     print(BZ_NOTE)

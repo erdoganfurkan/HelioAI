@@ -148,6 +148,9 @@ def _exporting_runs(recipe) -> dict[str, dict]:
     timing.namespace["export"](
         "shock_speed_timing", np.array([out["shock_speed_km_s"]]), units="km/s"
     )
+    timing.namespace["export"](
+        "transverse_separation", np.array([out["transverse_separation_km"]]), units="km"
+    )
     runs["shock_timing_2sc"] = timing
     return runs
 
@@ -173,3 +176,48 @@ def test_every_recorded_unit_parses_and_every_blank_one_is_declared_dimensionles
 def test_a_bare_unit_string_on_the_shelf_would_be_caught():
     with pytest.raises(ValueError):
         u.Unit("not-a-unit!")
+
+
+def test_the_recipe_check_accepts_every_recipes_own_exports(recipe):
+    """The lead's recipe check reads a recipe's `# outputs:` header and its public
+    functions off the `load_recipe` result, and what the run exported off the ledger.
+    Each corrected recipe renamed or added exports; a session that loaded a recipe,
+    pasted it whole into run_python and exported exactly what the recipe exports must
+    not be accused of using it shallowly or of never calling it. Through run_recipe the
+    run is exempt altogether."""
+    import json
+
+    from helioai.core.llm.base import Message, ToolCall
+    from helioai.core.tool_exec import _flag_recipe_bypass
+    from helioai.tools.recipes import _parse_header
+
+    for name, run in _exporting_runs(recipe).items():
+        code = (RECIPES_DIR / f"{name}.py").read_text(encoding="utf-8")
+        loaded = ToolCall(id="l", name="load_recipe", arguments={"name": name})
+        pasted = ToolCall(id="p", name="run_python", arguments={"code": "B = 1\n" + code})
+        history = [
+            Message(role="user", content="q"),
+            Message(role="assistant", content="", tool_calls=[loaded]),
+            Message(
+                role="tool",
+                tool_call_id="l",
+                name="load_recipe",
+                content=json.dumps({"name": name, "code": code, "metadata": _parse_header(code)}),
+            ),
+            Message(role="assistant", content="", tool_calls=[pasted]),
+            Message(role="tool", tool_call_id="p", name="run_python", content="{}"),
+        ]
+        exported = [
+            {"kind": "exports", "values": {k: {"mean": 1.0} for k in run.exports}},
+        ]
+        _, flags = _flag_recipe_bypass("done", history, exported)
+        assert flags == [], f"{name}: {flags}"
+
+        ran = ToolCall(id="r", name="run_recipe", arguments={"name": name})
+        direct = [
+            Message(role="user", content="q"),
+            Message(role="assistant", content="", tool_calls=[ran]),
+            Message(role="tool", tool_call_id="r", name="run_recipe", content="{}"),
+        ]
+        _, flags = _flag_recipe_bypass("done", direct, exported)
+        assert flags == [], f"{name} via run_recipe: {flags}"

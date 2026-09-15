@@ -276,3 +276,76 @@ def test_a_blank_ledger_unit_means_unknown_so_the_value_alone_is_judged():
     ledger = [_entry("theta_bn", 57.16, "deg")]
     status, _ = judge_claim(_claim("theta_bn", 57.2, "degre", "theta_bn"), ledger)
     assert status == "unsourced", "a misspelling against a real unit is left unjudged"
+
+
+# ── what the MMS1 web run taught (2026-09-15, 355d5a6) ─────────────────────────────
+
+
+def test_a_number_a_claim_covers_is_not_rejudged_by_the_prose_regex(tmp_path, monkeypatch):
+    """The live reply read "X = 21.36 R_E, Y = −16.11 R_E, Z = 5.12 R_E …". The claims
+    matched each by name; the regex, reading the wording, contradicted 21.36 against the
+    Z export. One number, one verdict: the claim's. A number with no claim at all (the
+    37° here) is still the regex's to judge."""
+    monkeypatch.setattr("helioai.tools.rag.unknown_ids", lambda ids: [])
+    monkeypatch.setattr("helioai.tools.rag.extract_ids", lambda text: [])
+    ledger = [
+        _entry("MMS1_X_GSM_Re", 21.363887, "Re"),
+        _entry("MMS1_Y_GSM_Re", -16.106245, "Re"),
+        _entry("MMS1_Z_GSM_Re", 5.117744, "Re"),
+    ]
+    _write_ledger(tmp_path, ledger)
+    text = (
+        "MMS1 was located in GSM at X = 21.36 R_E, Y = −16.11 R_E, Z = 5.12 R_E "
+        "(~37 ° off the Sun–Earth line); the Shue standoff was 7.96 R_E."
+    )
+    claims = [
+        _claim("MMS1_X_GSM", 21.363887, "Re", "MMS1_X_GSM_Re"),
+        _claim("MMS1_Y_GSM", -16.106245, "Re", "MMS1_Y_GSM_Re"),
+        _claim("MMS1_Z_GSM", 5.117744, "Re", "MMS1_Z_GSM_Re"),
+        _claim("magnetopause_standoff", 7.96, "Re", "asserted"),
+    ]
+    _, verdict = validate(text, claims, history=[], artifacts=[], session_dir=tmp_path)
+    assert len(verdict.matched) == 3 and verdict.contradicted == []
+    assert [c["name"] for c in verdict.unsourced] == ["magnetopause_standoff"]
+    prose = verdict.prose
+    assert prose is not None and prose["contradicted"] == 0, prose
+    texts = [d["text"] for d in prose["details"]]
+    assert not any(n in t for t in texts for n in ("21.36", "16.11", "5.12", "7.96")), texts
+    assert any("37" in t for t in texts), "a number without a claim is still the regex's"
+
+
+def test_the_prose_counts_shrink_by_exactly_the_numbers_the_claims_took(tmp_path, monkeypatch):
+    """The regex contradicts 21.36 against MMS1_Z_GSM_Re when the wording puts "Z" next
+    to it; the claim for 21.36 names MMS1_X_GSM_Re. The report must lose that
+    contradiction, not just hide its detail line."""
+    monkeypatch.setattr("helioai.tools.rag.unknown_ids", lambda ids: [])
+    monkeypatch.setattr("helioai.tools.rag.extract_ids", lambda text: [])
+    monkeypatch.setattr(
+        "helioai.runtime.validator._prose_report",
+        lambda text, sd: {
+            "matched": 2,
+            "contradicted": 1,
+            "derived": 0,
+            "unsourced": 1,
+            "details": [
+                {
+                    "text": "21.36 R_E",
+                    "value": 21.36,
+                    "status": "contradicted",
+                    "name": "MMS1_Z_GSM_Re",
+                },
+                {"text": "7.96 R_E", "value": 7.96, "status": "unsourced", "name": None},
+            ],
+        },
+    )
+    _write_ledger(tmp_path, [_entry("MMS1_X_GSM_Re", 21.363887, "Re")])
+    claims = [_claim("MMS1_X_GSM", 21.36, "Re", "MMS1_X_GSM_Re")]
+    _, verdict = validate("…", claims, history=[], artifacts=[], session_dir=tmp_path)
+    assert [c["name"] for c in verdict.matched] == ["MMS1_X_GSM"]
+    assert verdict.prose == {
+        "matched": 2,
+        "contradicted": 0,
+        "derived": 0,
+        "unsourced": 1,
+        "details": [{"text": "7.96 R_E", "value": 7.96, "status": "unsourced", "name": None}],
+    }

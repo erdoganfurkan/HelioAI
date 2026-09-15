@@ -119,7 +119,40 @@ def validate(
         for claim in claims:
             status, detail = judge_claim(claim, entries)
             getattr(verdict, status).append(detail)
+        verdict.prose = _without_claimed_numbers(verdict.prose, claims)
     return text, verdict
+
+
+def _without_claimed_numbers(prose: dict | None, claims: list[dict]) -> dict | None:
+    """The prose report minus the numbers the claims already judged.
+
+    The regex check attributes a number to an export by the words around it; the
+    claims name the export. On the MMS1 live run the same "21.36 R_E" was matched to
+    `MMS1_X_GSM_Re` by its claim and contradicted against `MMS1_Z_GSM_Re` by the regex,
+    which had read "Z" nearby — two verdicts on one number, the wrong one in red. A
+    number a claim covers keeps the claim's verdict alone; the prose net stays for the
+    numbers the model stated without claiming.
+    """
+    if not prose:
+        return prose
+    values = [v for v in (_number(c.get("value")) for c in claims) if v is not None]
+    if not values:
+        return prose
+
+    def claimed(x: object) -> bool:
+        v = _number(x)
+        return v is not None and any(
+            abs(v - c) <= RTOL * max(abs(v), abs(c), 1e-12) for c in values
+        )
+
+    kept = [d for d in prose.get("details") or [] if not claimed(d.get("value"))]
+    dropped = [d for d in prose.get("details") or [] if claimed(d.get("value"))]
+    out = dict(prose, details=kept)
+    for d in dropped:
+        key = d.get("status")
+        if key in out and isinstance(out[key], int) and out[key] > 0:
+            out[key] -= 1
+    return out
 
 
 def _prose_report(text: str, session_dir: Path) -> dict | None:

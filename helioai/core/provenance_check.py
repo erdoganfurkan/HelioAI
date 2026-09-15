@@ -411,7 +411,13 @@ def verify(claims: list[Claim], ledger: dict, rtol: float = RTOL) -> Report:
     flagged = [c for c in claims if c.status in ("contradicted", "unsourced")]
     flagged.sort(key=lambda c: (c.status != "contradicted", not c.units))
     report.details = [
-        {"text": c.text, "status": c.status, "name": c.name, "code_path": c.code_path}
+        {
+            "text": c.text,
+            "value": c.value,
+            "status": c.status,
+            "name": c.name,
+            "code_path": c.code_path,
+        }
         for c in flagged[:12]
     ]
     return report

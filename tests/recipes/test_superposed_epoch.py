@@ -8,11 +8,22 @@ import pytest
 pytestmark = pytest.mark.recipes
 
 
-def _events(n=6, *, gap_indices=(), n_samples=101, components=False):
+def _events(
+    n=6,
+    *,
+    gap_indices=(),
+    drop_indices=(),
+    n_samples=101,
+    components=False,
+    units=None,
+    first_sample=0,
+):
     """Synthetic event collection in the shape `get_events_timeseries` persists."""
     out = []
     tau = np.linspace(0.0, 1.0, n_samples)
     gap = (0.4 <= tau) & (tau <= 0.5)
+    drop = np.zeros(n_samples, dtype=bool)
+    drop[41:61] = True
 
     for i in range(n):
         scale = i % 6 + 1
@@ -32,7 +43,14 @@ def _events(n=6, *, gap_indices=(), n_samples=101, components=False):
             )
         else:
             values = y
-        out.append(SimpleNamespace(time=t, values=values, start=str(t[0]), stop=str(t[-1])))
+        keep = np.ones(n_samples, dtype=bool)
+        keep[:first_sample] = False
+        if i in drop_indices:
+            keep &= ~drop
+        event = SimpleNamespace(time=t[keep], values=values[keep], start=str(t[0]), stop=str(t[-1]))
+        if units is not None:
+            event.units = units
+        out.append(event)
 
     return out
 
@@ -66,6 +84,42 @@ def test_superposed_epoch_keeps_bins_with_enough_ungapped_events(recipe):
     assert (run.value("epoch_n")[~hole] == 6).all()
     assert np.allclose(median[hole], 5.0 + 4.5 * np.sin(np.pi * tau[hole]))
     assert np.allclose(median[~hole], 5.0 + 3.5 * np.sin(np.pi * tau[~hole]))
+
+
+def test_superposed_epoch_does_not_bridge_removed_samples(recipe):
+    run = recipe(
+        "superposed_epoch", events=_events(6, drop_indices=range(6)), n_grid=101, n_boot=20
+    )
+    median = run.value("epoch_median")
+    tau = np.linspace(0.0, 1.0, median.size)
+    missing = (0.41 <= tau) & (tau <= 0.60)
+
+    assert np.isnan(median[missing]).all()
+    assert (run.value("epoch_n")[missing] == 0).all()
+
+
+def test_superposed_epoch_masks_ci_when_too_few_events_contribute(recipe):
+    run = recipe(
+        "superposed_epoch", events=_events(6, gap_indices={0, 1, 2, 3}), n_grid=101, n_boot=200
+    )
+    hole = _hole_mask(run.value("epoch_median").size)
+
+    assert (run.value("epoch_n")[hole] == 2).all()
+    assert np.isnan(run.value("epoch_median")[hole]).all()
+    assert np.isnan(run.value("epoch_ci_low")[hole]).all()
+    assert np.isnan(run.value("epoch_ci_high")[hole]).all()
+
+
+def test_superposed_epoch_masks_ci_when_bootstrap_support_is_low(recipe):
+    run = recipe(
+        "superposed_epoch", events=_events(6, gap_indices={0, 1, 2}), n_grid=101, n_boot=200
+    )
+    hole = _hole_mask(run.value("epoch_median").size)
+
+    assert (run.value("epoch_n")[hole] == 3).all()
+    assert np.isfinite(run.value("epoch_median")[hole]).all()
+    assert np.isnan(run.value("epoch_ci_low")[hole]).all()
+    assert np.isnan(run.value("epoch_ci_high")[hole]).all()
 
 
 def test_superposed_epoch_bootstrap_ci_brackets_median_and_tightens_with_more_events(recipe):
@@ -105,6 +159,24 @@ def test_superposed_epoch_exports_data_units(recipe):
     for name in ("epoch_median", "epoch_q25", "epoch_q75", "epoch_ci_low", "epoch_ci_high"):
         assert run.exports[name]["units"] == "nT"
     assert run.exports["epoch_n"]["units"] == ""
+
+
+def test_superposed_epoch_infers_units_from_event_collection(recipe):
+    run = recipe("superposed_epoch", events=_events(6, units="nT"), n_grid=21, n_boot=20)
+
+    for name in ("epoch_median", "epoch_q25", "epoch_q75", "epoch_ci_low", "epoch_ci_high"):
+        assert run.exports[name]["units"] == "nT"
+
+
+def test_superposed_epoch_uses_event_start_stop_for_epoch_boundaries(recipe):
+    run = recipe("superposed_epoch", events=_events(6, first_sample=20), n_grid=101, n_boot=20)
+    median = run.value("epoch_median")
+    tau = np.linspace(0.0, 1.0, median.size)
+    leading = tau < 0.20
+
+    assert np.isnan(median[leading]).all()
+    assert (run.value("epoch_n")[leading] == 0).all()
+    assert np.allclose(median[~leading], 5.0 + 3.5 * np.sin(np.pi * tau[~leading]))
 
 
 def test_superposed_epoch_requires_bound_events(recipe):

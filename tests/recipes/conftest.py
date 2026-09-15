@@ -1,12 +1,11 @@
 """Run a shipped recipe the way the sandbox does, offline and without a model.
 
 Recipes are scripts `exec`'d inside `run_python` with an injected namespace (`np`,
-`plt`, `export`, `load_data`, the physics helpers). Until now nothing exercised the
-eleven shipped ones except the loader tests and two live runs: a regression in
-`theta_bn` was invisible until a demo. This fixture rebuilds that namespace from the
-same helper source the notebook export ships (`export._HELPER_DEFS` mirrors the sandbox
-preamble and is held to it by `tests/test_export.py`), captures every `export()` and
-every figure, and runs the recipe's own self-checks as a side effect of importing it.
+`plt`, `export`, `load_data`, the physics helpers). This fixture rebuilds that namespace
+from the same helper source the notebook export ships (`export._HELPER_DEFS` mirrors the
+sandbox preamble and is held to it by `tests/test_export.py`), captures every `export()`
+and every figure, and sets `__name__ = "recipe"` so guarded demos stay out of
+`run_recipe`-style executions.
 
 The helper here intentionally imports nothing from `helioai.data.recipes`: recipes are
 not modules, and they must keep working with no HelioAI installed.
@@ -44,7 +43,7 @@ class RecipeRun:
 
 
 def _sandbox_like_namespace(inputs: dict[str, Any], exports: dict, figures: list) -> dict:
-    ns: dict[str, Any] = {"__name__": "__main__", "np": np, "plt": plt}
+    ns: dict[str, Any] = {"__name__": "recipe", "np": np, "plt": plt}
     exec(_HELPER_DEFS, ns)
 
     def export(name, data, units=""):

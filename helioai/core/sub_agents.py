@@ -55,6 +55,7 @@ class SubAgentRole:
     max_turns: int = 5
     auto_load_skills: tuple[str, ...] = ()
     sandbox_no_network: bool = False
+    search_budget: int = 0
 
 
 SUB_SYSTEM_PROMPT_BASE = """You are a focused sub-agent inside HelioAI. The lead agent delegated a narrow task to you.
@@ -126,6 +127,9 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "run_recipe",
             "run_python",
         ),
+        # Three lookups, then download: a run spent all twelve turns on search_parameters
+        # re-asking for ids it had been handed on its first call.
+        search_budget=3,
         # 8 was not enough for a multi-spacecraft job: discovering that a CDA
         # ephemeris does not cover the requested year costs a turn per candidate,
         # and the notebook's Act IV spent four of them before doing any analysis.
@@ -182,6 +186,7 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "run_recipe",
         ),
         max_turns=4,
+        search_budget=2,
         auto_load_skills=("plasma_physicist",),
         sandbox_no_network=True,
     ),
@@ -431,6 +436,7 @@ async def stream_subagent(
             sub_agent_ctx=ctx,
             provider=provider,
             model=role_model[1] if role_model else None,
+            search_budget=role_cfg.search_budget,
         )
         runner = Runner(
             policy,

@@ -54,6 +54,14 @@ class Policy:
             claims)` — the answer plus the list of numbers it states, each with its
             source — instead of a plain message. Prose is still accepted; the claims are
             what lets a verdict compare numbers by name instead of by regex.
+        search_budget: How many lookups (`search_tools_names`) a run may make before it
+            has touched any data. A data_analyst spent all twelve of its turns on
+            `search_parameters`, re-asking for ids it had been handed on the first call
+            because they were not spelled the way it imagined; the run ended with nothing
+            downloaded. Past the budget, one correction is appended telling it to use the
+            ids it has. 0 disables — a parameter_hunter's whole job is to search.
+        search_tools_names: The tools that count as lookups.
+        data_tools_names: The tools whose first call ends the lookup phase.
     """
 
     name: str
@@ -72,6 +80,11 @@ class Policy:
     model: str | None = None
     deferred: frozenset[str] = frozenset()
     final_answer: bool = False
+    search_budget: int = 0
+    search_tools_names: frozenset[str] = frozenset({"search_parameters", "list_missions"})
+    data_tools_names: frozenset[str] = frozenset(
+        {"get_timeseries", "get_events_timeseries", "run_python", "run_recipe", "get_catalog"}
+    )
 
     @property
     def event_extra(self) -> dict:

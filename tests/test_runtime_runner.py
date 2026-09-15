@@ -475,3 +475,93 @@ async def test_the_lead_puts_the_claims_on_its_reply_and_journals_them(monkeypat
     assert journaled["data"]["claims"] == reply["data"]["claims"]
     saved = test_store.get_or_create("web", "s-claims")
     assert saved[-1].role == "assistant" and saved[-1].content == "θ_Bn = 57.5°."
+
+
+# ── search budget ─────────────────────────────────────────────────────────────────
+
+
+def _hits(*ids: str) -> dict:
+    return {"results": [{"id": i, "name": i.rsplit("/", 1)[-1]} for i in ids]}
+
+
+async def test_a_role_that_keeps_searching_is_told_to_use_the_ids_it_has():
+    """The live data_analyst made twelve search_parameters calls and no download,
+    re-asking for `Proton_Temp` while `Proton_W_nonlin` sat in its first results. Past
+    the budget, one correction lists the ids its searches returned and tells it to
+    download; the next turn sees it, and the run goes on."""
+    reg = ScriptedRegistry(
+        {
+            "search_parameters": _hits(
+                "cda/WI_H1_SWE/Proton_Np_nonlin", "cda/WI_H1_SWE/Proton_W_nonlin"
+            ),
+            "get_timeseries": {"ok": True},
+        }
+    )
+    llm = ScriptedLLM(
+        [
+            assistant_calls("search_parameters", arguments={"query": "a"}),
+            assistant_calls("search_parameters", arguments={"query": "b"}),
+            assistant_calls("search_parameters", arguments={"query": "c"}),
+            assistant_calls("search_parameters", arguments={"query": "d"}),
+            assistant_calls(
+                "get_timeseries", arguments={"param_id": "cda/WI_H1_SWE/Proton_Np_nonlin"}
+            ),
+            assistant_text("downloaded"),
+        ]
+    )
+    policy = _policy(max_turns=8, search_budget=3)
+    history = [Message(role="user", content="q")]
+    events, end = await _drain(Runner(policy, llm, registry=reg), history)
+
+    corrections = [e for e in events if e["event"] == "correction"]
+    assert len(corrections) == 1, "once per run"
+    note = corrections[0]["data"]["text"]
+    assert "4 searches" in note and "cda/WI_H1_SWE/Proton_W_nonlin" in note
+    assert corrections[0]["data"]["ids"][:2] == [
+        "cda/WI_H1_SWE/Proton_Np_nonlin",
+        "cda/WI_H1_SWE/Proton_W_nonlin",
+    ]
+    persisted = [m for m in history if m.origin == "correction"]
+    assert len(persisted) == 1 and persisted[0].role == "user"
+    fifth_call = llm.calls[4]["messages"]
+    assert fifth_call[-1].content == note, "the model reads the correction before its next turn"
+    assert end.final_text == "downloaded" and not end.capped
+
+
+async def test_a_role_that_downloaded_early_is_never_corrected_however_much_it_searches():
+    reg = ScriptedRegistry({"search_parameters": _hits("x/y/z"), "get_timeseries": {"ok": True}})
+    llm = ScriptedLLM(
+        [
+            assistant_calls("get_timeseries", arguments={"param_id": "x/y/z"}),
+            *[assistant_calls("search_parameters", arguments={"query": str(i)}) for i in range(5)],
+            assistant_text("done"),
+        ]
+    )
+    events, _ = await _drain(
+        Runner(_policy(max_turns=8, search_budget=3), llm, registry=reg),
+        [Message(role="user", content="q")],
+    )
+    assert not [e for e in events if e["event"] == "correction"]
+
+
+async def test_a_zero_budget_disables_the_guard():
+    reg = ScriptedRegistry({"search_parameters": _hits("x/y/z")})
+    llm = ScriptedLLM(
+        [
+            *[assistant_calls("search_parameters", arguments={"query": str(i)}) for i in range(5)],
+            assistant_text("done"),
+        ]
+    )
+    events, _ = await _drain(
+        Runner(_policy(max_turns=8), llm, registry=reg), [Message(role="user", content="q")]
+    )
+    assert not [e for e in events if e["event"] == "correction"]
+
+
+def test_the_roles_have_the_budgets_their_jobs_call_for():
+    from helioai.core.sub_agents import AGENT_ROLES
+
+    assert AGENT_ROLES["data_analyst"].search_budget == 3
+    assert AGENT_ROLES["plasma_physicist"].search_budget == 2
+    assert AGENT_ROLES["parameter_hunter"].search_budget == 0, "searching is its whole job"
+    assert AGENT_ROLES["librarian"].search_budget == 0

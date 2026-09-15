@@ -172,6 +172,37 @@ SEARCH_TOOLS_DEF = ToolDef(
 )
 
 
+def search_loop_correction(searches: int, ids: list[str]) -> str:
+    """The note handed to a role that keeps searching instead of downloading.
+
+    Args:
+        searches: How many lookups it has made.
+        ids: The product ids its searches already returned, best first.
+
+    Returns:
+        The correction text; the ids are listed so the next turn has nothing to look up.
+    """
+    listed = "\n".join(f"  - {i}" for i in ids[:12]) or "  (none parsed — read your last results)"
+    return (
+        f"⚠️ AUTOMATED CORRECTION — {searches} searches and no data yet. The products you need "
+        f"are in the results you already have; a variable that is not listed under a dataset "
+        f"does not exist under that name (SWE has no `Proton_Temp`; its temperature is "
+        f"`Proton_W_*`). Do not search again: pick from these ids and call the data tool now:\n"
+        f"{listed}"
+    )
+
+
+def _ids_in_results(history: list[Message], search_tools: frozenset[str]) -> list[str]:
+    """Product ids in the search results of a run, most recent first, deduplicated."""
+    seen: dict[str, None] = {}
+    for m in reversed(history):
+        if m.role != "tool" or m.name not in search_tools or not m.content:
+            continue
+        for pid in re.findall(r'"id":\s*"([a-z0-9_]+/[^"\s]+)"', m.content):
+            seen.setdefault(pid, None)
+    return list(seen)
+
+
 @dataclass
 class Runner:
     """One run of the loop under one policy.
@@ -231,6 +262,7 @@ class Runner:
         policy = self.policy
         extra = policy.event_extra
         retried_bogus_ids = False
+        searches, touched_data, search_corrected = 0, False, False
         for i in range(policy.max_turns):
             turn = self.turns = i + 1
             history[:] = strip_orphan_tool_calls(history)
@@ -277,6 +309,9 @@ class Runner:
             if policy.comment_replies and response.content and response.content.strip():
                 yield make("reply", text=response.content)
 
+            names = [tc.name for tc in response.tool_calls]
+            searches += sum(n in policy.search_tools_names for n in names)
+            touched_data = touched_data or any(n in policy.data_tools_names for n in names)
             # The dict is shared with `run`, whose `finally` cancels whatever is left in
             # it: cleared and refilled rather than rebound, so it stays the same object.
             started.clear()
@@ -355,6 +390,20 @@ class Runner:
                         content=_history_tool_result(tc.name, result.for_llm()),
                     )
                 )
+            if (
+                policy.search_budget
+                and not touched_data
+                and not search_corrected
+                and searches > policy.search_budget
+            ):
+                search_corrected = True
+                ids = _ids_in_results(history, policy.search_tools_names)
+                note = search_loop_correction(searches, ids)
+                log.warning(
+                    "search_loop_corrected", agent=policy.name, searches=searches, turn=turn
+                )
+                history.append(Message(role="user", content=note, origin="correction"))
+                yield make("correction", ids=ids, text=note, **extra)
         yield self._end(None, capped=True)
 
     async def _model_turn(

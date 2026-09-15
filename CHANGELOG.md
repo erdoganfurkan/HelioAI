@@ -118,6 +118,15 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Added
 
+- **A role that keeps searching instead of downloading is told to stop.** A
+  `data_analyst` spent all twelve of its turns on `search_parameters`, re-asking for
+  `Proton_Temp` and `Proton_V_GSE_moment` — names it imagined, which SWE does not have —
+  while `Proton_W_nonlin` and `Proton_VX_nonlin` sat in the results of its first call; the
+  run ended with nothing downloaded and the lead had to start over. Each role now has a
+  search budget (`data_analyst` 3, `plasma_physicist` 2; none for the roles whose job is
+  to search): past it, with no data tool called yet, the loop appends one correction that
+  lists the product ids the searches already returned and says to download — the same
+  `correction` event a replay shows for invented ids.
 - **A recipe runs as shipped: `run_recipe(name, inputs)`.** `load_recipe` handed the model
   the source and the model then pasted a part of it into `run_python` — or read its
   constants and rewrote the computation by hand, which is what the recipe check keeps

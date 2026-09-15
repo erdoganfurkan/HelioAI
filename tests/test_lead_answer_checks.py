@@ -227,3 +227,32 @@ async def test_lead_gives_up_after_one_retry(monkeypatch, tmp_path, fake_llm_fac
     assert (
         "AUTOMATED CORRECTION" in [e for e in events if e["event"] == "reply"][-1]["data"]["text"]
     )
+
+
+def test_a_run_that_used_the_shue_model_did_not_bypass_the_pressure_balance_recipe():
+    """MMS1 live run: the analyst called `mp_shue1998(pdyn, bz)` — the sandbox's empirical
+    magnetopause, with its reference — and exported `magnetopause_r_at_mms_Re`. The
+    recipe check read "magnetopause" and flagged pressure_balance as never loaded. Another
+    published model is a choice, not a hand-written copy of the recipe."""
+    from helioai.core.tool_exec import _flag_recipe_bypass
+
+    code = "th, r = mp_shue1998(pdyn_nPa, bz_nT)\nexport('magnetopause_r_at_mms_Re', r[0], 'Re')"
+    history = [
+        Message(role="user", content="q"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c1", name="run_python", arguments={"code": code})],
+        ),
+        Message(role="tool", tool_call_id="c1", name="run_python", content="{}"),
+    ]
+    exports = [{"kind": "exports", "values": {"magnetopause_r_at_mms_Re": {"mean": 8.57}}}]
+    text, flags = _flag_recipe_bypass("r_mp = 8.57 Re", history, exports)
+    assert flags == [] and "RECIPE CHECK" not in text
+
+    hand_written = history[1].tool_calls[0].arguments["code"] = "r = 10.22 * pdyn ** (-1 / 6.6)"
+    assert hand_written
+    _, flags = _flag_recipe_bypass("r_mp = 8.57 Re", history, exports)
+    assert flags == [{"recipe": "pressure_balance", "reason": "not_loaded"}], (
+        "the same export from a formula typed by hand is still a bypass"
+    )

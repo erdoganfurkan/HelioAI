@@ -10,6 +10,16 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Fixed
 
+- **The recipe check no longer accuses a run that used the sandbox's Shue or Jelínek
+  model.** `mp_shue1998` and `bs_jelinek2012` are published boundary models shipped with
+  their reference; a run that called one and exported `magnetopause_r_at_mms_Re` was
+  flagged for never loading `pressure_balance`, whose signature contains "magnetopause".
+  Choosing another published model is not a hand-written copy of the recipe; a formula
+  typed by hand for the same export still is.
+- **The CLI no longer prints an answer twice when the model streams it, then delivers it
+  through `final_answer` without its markdown.** The final `reply` was not a prefix of
+  the streamed text (the bold was gone), so the whole answer was printed again; two
+  renderings that say the same words are one answer.
 - **`HELIOAI_MAX_OUTPUT_TOKENS` now reaches the `opencode` provider.** The override
   iterated a hand-written list of providers that predated opencode, so the exact
   setting the "model returned neither text nor a tool call" error tells you to raise

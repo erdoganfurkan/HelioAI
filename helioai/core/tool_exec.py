@@ -684,7 +684,7 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
         The text (with a note appended when needed) and the flags raised, each
         `{"recipe": name, "reason": "not_loaded" | "shallow_use" | "not_called"}`.
     """
-    from helioai.tools.recipes import RECIPE_SIGNATURES
+    from helioai.tools.recipes import HELPER_ALTERNATIVES, RECIPE_SIGNATURES
 
     loaded_calls: dict[str, str] = {}  # tool_call_id -> recipe name
     load_positions: dict[str, int] = {}  # tool_call_id -> index in history
@@ -704,6 +704,12 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
             elif tc.name == "run_python":
                 python_calls.append((i, str((tc.arguments or {}).get("code") or "")))
     loaded_names = set(loaded_calls.values()) | ran
+    all_code = "\n".join(code for _, code in python_calls)
+    used_helper = {
+        recipe_name
+        for recipe_name, helpers in HELPER_ALTERNATIVES.items()
+        if any(h in all_code for h in helpers)
+    }
 
     exported = _exported_names(artifacts)
     if not exported:
@@ -713,6 +719,7 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
         {"recipe": recipe_name, "reason": "not_loaded"}
         for recipe_name, signatures in RECIPE_SIGNATURES.items()
         if recipe_name not in loaded_names
+        and recipe_name not in used_helper
         and any(sig in name for name in exported for sig in signatures)
     ]
 

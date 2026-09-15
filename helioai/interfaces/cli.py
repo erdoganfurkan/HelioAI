@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 import uuid
 from typing import TYPE_CHECKING
@@ -170,6 +171,19 @@ def _capped_output(text: str, pad: str, max_lines: int = 6) -> str:
 # answer a second time.
 _streamed: list[str] = []
 
+_MARKUP = re.compile(r"[*_`#>|\-]+|\s+")
+
+
+def _same_words(a: str, b: str) -> bool:
+    """Whether two renderings of a reply say the same thing.
+
+    A live run streamed its answer as text with `**n̂ = …**` in bold, then delivered the
+    same answer through `final_answer` without the bold; the CLI, seeing a `reply` that
+    was not a prefix of the stream, printed the whole answer twice. Markdown and
+    whitespace are not words.
+    """
+    return _MARKUP.sub("", a) == _MARKUP.sub("", b)
+
 
 def _render_event(ev: dict) -> None:
     from helioai.core.event_display import describe_findings
@@ -193,6 +207,10 @@ def _render_event(ev: dict) -> None:
         text = data["text"]
         if streamed and text.startswith(streamed):
             print(f"{text[len(streamed) :]}\033[0m\n")
+        elif streamed and _same_words(streamed, text):
+            # The model wrote its answer as text, then called final_answer with the
+            # same words minus some markdown: one answer, already on screen.
+            print("\033[0m\n")
         elif streamed:
             print(f"\033[0m\n\n\033[92m{text}\033[0m\n")
         else:

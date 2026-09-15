@@ -28,6 +28,16 @@ log = logging.getLogger(__name__)
 # calculation in this domain is actually called, whoever writes it. False positives
 # cost nothing here (see sub_agents._flag_recipe_bypass — it annotates, never blocks);
 # false negatives just mean one more recipe worth adding a substring for.
+# Sandbox helpers that ARE a published model of the quantity a recipe also computes.
+# A run that called `mp_shue1998(...)` for the magnetopause did not bypass the
+# pressure-balance recipe: it chose the empirical Shue model — with its reference — over
+# the Chapman-Ferraro balance, which is a legitimate choice, not a hand-written copy.
+# On the MMS1 live run the export `magnetopause_r_at_mms_Re` matched the recipe's
+# "magnetopause" signature and the answer was flagged for a recipe it had no use for.
+HELPER_ALTERNATIVES: dict[str, tuple[str, ...]] = {
+    "pressure_balance": ("mp_shue1998(", "bs_jelinek2012("),
+}
+
 RECIPE_SIGNATURES: dict[str, tuple[str, ...]] = {
     "theta_bn": ("theta_bn",),
     "mvab": ("mvab", "minimum_variance", "lambda_min", "ratio_int_min"),

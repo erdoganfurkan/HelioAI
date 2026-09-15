@@ -250,3 +250,26 @@ def test_a_reply_that_diverges_from_its_stream_is_printed_whole(capsys):
     cli._render_event({"event": "reply", "data": {"text": "a different final answer"}})
     out = capsys.readouterr().out
     assert "first draft" in out and "a different final answer" in out
+
+
+def test_a_reply_that_repeats_the_stream_without_its_markdown_is_not_printed_twice(capsys):
+    """Live: the model streamed its answer with `**n̂ = …**` in bold, then called
+    final_answer with the same words unbolded. Not a prefix of the stream, so the CLI
+    printed the whole answer a second time."""
+    from helioai.interfaces import cli
+
+    cli._render_event(
+        {"event": "reply_delta", "data": {"text": "**θ_Bn = 49.09°** — quasi-perp.\n"}}
+    )
+    cli._render_event(
+        {"event": "reply_delta", "data": {"text": "Normal **n̂ = [−0.97, 0.16, 0.20]**."}}
+    )
+    cli._render_event(
+        {
+            "event": "reply",
+            "data": {"text": "θ_Bn = 49.09° — quasi-perp.\nNormal n̂ = [−0.97, 0.16, 0.20]."},
+        }
+    )
+    out = capsys.readouterr().out
+    assert out.count("49.09°") == 1 and out.count("[−0.97, 0.16, 0.20]") == 1
+    assert cli._streamed == []

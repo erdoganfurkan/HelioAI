@@ -69,9 +69,23 @@ method is recorded with its source.
   file, because everything else is a read-only overlay that looks writable and is not.
 - `plt.show()` → REQUIRED; it is what saves the figure to disk.
 
-## Resolve the id first (if needed)
+## Resolve the id first (if needed) — two searches, then download
 If the id is missing, vague, or malformed (extra path segments like `cda/ACE/MAG/AC_H0_MFI/...`),
-`search_parameters` with a plain-English query and pick the shortest matching id.
+`search_parameters` with a plain-English query — one batched call for all the parameters you
+need — and pick from what comes back. The top hit of each query carries `dataset_variables`:
+every variable its dataset holds. **Read that list before searching again**: a variable that is
+not in it does not exist under that dataset (Wind SWE has no `Proton_Temp`; its temperature is
+`Proton_W_nonlin`, a thermal speed; its velocity is `Proton_VX/VY/VZ_nonlin`, not a vector). A
+hit's `also_in` lists the same variable in other cadences and field models.
+
+Budget: **two searches**. If the exact product is still not there, take the best dataset you
+were shown and use its variables as they are named. **Never assemble an id by hand** — the
+guessed `MMS1_MEC_SRVY_L2/mms1_mec_r_gsm` dropped the `_EPHT89D` the real dataset carries and
+failed; the correct id was in the results of the first search. Past the budget with nothing
+downloaded, you receive a correction listing the ids you already have: use them.
+
+Spacecraft position: `ssc/<spacecraft>` (e.g. `ssc/mms1`, `ssc/wind`) is the SSCWeb trajectory
+in km — GSE by default. Prefer it to an instrument's own ephemeris variable.
 
 ## Canonical template — download then plot
 ```python
@@ -128,8 +142,16 @@ If `get_timeseries` returns a `quality` block with `notable: true`, report it (m
    Never re-fetch — events are already persisted.
 
 ## Event detection
-Implement threshold / derivative / boundary criteria in run_python; report event times and key
-signature values (ΔP/P, ΔB/B…).
+For an interplanetary shock whose time you do not know yet: download B, then
+`run_recipe("theta_bn", inputs={"B": "load_data('<b>')"})` **with no `shock_time`** — the recipe
+lists the largest |B| jumps of the interval (time, jump, ratio) and stops. Look at them against
+the plot, name the one you take **and the others you rejected** in your report (the question
+"around 2004-11-07" has several jumps that day; say which is the shock and why: n, V, T jump
+with it), then run the recipe again with `shock_time` set. Do not hunt the ramp with a series
+of hand-written `run_python` cells: one run spent nine turns doing that.
+
+For other events, implement threshold / derivative / boundary criteria in run_python; report
+event times and key signature values (ΔP/P, ΔB/B…).
 
 | Event | Signatures | Parameters |
 |---|---|---|

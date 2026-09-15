@@ -243,9 +243,16 @@ function renderEvent(view, ev) {
     appendTlEvent(view, '⚡', `spawning ${data.role}…`, 'tl-subagent');
 
   } else if (event === 'sub_agent_end') {
-    const summary = (data.summary || '').slice(0, 100);
-    const icon = data.error ? '✗' : '✓';
-    const row = appendTlEvent(view, icon, `${data.role}: ${data.error || summary}`, 'tl-subagent');
+    // A role that hit its cap with findings on the table finished, it did not fail:
+    // amber and "N values measured", not the red cross of a run that produced nothing.
+    const findings0 = Object.keys(data.findings || {}).length;
+    const capped = data.capped && findings0 > 0;
+    const summary = (data.summary || '').replace(/\s+/g, ' ').slice(0, 100);
+    const icon = capped ? '◔' : (data.error ? '✗' : '✓');
+    const text = capped
+      ? `${data.role}: finished at its ${data.n_iterations}-turn cap — ${findings0} value${findings0 > 1 ? 's' : ''} measured`
+      : `${data.role}: ${data.error || summary}`;
+    const row = appendTlEvent(view, icon, text, 'tl-subagent' + (capped ? ' tl-capped' : (data.error ? ' tl-issue' : '')));
     // The measured values, not the prose: one line per finding, capped like the CLI.
     const findings = Object.entries(data.findings || {});
     if (findings.length) {

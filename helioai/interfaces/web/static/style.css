@@ -113,6 +113,9 @@ select:focus { border-color: var(--accent); }
 .tl-ok .tl-text { color: var(--green); }
 .tl-issue .tl-icon { color: var(--red); }
 .tl-issue .tl-text { color: var(--red); }
+/* A sub-agent that ran out of turns with findings on the table: finished, not failed. */
+.tl-capped .tl-icon { color: var(--orange); }
+.tl-capped .tl-text { color: var(--orange); }
 .tl-nested { margin-left: 1.25rem; opacity: 0.85; border-left: 2px solid var(--accent-dim); padding-left: 0.5rem; }
 
 /* Artifacts */

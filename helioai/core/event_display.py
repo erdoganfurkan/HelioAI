@@ -266,3 +266,33 @@ def _delegations_clause(delegations: list[dict]) -> str:
     if capped:
         text += f", {', '.join(capped)} capped"
     return text
+
+
+def describe_sub_agent_end(data: dict) -> tuple[str, str]:
+    """The one line a `sub_agent_end` is shown as, and its tone.
+
+    A role that ran out of turns is not one story but two. With nothing measured it
+    failed, and the line says so in red. With findings on the table it finished at its
+    cap — the MMS1 run had its position, the boundary standoffs and a figure when the
+    twelfth turn ended, and the lead answered from them — so the line is amber, names
+    what was measured, and does not read as a failure of a run that produced the answer.
+
+    Args:
+        data: The event payload.
+
+    Returns:
+        `(text, tone)` with tone one of `"ok"`, `"capped"`, `"error"`.
+    """
+    role = data.get("role", "")
+    findings = data.get("findings") or {}
+    if data.get("capped") and findings:
+        n = len(findings)
+        return (
+            f"{role}: finished at its {data.get('n_iterations', '?')}-turn cap — "
+            f"{n} value{'s' if n > 1 else ''} measured",
+            "capped",
+        )
+    if data.get("error"):
+        return f"{role}: {data['error']}", "error"
+    summary = " ".join((data.get("summary") or "").split())
+    return f"{role}: {_clip(summary, 100)}", "ok"

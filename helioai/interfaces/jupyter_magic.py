@@ -144,10 +144,11 @@ def _render_jupyter_event(ev: dict) -> None:
         print(f"\n⚡ spawning {role} — {desc}…")
 
     elif name == "sub_agent_end":
-        role = data.get("role", "")
-        summary = (data.get("summary") or "")[:100]
-        icon = "✗" if data.get("error") else "✓"
-        print(f"{icon} {role}: {data.get('error') or summary}")
+        from helioai.core.event_display import describe_sub_agent_end
+
+        text, tone = describe_sub_agent_end(data)
+        icon = {"ok": "✓", "capped": "◔", "error": "✗"}[tone]
+        print(f"{icon} {text}")
         for line in describe_findings(data.get("findings")):
             print(f"    {line}")
         print()

@@ -276,3 +276,41 @@ def test_describe_plan_report_names_the_capped_role_and_counts_the_rest():
         }
     )
     assert line == "plan — 1/1 planned tools used; 3 delegations, librarian capped"
+
+
+# ── sub_agent_end ─────────────────────────────────────────────────────────────
+
+
+def test_a_role_capped_with_findings_finished_and_says_what_it_measured():
+    from helioai.core.event_display import describe_sub_agent_end
+
+    text, tone = describe_sub_agent_end(
+        {
+            "role": "data_analyst",
+            "n_iterations": 12,
+            "capped": True,
+            "error": "(sub-agent 'data_analyst' reached its 12-turn cap)",
+            "summary": "(sub-agent 'data_analyst' reached its 12-turn cap)",
+            "findings": {"MMS1_X_GSM_Re": {"value": 21.36}, "MMS1_Y_GSM_Re": {"value": -16.1}},
+        }
+    )
+    assert tone == "capped"
+    assert text == "data_analyst: finished at its 12-turn cap — 2 values measured"
+
+
+def test_a_role_capped_with_nothing_measured_failed():
+    from helioai.core.event_display import describe_sub_agent_end
+
+    text, tone = describe_sub_agent_end(
+        {"role": "data_analyst", "n_iterations": 12, "capped": True, "error": "cap", "findings": {}}
+    )
+    assert tone == "error" and text == "data_analyst: cap"
+
+
+def test_a_role_that_finished_shows_its_summary_on_one_line():
+    from helioai.core.event_display import describe_sub_agent_end
+
+    text, tone = describe_sub_agent_end(
+        {"role": "librarian", "summary": "Found two\n\npapers:  Wu 2016.", "error": None}
+    )
+    assert tone == "ok" and text == "librarian: Found two papers: Wu 2016."

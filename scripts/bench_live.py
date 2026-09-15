@@ -115,7 +115,7 @@ _SIGMA_RE = re.compile(
 _SIGMA_WINDOW = 80
 
 _TIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?!\d)")
-_BENCH_SESSION_RE = re.compile(r"^bench-(?P<qid>.+)-[0-9a-f]{8}$")
+_BENCH_SESSION_RE = re.compile(r"^(?:[0-9a-f]{8}-bench-|bench-)(?P<qid>.+?)(?:-[0-9a-f]{8})?$")
 _CAPPED_LEAD_RE = re.compile(r"exceeded \d+ iterations")
 
 
@@ -627,8 +627,14 @@ def append_manifest(path: Path, entry: dict) -> list[dict]:
 
 
 def mint_session_id(question_id: str) -> str:
-    """`bench-<qid>-<8 hex>`; `score` reads the question id back out of it."""
-    return f"bench-{question_id}-{uuid.uuid4().hex[:8]}"
+    """`<8 hex>-bench-<qid>`; `score` reads the question id back out of it.
+
+    The random part comes first because `workspace.make_session_label` discriminates
+    session directories by the first six characters of the id: ids that all began with
+    `bench-` gave every run of a question one shared workspace, and each run found the
+    data its predecessors had downloaded already listed in its inventory.
+    """
+    return f"{uuid.uuid4().hex[:8]}-bench-{question_id}"
 
 
 def load_questions(path: Path, only: list[str] | None = None) -> list[dict]:

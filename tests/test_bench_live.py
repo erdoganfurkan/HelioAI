@@ -380,7 +380,7 @@ def test_run_batch_appends_manifest_without_calling_the_agent(tmp_path: Path, mo
     )
 
     assert len(calls) == 4 and len(appended) == 4 and len(lines) == 4
-    assert all(sid.startswith("bench-") for sid, _ in calls)
+    assert all("-bench-" in sid for sid, _ in calls)
     assert calls[0][1].startswith("Find an interplanetary shock")
     assert len({sid for sid, _ in calls}) == 4
     manifest = json.loads(out.read_text())
@@ -443,3 +443,18 @@ def test_the_bench_measures_the_checkout_it_lives_in(monkeypatch) -> None:
         label="x", question_id="q", session_id="bench-q-00000000", rep=1, result={}
     )
     assert entry["package"] == str(bench.ROOT / "helioai")
+
+
+def test_session_ids_differ_in_their_first_six_characters() -> None:
+    """`make_session_label` keys the workspace on `session_id[:6]`: two runs of one
+    question must never share a directory, or the second inherits the first's data."""
+    from helioai.workspace import make_session_label
+
+    a, b = bench.mint_session_id("wind_shock_2004"), bench.mint_session_id("wind_shock_2004")
+    assert a[:6] != b[:6]
+    assert make_session_label("Find a shock", a) != make_session_label("Find a shock", b)
+    assert bench._BENCH_SESSION_RE.match(a).group("qid") == "wind_shock_2004"
+    assert (
+        bench._BENCH_SESSION_RE.match("bench-sea_icme_2015-0badc0de").group("qid")
+        == "sea_icme_2015"
+    )

@@ -174,7 +174,7 @@ def test_sep_onset_cusum_recipe_detects_synthetic_onset():
     exported: dict = {}
     ns = {
         "flux": types.SimpleNamespace(time=t, values=x),
-        "export": lambda name, data: exported.setdefault(name, np.asarray(data)),
+        "export": lambda name, data, units="": exported.setdefault(name, np.asarray(data)),
         "bg_hours": 2.0,
     }
     exec(code, ns)

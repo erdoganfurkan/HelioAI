@@ -426,3 +426,20 @@ def test_questions_file_and_help() -> None:
         assert exc.value.code == 0
     with pytest.raises(SystemExit):
         bench.main(["score"])
+
+
+def test_the_bench_measures_the_checkout_it_lives_in(monkeypatch) -> None:
+    """The shared venv installs `helioai` from one worktree; a bench started from another
+    must import its own package and refuse to run otherwise, or the manifest's HEAD would
+    describe a branch the run never exercised."""
+    assert bench.imported_package() == bench.ROOT / "helioai"
+    bench.assert_package_is_this_checkout()
+
+    monkeypatch.setattr(bench, "imported_package", lambda: Path("/elsewhere/helioai"))
+    with pytest.raises(SystemExit, match="another checkout"):
+        bench.assert_package_is_this_checkout()
+
+    entry = bench.manifest_entry(
+        label="x", question_id="q", session_id="bench-q-00000000", rep=1, result={}
+    )
+    assert entry["package"] == str(bench.ROOT / "helioai")

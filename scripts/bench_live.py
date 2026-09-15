@@ -30,6 +30,17 @@ Usage:
     python scripts/bench_live.py run --n 3 --label "branch-A" --out bench_A.json
     python scripts/bench_live.py score --manifest bench_A.json --csv bench_A.csv
     python scripts/bench_live.py score --session web:<session_id> --session web:<other>
+
+Comparing configurations:
+    The script measures the checkout it lives in — it puts its own repository root first
+    on `sys.path` and refuses to run when `helioai` imports from anywhere else, because
+    the shared venv installs the package in editable mode from one worktree. Start `run`
+    from the worktree under test, once per configuration (`HELIOAI_EXPERIMENTS` set or
+    unset), with the same `--n`. To bench `main`, copy this file and
+    `bench_questions.json` into its checkout: both are standalone, and `main`'s sessions
+    are scored from `messages` like the other pre-journal ones. Every entry records the
+    HEAD, the package path and the environment it ran under, so the manifests say what
+    was compared.
 """
 
 from __future__ import annotations
@@ -52,6 +63,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# The checkout this script lives in is the one under test. The shared venv installs
+# `helioai` in editable mode from one worktree, so without this a bench started from
+# another worktree would import — and measure — the wrong branch while recording this
+# one's HEAD.
+sys.path.insert(0, str(ROOT))
 DEFAULT_QUESTIONS = Path(__file__).resolve().parent / "bench_questions.json"
 BENCH_USER = "bench"
 
@@ -495,6 +511,24 @@ def aggregate_rows(agg: list[dict]) -> list[dict[str, str]]:
     ]
 
 
+def imported_package() -> Path:
+    """Where `helioai` is imported from — must be this checkout, or the run measures another."""
+    import helioai
+
+    return Path(helioai.__file__).resolve().parent
+
+
+def assert_package_is_this_checkout() -> None:
+    """Refuse to run a bench whose `helioai` is not the one next to this script."""
+    pkg = imported_package()
+    if pkg.parent != ROOT:
+        raise SystemExit(
+            f"bench_live: `helioai` imports from {pkg}, not from {ROOT / 'helioai'} — "
+            "the run would measure another checkout. Start the bench from the worktree "
+            "you mean to measure."
+        )
+
+
 def git_head() -> str:
     """Short HEAD of the checkout the script lives in; empty when git is unavailable."""
     try:
@@ -554,6 +588,7 @@ def manifest_entry(
     return {
         "label": label,
         "git_head": head,
+        "package": str(ROOT / "helioai"),
         "provider": provider,
         "model": model,
         "env": env if env is not None else {k: os.environ.get(k, "") for k in RECORDED_ENV},
@@ -723,6 +758,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     from helioai.logging_config import setup_logging
 
     setup_logging("WARNING")
+    assert_package_is_this_checkout()
     questions = load_questions(Path(args.questions), args.only)
     print(f"{len(questions)} question(s) × {args.n} → {args.out}", flush=True)
     run_batch(

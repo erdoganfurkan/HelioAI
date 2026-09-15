@@ -282,6 +282,53 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Changed
 
+- **The recipes were reviewed by a heliophysicist and corrected; their numbers change.**
+  Each correction shipped with a synthetic test whose answer is known, red before the
+  fix, and the shelf now has one contract: a recipe reads its inputs with
+  `globals().get` and exports nothing when none is bound, its demo lives under
+  `if __name__ == "__main__":`, and every `export()` carries a unit — the provenance
+  validator compares unit-aware, and a speed recorded bare could not vouch for
+  "V_shock = 579 km/s". Recipe by recipe:
+    - `theta_bn`: the upstream/downstream windows can be derived from the shock time
+      (`shock_time` + the series `B`; guard 2 min, span 8 min; a window with a step or a
+      trend that looks like the ramp is refused) instead of chosen by the model — three
+      live runs on the same shock had given 54.85°, 59.95° and 64.27°. Exports gain the
+      normal, the magnetic compression ratio, the two window means, a bootstrap spread of
+      the angle and the normal, and the std of B·n̂. The naive "coplanarity residual" is
+      identically zero for this estimator and is documented as such rather than exported.
+      The placeholder demo no longer runs under `run_recipe`.
+    - `mvab`: the Sonnerup & Scheible (1998, eq. 8.23–8.24) angular uncertainties of the
+      normal and Δ⟨B·n⟩, on the covariance convention of the reference (÷N); λ_min ≈ 0
+      is now "planar — normal unique, uncertainty undefined", λ_int ≈ λ_min "degenerate",
+      neither "well-determined"; a warning under 30 samples; NaN input is an error, not a
+      traceback.
+    - `walen_test`: a real de Hoffmann-Teller frame (Sonnerup et al. 1987, the 3×3 normal
+      equations) replaces the mean subtraction the docstring called one; the HT quality
+      (residual electric field, E-field correlation) is reported and a poor frame is said
+      to make the slope meaningless; the RD verdict needs 0.7 ≤ |slope| ≤ 1.3 and R² ≥ 0.8
+      (Paschmann & Sonnerup 2008) — a slope of 10 with R² = 1 used to be "consistent with
+      a rotational discontinuity". `frame="mean"` keeps the previous behaviour.
+    - `superposed_epoch`: a gap stays a gap — neither an explicit NaN nor a missing
+      timestamp is bridged (`np.interp` bridged both), an epoch with fewer than
+      `min_events` contributors is NaN, and the new bootstrap CI on the median is masked
+      where the median is; τ is normalised on the event's `start`/`stop`, not on its first
+      and last surviving samples; the units come from the events themselves.
+    - `pressure_balance`: the reference field is derived from the dipole (IGRF-13 B₀ =
+      29 806 nT, Chapman–Ferraro factor 2 → 59.6 nT at 10 R_E) instead of a round 50 nT;
+      `P_dyn_nPa` is the standard ρV² and the 0.88 stagnation coefficient (Spreiter et al.
+      1966) is exported apart as `P_applied_nPa`; the result says it ignores Bz and points
+      to `mp_shue1998`. **`mp_standoff` returns a dict** (`result["r_mp_RE"]` is the former
+      float).
+    - `sep_onset_poisson_cusum`: the CUSUM runs on the intensities with the Poisson
+      reference value of Huttunen-Heikinmaa et al. (2005) — the previous z-score form is
+      the same detector divided by σ, and stays as `method="zscore"`; the background is
+      median/MAD; detection starts after the background window and its first sample
+      counts; a missing sample no longer confirms an onset; units follow the flux.
+    - `pitch_angle_dist`: equal-solid-angle bins (in cos α) replace the 1/sin α
+      normalisation that amplified Poisson noise at the poles; `bins="deg"` keeps the old
+      histogram; the distribution and an anisotropy ratio are exported; the recipe no
+      longer switches matplotlib to `dark_background` for the whole session.
+    - `rankine_hugoniot`: its eleven exports carry their units.
 - **If you set `HELIOAI_DATA_DIR` (the Docker image does), run `helioai migrate-storage`
   once after upgrading.** It moves the index, the catalogues and the profile from the
   default directory to the configured one, never overwrites, and can be re-run. The

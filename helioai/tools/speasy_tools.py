@@ -474,6 +474,26 @@ def _strip_score(results: list[dict]) -> list[dict]:
     return [{k: v for k, v in r.items() if k != "score"} for r in results]
 
 
+def _with_dataset_variables(results: list[dict]) -> list[dict]:
+    """Attach the sibling variables of the top hit's dataset to that hit.
+
+    Only the first hit: the point is to show the model what the dataset it found holds,
+    not to quadruple the payload. Best effort — an index without a BM25 corpus adds
+    nothing.
+    """
+    if not results:
+        return results
+    try:
+        from helioai.tools.rag import dataset_variables
+
+        siblings = dataset_variables(results[0].get("id") or "")
+    except Exception:
+        siblings = None
+    if siblings:
+        results[0]["dataset_variables"] = siblings
+    return results
+
+
 def _apply_window(results: list[dict], window: tuple[str, str] | None) -> list[dict]:
     """Flag and demote products whose published coverage misses the requested window.
 
@@ -557,7 +577,10 @@ def _search_parameters_sync(
             return {
                 "provider": provider,
                 "groups": [
-                    {"query": q, "results": _apply_window(_strip_score(r), window)}
+                    {
+                        "query": q,
+                        "results": _with_dataset_variables(_apply_window(_strip_score(r), window)),
+                    }
                     for q, r in zip(queries, batch, strict=False)
                 ],
             }
@@ -586,7 +609,7 @@ def _search_parameters_sync(
         return {
             "query": query,
             "provider": provider,
-            "results": _apply_window(_strip_score(results), window),
+            "results": _with_dataset_variables(_apply_window(_strip_score(results), window)),
         }
     except Exception as e:
         log.warning("RAG search failed (%s), falling back to speasy inventory scan", e)

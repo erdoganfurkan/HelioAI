@@ -658,3 +658,85 @@ def test_missing_index_message_is_plain_when_there_is_no_legacy_copy(monkeypatch
     msg = rag_module._index_missing_message()
     assert "helioai index" in msg
     assert "migrate-storage" not in msg
+
+
+# ── dataset variables ──────────────────────────────────────────────────────────
+
+
+def _seed_swe(collection) -> None:
+    """A slice of WI_H1_SWE as the index holds it, plus a neighbour dataset and an AMDA id."""
+    rng = np.random.default_rng(2)
+    ids = [
+        "cda/WI_H1_SWE/Proton_Np_moment",
+        "cda/WI_H1_SWE/Proton_W_nonlin",
+        "cda/WI_H1_SWE/Proton_VX_nonlin",
+        "cda/WI_H1_SWE/Proton_VY_nonlin",
+        "cda/WI_H1_SWE_RTN/Proton_Np_moment",
+        "amda/wnd_swe_n",
+    ]
+    vecs = rng.random((len(ids), 128)).astype("float32")
+    vecs = vecs / np.maximum(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9)
+    collection.add(
+        ids=ids,
+        embeddings=vecs.tolist(),
+        documents=["Wind SWE proton moment" for _ in ids],
+        metadatas=[{"name": i.rsplit("/", 1)[-1], "provider": i.split("/")[0]} for i in ids],
+    )
+
+
+def test_dataset_variables_lists_the_siblings_of_a_hit_and_nothing_from_next_door(isolated_rag):
+    """`WI_H1_SWE_RTN` shares a prefix string with `WI_H1_SWE`; it is another dataset."""
+    _seed_swe(isolated_rag)
+    out = rag_module.dataset_variables("cda/WI_H1_SWE/Proton_Np_moment")
+    assert out == {
+        "dataset": "cda/WI_H1_SWE",
+        "count": 4,
+        "variables": [
+            "Proton_Np_moment",
+            "Proton_VX_nonlin",
+            "Proton_VY_nonlin",
+            "Proton_W_nonlin",
+        ],
+    }
+
+
+def test_dataset_variables_is_capped_but_reports_the_total(isolated_rag):
+    _seed_swe(isolated_rag)
+    out = rag_module.dataset_variables("cda/WI_H1_SWE/Proton_Np_moment", cap=2)
+    assert out["count"] == 4 and len(out["variables"]) == 2
+
+
+def test_an_amda_id_has_no_dataset_level_to_list(isolated_rag):
+    _seed_swe(isolated_rag)
+    assert rag_module.dataset_variables("amda/wnd_swe_n") is None
+    assert rag_module.dataset_of("amda/wnd_swe_n") is None
+
+
+def test_search_parameters_attaches_the_dataset_variables_to_the_top_hit_only(
+    isolated_rag, monkeypatch
+):
+    """The model that found `Proton_Np_moment` reads the SWE variable list in the same
+    result and stops guessing names like `Proton_Temp`."""
+    from helioai.tools import speasy_tools
+
+    _seed_swe(isolated_rag)
+    hits = [
+        {"id": "cda/WI_H1_SWE/Proton_Np_moment", "name": "nm", "score": 1.0},
+        {"id": "cda/WI_H1_SWE_RTN/Proton_Np_moment", "name": "nm", "score": 0.9},
+    ]
+    monkeypatch.setattr(rag_module, "search", lambda *a, **k: [dict(h) for h in hits])
+    monkeypatch.setattr(
+        rag_module, "search_batch", lambda qs, **k: [[dict(h) for h in hits] for _ in qs]
+    )
+
+    single = speasy_tools._search_parameters_sync(query="wind swe density")
+    assert single["results"][0]["dataset_variables"]["variables"] == [
+        "Proton_Np_moment",
+        "Proton_VX_nonlin",
+        "Proton_VY_nonlin",
+        "Proton_W_nonlin",
+    ]
+    assert "dataset_variables" not in single["results"][1]
+
+    batch = speasy_tools._search_parameters_sync(queries=["density", "velocity"])
+    assert all("dataset_variables" in g["results"][0] for g in batch["groups"])

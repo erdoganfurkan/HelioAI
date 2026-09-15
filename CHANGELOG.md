@@ -118,6 +118,13 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Added
 
+- **A search result lists the variables of the dataset it found.** The top hit of each
+  `search_parameters` query carries `dataset_variables`: every indexed variable of its
+  dataset by name (`cda/WI_H1_SWE` → `Proton_Np_moment`, `Proton_VX_nonlin`,
+  `Proton_W_nonlin`, … 41 in all, capped at 40 with the total). One search then shows
+  what the dataset holds, and a name that is not in the list does not exist under it —
+  the model that found `Proton_Np_moment` no longer asks eleven more times for a
+  `Proton_Temp` SWE never had.
 - **A role that keeps searching instead of downloading is told to stop.** A
   `data_analyst` spent all twelve of its turns on `search_parameters`, re-asking for
   `Proton_Temp` and `Proton_V_GSE_moment` — names it imagined, which SWE does not have —

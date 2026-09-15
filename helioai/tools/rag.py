@@ -168,6 +168,46 @@ def _load_bm25():
 # How many out-of-filter hits to append when a provider filter is in force.
 _CROSS_PROVIDER_EXTRA = 2
 
+# How many sibling variables of a hit's dataset are listed alongside it.
+DATASET_VARIABLES_CAP = 40
+
+
+def dataset_of(product_id: str) -> str | None:
+    """The dataset a product id belongs to: `cda/WI_H1_SWE/Proton_W_nonlin` → `cda/WI_H1_SWE`.
+
+    A CDA or CSA id is `provider/DATASET/variable`; an AMDA id is `amda/variable` and has
+    no dataset level to list, so None.
+    """
+    parts = product_id.split("/")
+    return "/".join(parts[:2]) if len(parts) >= 3 else None
+
+
+def dataset_variables(product_id: str, cap: int = DATASET_VARIABLES_CAP) -> dict | None:
+    """Every indexed variable of the dataset a hit belongs to, by name.
+
+    A search that lands on `WI_H1_SWE/Proton_Np_moment` has found the dataset; the model
+    then asked twelve times for variables it imagined the dataset had (`Proton_Temp`,
+    `Proton_V_GSE_moment`) instead of reading what it does have. Listing the siblings
+    with the hit makes one search enough: the names are right there, and a name that is
+    not in the list does not exist under that dataset.
+
+    Args:
+        product_id: A hit's id.
+        cap: How many variables to list; the total is reported either way.
+
+    Returns:
+        `{"dataset": "cda/WI_H1_SWE", "count": 41, "variables": ["Proton_Np_moment", …]}`
+        or None for an id with no dataset level, or when the corpus is not loaded.
+    """
+    dataset = dataset_of(product_id)
+    if dataset is None or _load_bm25() is None:
+        return None
+    prefix = dataset + "/"
+    names = sorted(pid[len(prefix) :] for pid in _bm25_ids if pid.startswith(prefix))
+    if not names:
+        return None
+    return {"dataset": dataset, "count": len(names), "variables": names[:cap]}
+
 
 def _provider_of(param_id: str) -> str:
     """Provider prefix of a speasy id — `csa/C3_.../density` → `csa`."""

@@ -681,11 +681,17 @@ def _provider_model_safe() -> tuple[str, str]:
 
 
 async def _drive(session_id: str, text: str) -> dict:
-    """One question end to end, as `helioai/interfaces/cli.py::_run_query` does it."""
+    """One question end to end, as `helioai/interfaces/cli.py::_run_query` does it.
+
+    Remote MCP tools are discovered inside the question's own event loop, as the CLI
+    does: a client session bound to a loop that has since closed cannot be called.
+    """
     import helioai.tools.setup  # noqa: F401
     from helioai.core.agent_loop import stream_chat
     from helioai.core.llm.factory import build_llm_client
+    from helioai.tools.mcp_client import discover_and_register
 
+    await discover_and_register()
     llm = build_llm_client()
     n_events = 0
     last_kind = None
@@ -715,10 +721,8 @@ def live_runner(session_id: str, text: str) -> dict:
 
 def cmd_run(args: argparse.Namespace) -> int:
     from helioai.logging_config import setup_logging
-    from helioai.tools.mcp_client import discover_and_register
 
     setup_logging("WARNING")
-    asyncio.run(discover_and_register())
     questions = load_questions(Path(args.questions), args.only)
     print(f"{len(questions)} question(s) × {args.n} → {args.out}", flush=True)
     run_batch(

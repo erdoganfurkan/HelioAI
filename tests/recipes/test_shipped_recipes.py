@@ -50,6 +50,8 @@ def _sep_flux(onset_index=400, n=900):
 
 @pytest.mark.parametrize("name", RECIPE_NAMES)
 def test_recipe_runs_with_its_own_self_checks(recipe, name):
+    """As `run_recipe` runs it (`__name__ == "recipe"`, demos off) and as a script
+    (`__main__`, demos on): both paths execute, self-checks included."""
     inputs = {}
     if name == "superposed_epoch":
         inputs["events"] = _events()
@@ -58,6 +60,7 @@ def test_recipe_runs_with_its_own_self_checks(recipe, name):
     if name == "solar_mach":
         pytest.importorskip("solarmach")
     recipe(name, **inputs)
+    recipe(name, __name__="__main__", **inputs)
 
 
 # ── theta_bn ──────────────────────────────────────────────────────────────────
@@ -220,9 +223,16 @@ def test_superposed_epoch_median_of_scaled_copies_is_the_middle_copy(recipe):
     assert (run.value("epoch_q25") <= median).all() and (median <= run.value("epoch_q75")).all()
 
 
-def test_superposed_epoch_survives_gapped_events(recipe):
+def test_superposed_epoch_keeps_a_gap_shared_by_every_event_as_a_gap(recipe):
+    """The six events all lack samples 20:25. The composite used to be finite there —
+    `np.interp` bridged each hole with a straight line and the median of six bridges
+    looked like a measurement. Now no event contributes at those epochs, so the median
+    is NaN there, `epoch_n` is 0 there, and the composite is intact everywhere else."""
     run = recipe("superposed_epoch", events=_events(6, gap=True))
-    assert np.isfinite(run.value("epoch_median")).all()
+    median, n = run.value("epoch_median"), run.value("epoch_n")
+    hole = n == 0
+    assert hole.any() and np.isnan(median[hole]).all()
+    assert np.isfinite(median[~hole]).all() and (n[~hole] == 6).all()
 
 
 # ── sep_onset_poisson_cusum ───────────────────────────────────────────────────

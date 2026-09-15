@@ -125,10 +125,8 @@ def _exporting_runs(recipe) -> dict[str, dict]:
         "walen_test": recipe(
             "walen_test", V=v_a + np.array([-400.0, 30.0, -10.0]), B=b_rot, n_cm3=n_cm3
         ),
-        "superposed_epoch": recipe("superposed_epoch", events=_events(), units="nT"),
-        "sep_onset_poisson_cusum": recipe(
-            "sep_onset_poisson_cusum", flux=_sep_flux(), units="1/(cm2 s sr MeV)"
-        ),
+        "superposed_epoch": recipe("superposed_epoch", events=_events()),
+        "sep_onset_poisson_cusum": recipe("sep_onset_poisson_cusum", flux=_sep_flux()),
         "pressure_balance": recipe("pressure_balance", n_sw=5.0, V_sw=400.0, B_sw=5.0),
         "pitch_angle_dist": recipe(
             "pitch_angle_dist", V=rng.normal(0, 1, (2000, 3)), B=np.array([0.0, 0.0, 10.0])

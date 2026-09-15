@@ -1,13 +1,18 @@
 # name: mvab
 # description: Minimum Variance Analysis of B (MVAB) — finds the coordinate system where Bn variance is minimum, giving the current-sheet or discontinuity normal.
 # inputs: B (magnetic field array shape (N,3) in nT)
-# outputs: mvab_ratio_int_min, mvab_lambda_min, mvab_dphi_min_int, mvab_dphi_min_max, mvab_normal
+# outputs: mvab_ratio_int_min, mvab_lambda_min, mvab_dphi_min_int, mvab_dphi_min_max, mvab_dBn, mvab_normal
 # reference: Sonnerup & Scheible (1998), "Minimum and Maximum Variance Analysis", in Analysis Methods for Multi-Spacecraft Data, ISSI SR-001, ch. 8, eq. 8.23-8.24 for the uncertainties.
 
 """Minimum Variance Analysis of the magnetic field (MVAB).
 
 MVAB finds the eigenvectors of the magnetic variance matrix M:
     M_ij = <Bi * Bj> - <Bi> * <Bj>
+
+The brackets are the Sonnerup & Scheible convention: divide by N, not by N−1.
+That normalisation matters for the λ_min/(N−1) term in Δ<B·n>, so the recipe
+uses the population covariance explicitly instead of numpy's default sample
+covariance.
 
 Eigenvalues λ_min < λ_int < λ_max:
 - λ_min → minimum variance direction (shock/current-sheet normal n)
@@ -36,15 +41,13 @@ def _angle_error(lam_i, lam_j, lam_min, n_samples, floor):
     numerator = max(lam_i + lam_j - lam_min, 0.0)
     denominator = (lam_i - lam_j) ** 2
     if denominator <= floor**2:
-        return float("inf")
+        return float("nan")
     variance = max(lam_min, 0.0) / (n_samples - 1) * numerator / denominator
     return float(np.sqrt(max(variance, 0.0)))
 
 
-def _angle_projection_term(angle_rad, mean_component, floor):
-    if np.isfinite(angle_rad):
-        return (angle_rad * mean_component) ** 2
-    return float("inf") if abs(mean_component) > floor else 0.0
+def _angle_projection_term(angle_rad, mean_component):
+    return (angle_rad * mean_component) ** 2
 
 
 def mvab(B):
@@ -58,9 +61,9 @@ def mvab(B):
     Returns
     -------
     dict
-        Eigenvalues and eigenvectors of the sample covariance matrix, the raw
-        eigenvalue ratios, a quality label, the Sonnerup-Scheible angular
-        uncertainty of the normal in degrees, and Δ<B·n> in nT.
+        Eigenvalues and eigenvectors of the Sonnerup-Scheible covariance matrix,
+        the raw eigenvalue ratios, a quality label, the angular uncertainty of
+        the normal in degrees, and Δ<B·n> in nT.
     """
     B = np.asarray(B, dtype=float)
     if B.ndim != 2 or B.shape[1] < 3:
@@ -70,8 +73,10 @@ def mvab(B):
     N = B.shape[0]
     if N < 2:
         return {"error": "B must contain at least two samples"}
+    if not np.isfinite(B).all():
+        return {"error": "B must contain only finite values"}
 
-    M = np.cov(B.T)   # 3×3 variance matrix
+    M = np.cov(B.T, bias=True)   # 3×3 S&S variance matrix, normalised by N
 
     eigenvalues, eigenvectors = np.linalg.eigh(M)   # ascending order
 
@@ -85,20 +90,30 @@ def mvab(B):
 
     ratio_int_min = float(lam_int / lam_min) if lam_min > 0 else float("inf")
     ratio_max_int = float(lam_max / lam_int) if lam_int > 0 else float("inf")
+    gap_min_int = lam_int - lam_min
 
-    dphi_min_int = _angle_error(lam_int, lam_min, lam_min, N, eigenvalue_floor)
-    dphi_min_max = _angle_error(lam_max, lam_min, lam_min, N, eigenvalue_floor)
+    if lam_min <= eigenvalue_floor or gap_min_int <= eigenvalue_floor:
+        dphi_min_int = float("nan")
+        dphi_min_max = float("nan")
+    else:
+        dphi_min_int = _angle_error(lam_int, lam_min, lam_min, N, eigenvalue_floor)
+        dphi_min_max = _angle_error(lam_max, lam_min, lam_min, N, eigenvalue_floor)
     B_mean = B.mean(axis=0)
     B_int_mean = float(np.dot(B_mean, n_int))
     B_max_mean = float(np.dot(B_mean, n_max))
-    dBn = np.sqrt(
-        max(lam_min, 0.0) / (N - 1)
-        + _angle_projection_term(dphi_min_int, B_int_mean, eigenvalue_floor)
-        + _angle_projection_term(dphi_min_max, B_max_mean, eigenvalue_floor)
-    )
+    if np.isfinite(dphi_min_int) and np.isfinite(dphi_min_max):
+        dBn = np.sqrt(
+            max(lam_min, 0.0) / (N - 1)
+            + _angle_projection_term(dphi_min_int, B_int_mean)
+            + _angle_projection_term(dphi_min_max, B_max_mean)
+        )
+    else:
+        dBn = float("nan")
 
-    if lam_min <= eigenvalue_floor:
-        quality = "degenerate — λ_min is numerically zero/non-positive, normal poorly constrained"
+    if gap_min_int <= eigenvalue_floor:
+        quality = "degenerate — λ_int ≈ λ_min, normal not unique"
+    elif lam_min <= eigenvalue_floor:
+        quality = "planar — normal unique, uncertainty undefined (λ_min ≈ 0)"
     elif ratio_int_min > 5:
         quality = "well-determined normal (λ_int/λ_min > 5)"
     elif ratio_int_min > 2:
@@ -158,6 +173,7 @@ if B is not None:
         export("mvab_lambda_min", np.array([result["lambda_min"]]), "nT2")
         export("mvab_dphi_min_int", np.array([result["dphi_min_int_deg"]]), "deg")
         export("mvab_dphi_min_max", np.array([result["dphi_min_max_deg"]]), "deg")
+        export("mvab_dBn", np.array([result["dBn_nT"]]), "nT")
         export("mvab_normal", np.array(result["normal_n_min"]), "")
         if "warning" in result:
             print(result["warning"])

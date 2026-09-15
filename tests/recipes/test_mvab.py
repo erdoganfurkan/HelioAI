@@ -22,6 +22,18 @@ def _anisotropic_cloud(n=300):
     )
 
 
+def _orthogonal_four_point_cloud(variances):
+    sx, sy, sz = np.sqrt(variances)
+    return np.array(
+        [
+            [sx, sy, sz],
+            [sx, -sy, -sz],
+            [-sx, sy, -sz],
+            [-sx, -sy, sz],
+        ]
+    )
+
+
 def test_mvab_normal_uncertainty_matches_sonnerup_scheible(recipe):
     mvab = recipe("mvab").namespace["mvab"]
     b = _anisotropic_cloud()
@@ -48,6 +60,19 @@ def test_mvab_normal_uncertainty_matches_sonnerup_scheible(recipe):
     assert result["dBn_nT"] == pytest.approx(expected_dBn, rel=1e-6)
 
 
+def test_mvab_uses_sonnerup_scheible_covariance_for_normal_component_uncertainty(recipe):
+    mvab = recipe("mvab").namespace["mvab"]
+    b = _orthogonal_four_point_cloud(np.array([100.0, 10.0, 1.0]))
+    result = mvab(b)
+
+    centered = b - b.mean(axis=0)
+    covariance = centered.T @ centered / len(b)
+    lam3 = np.linalg.eigvalsh(covariance)[0]
+    expected = np.sqrt(lam3 / (len(b) - 1))
+
+    assert result["dBn_nT"] == pytest.approx(expected, abs=1e-6)
+
+
 def test_mvab_warns_when_fewer_than_thirty_samples(recipe):
     mvab = recipe("mvab").namespace["mvab"]
     result = mvab(_anisotropic_cloud(n=12))
@@ -55,22 +80,33 @@ def test_mvab_warns_when_fewer_than_thirty_samples(recipe):
     assert result["warning"] == "fewer than 30 samples — eigenvalue ratios unreliable"
 
 
-def test_mvab_classifies_numerically_zero_minimum_variance_as_degenerate(recipe):
+def test_mvab_reports_a_planar_cloud_as_unique_but_not_estimable(recipe):
     mvab = recipe("mvab").namespace["mvab"]
-    rng = np.random.default_rng(3)
-    b = np.column_stack(
-        [
-            rng.normal(0, 10, 200),
-            rng.normal(0, np.sqrt(10), 200),
-            np.zeros(200),
-        ]
-    )
+    result = mvab(_orthogonal_four_point_cloud(np.array([100.0, 10.0, 0.0])))
 
-    result = mvab(b)
+    assert result["lambda_min"] == pytest.approx(0.0, abs=1e-12)
+    assert result["quality"].startswith("planar")
+    assert np.isnan(result["dphi_min_int_deg"])
+    assert np.isnan(result["dphi_min_max_deg"])
+
+
+def test_mvab_reports_repeated_smallest_eigenvalues_as_degenerate(recipe):
+    mvab = recipe("mvab").namespace["mvab"]
+    result = mvab(_orthogonal_four_point_cloud(np.array([100.0, 0.0, 0.0])))
 
     assert result["lambda_min"] == pytest.approx(0.0, abs=1e-12)
     assert result["quality"].startswith("degenerate")
-    assert not result["quality"].startswith("well-determined")
+    assert np.isnan(result["dphi_min_int_deg"])
+
+
+def test_mvab_returns_an_error_for_non_finite_input(recipe):
+    mvab = recipe("mvab").namespace["mvab"]
+    b = _anisotropic_cloud()
+    b[4, 1] = np.nan
+
+    result = mvab(b)
+
+    assert result == {"error": "B must contain only finite values"}
 
 
 def test_mvab_run_block_only_exports_when_b_is_bound(recipe):
@@ -82,6 +118,7 @@ def test_mvab_run_block_only_exports_when_b_is_bound(recipe):
     assert run.exports["mvab_lambda_min"]["units"] == "nT2"
     assert run.exports["mvab_dphi_min_int"]["units"] == "deg"
     assert run.exports["mvab_dphi_min_max"]["units"] == "deg"
+    assert run.exports["mvab_dBn"]["units"] == "nT"
     assert run.exports["mvab_normal"]["units"] == ""
     assert run.value("mvab_normal").shape == (3,)
 

@@ -27,7 +27,9 @@ simple demonstrations. Detection begins after the background window so spikes
 used to estimate the background cannot themselves seed the CUSUM run.
 Missing samples do not count toward the required run of finite above-threshold
 samples; more than ``gap_reset`` consecutive missing samples reset that run
-counter but not the CUSUM state.
+counter and the CUSUM state. After a gap longer than ``gap_reset`` samples the
+detector restarts; an onset that straddles such a gap is reported as
+indeterminate through ``onset_indeterminate``.
 
 Usage inside run_python:
     flux = load_data("erne_protons")
@@ -100,45 +102,85 @@ def background_stats(x, t, bg_hours, robust):
     return mu, sigma, bg_mask
 
 
-def cusum_poisson(x, mu, mu_d):
+def cusum_poisson(x, mu, mu_d, gap_reset=5):
     """Compute the raw Poisson CUSUM used for SEP onset timing.
 
     The returned series is in the same units as ``x`` because the
     Huttunen-Heikinmaa et al. recurrence uses ``x_i - k`` directly. Non-finite
-    samples keep the previous state, so they cannot add or remove evidence.
+    samples keep the previous state. A gap longer than ``gap_reset`` samples
+    restarts the detector from zero at the next finite sample.
     """
 
     x = np.asarray(x, dtype=float)
     k = _poisson_reference_value(float(mu), float(mu_d))
     cusum = np.zeros_like(x, dtype=float)
+    gap = 0
     for i in range(x.size):
         previous = cusum[i - 1] if i else 0.0
         if np.isfinite(x[i]):
+            if gap > int(gap_reset):
+                previous = 0.0
+            gap = 0
             cusum[i] = max(0.0, previous + x[i] - k)
         else:
+            gap += 1
             cusum[i] = previous
     return cusum
 
 
-def cusum_zscore(x, mu, sigma, k):
+def cusum_zscore(x, mu, sigma, k, gap_reset=5):
     """Compute the optional Page CUSUM on standardized intensity residuals.
 
     This preserves the previous recipe behaviour: values are converted to
     ``(x - mu)/sigma`` and the Poisson reference value, shifted into z-units by
     the caller, is subtracted from each finite sample. Non-finite samples keep
-    the previous state.
+    the previous state. A long gap restarts the detector from zero at the next
+    finite sample.
     """
 
     x = np.asarray(x, dtype=float)
     z = (x - float(mu)) / float(sigma)
     cusum = np.zeros_like(x, dtype=float)
+    gap = 0
     for i in range(x.size):
         previous = cusum[i - 1] if i else 0.0
         if np.isfinite(z[i]):
+            if gap > int(gap_reset):
+                previous = 0.0
+            gap = 0
             cusum[i] = max(0.0, previous + z[i] - float(k))
         else:
+            gap += 1
             cusum[i] = previous
     return cusum
+
+
+def evidence_straddles_long_gap(cusum, h, finite, gap_reset=5):
+    """Return true when above-threshold evidence is cut off by a long data gap.
+
+    A CUSUM excursion followed by a long hole is not a confirmed onset and must
+    not be joined to quiet samples on the far side. Marking it indeterminate is
+    more honest than silently dropping the interrupted evidence.
+    """
+
+    cusum = np.asarray(cusum)
+    finite = np.asarray(finite, dtype=bool)
+    if finite.size != cusum.size:
+        raise ValueError(f"finite mask length differs from CUSUM length: {finite.size} != {cusum.size}")
+
+    gap = 0
+    above_before_gap = False
+    for i, is_finite in enumerate(finite):
+        if is_finite:
+            if gap > int(gap_reset) and above_before_gap:
+                return True
+            gap = 0
+            above_before_gap = False
+            continue
+        if gap == 0:
+            above_before_gap = i > 0 and cusum[i - 1] > float(h)
+        gap += 1
+    return gap > int(gap_reset) and above_before_gap
 
 
 def first_run_above(cusum, h, m_consecutive, finite=None, gap_reset=5):
@@ -222,19 +264,20 @@ detect_start = int(np.where(bg_mask)[0][-1]) + 1
 cusum = np.zeros_like(x, dtype=float)
 if detect_start < x.size:
     if method_used == "poisson":
-        cusum[detect_start:] = cusum_poisson(x[detect_start:], mu, mu_d)
+        cusum[detect_start:] = cusum_poisson(x[detect_start:], mu, mu_d, gap_reset=gap_reset)
         threshold = float(h) if h is not None else h_sigma * sigma
         threshold_label = f"h = {threshold:g}"
     else:
         k_raw = _poisson_reference_value(mu, mu_d) if mu > 0.0 else mu_d / 2.0
         k = (k_raw - mu) / sigma
-        cusum[detect_start:] = cusum_zscore(x[detect_start:], mu, sigma, k)
+        cusum[detect_start:] = cusum_zscore(x[detect_start:], mu, sigma, k, gap_reset=gap_reset)
         threshold = float(h) if h is not None else h_sigma
         threshold_label = f"h = {threshold:g}"
 else:
     threshold = float(h) if h is not None else (h_sigma * sigma if method_used == "poisson" else h_sigma)
     threshold_label = f"h = {threshold:g}"
 
+onset_indeterminate = evidence_straddles_long_gap(cusum, threshold, finite, gap_reset=gap_reset)
 onset_idx = first_run_above(cusum, threshold, m_consecutive, finite=finite, gap_reset=gap_reset)
 
 fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(9, 6))
@@ -258,6 +301,8 @@ else:
     onset_time = None
     ax1.set_title(f"SEP onset ({method_used} CUSUM): no onset found")
     print("no onset found — lower h/h_sigma/n_sigma or check the background window")
+if onset_indeterminate:
+    print("onset_indeterminate = True — CUSUM evidence crossed a gap longer than gap_reset")
 
 ax1.legend(loc="upper left")
 ax2.legend(loc="upper left")

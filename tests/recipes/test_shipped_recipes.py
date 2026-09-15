@@ -1,15 +1,18 @@
 """Every shipped recipe runs offline, and computes the right thing on inputs whose
 answer is known.
 
-Two layers. `test_recipe_runs_with_its_own_self_checks` executes each script the way the
-sandbox would — placeholders, `if __name__ == "__main__"` demos and the `assert`s several
-recipes carry all run. The synthetic tests below then feed each method an input built
+Two layers. `test_recipe_runs_with_its_own_self_checks` executes each script twice: the
+way `run_recipe` does (`__name__ == "recipe"`, guarded demos off, nothing exported unless
+an input is bound) and as a script (`__main__`, demos on), the `assert`s several recipes
+carry running both times. The synthetic tests below then feed each method an input built
 from the textbook definition and check the number that comes out, so a regression in
 the physics is caught here and not at a demo.
 
-What these tests do NOT assert is left deliberately open for the scientific review in
-the integration plan: the Walén frame (mean-subtracted, not de Hoffmann-Teller), the
-`pressure_balance` reference field, the SEA's interpolation across gaps.
+The corrections the scientific review asked for — the de Hoffmann-Teller frame of the
+Walén test, the derived `pressure_balance` reference field, the SEA that keeps a gap a
+gap, the MVAB uncertainties, the Poisson CUSUM on intensities, the equal-solid-angle
+pitch-angle bins, the shock-time windows of `theta_bn` — each have their own file,
+`tests/recipes/test_<recipe>.py`; this one keeps the textbook cases.
 """
 
 from __future__ import annotations
@@ -198,7 +201,7 @@ def test_pitch_angles_are_ninety_degrees_for_velocities_perpendicular_to_b(recip
     b = np.array([0.0, 0.0, 10.0])
     pa_deg, counts, edges = ns["compute_pad"](v, b)
     assert np.allclose(pa_deg, 90.0)
-    # counts are normalised by sin(α): all the weight sits in the bin containing 90°
+    # equal-solid-angle bins by default: all the weight sits in the bin containing 90°
     assert np.argmax(counts) == np.searchsorted(edges, 90.0, side="right") - 1
     assert counts[np.argmax(counts)] > 0 and np.count_nonzero(counts) == 1
 

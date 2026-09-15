@@ -130,7 +130,12 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   reference. A recipe whose demo is guarded by `if __name__ == "__main__":` runs its
   functions, not its demo. `data_analyst` and `plasma_physicist` may call it; a recipe run
   this way is exempt from the recipe check. Tested in the real sandbox on the shapes the
-  data actually has — a Wind SWE scalar is `(N, 1)`.
+  data actually has — a Wind SWE scalar is `(N, 1)`. The `data_analyst` and
+  `plasma_physicist` instructions now say to run a recipe this way and to use
+  `load_recipe` only to read one; the lead's closing instruction says what a claim's
+  `source` is (the exact `export()` name, or `asserted` for a number that was only
+  printed) and that a time, a date or an id is not a claim — the first live runs filed a
+  normal's components under the angle's export and a timestamp as a number.
 - **One agent loop.** `stream_chat` (the lead) and `stream_subagent` (a delegated role)
   were two copies of the same loop — call the model, start the tool calls, review the
   figures, emit the events, append the results — and drifted the way copies do. The loop

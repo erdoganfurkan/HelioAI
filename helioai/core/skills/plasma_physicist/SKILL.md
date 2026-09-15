@@ -2,17 +2,21 @@
 name: plasma_physicist
 description: Compute plasma physics quantities using PlasmaPy tools or run_python sandbox.
 when_to_use: The user wants to compute derived plasma quantities — plasma beta, gyrofrequency, Debye length, Alfvén speed, inertial length, power spectrum — or needs unit validation for plasma parameters.
-allowed_tools: [run_python, search_parameters, list_recipes, load_recipe]
+allowed_tools: [run_python, search_parameters, list_recipes, load_recipe, run_recipe]
 ---
 
 # Procedure — plasma physics calculations
 
 ## RULE ZERO — recipe before your own derivation
 
-For a standard, named computation, call `load_recipe(name)`, adapt it to your numbers,
-and paste it into `run_python`. Recipes carry their scientific reference, so the result
-is attributable rather than improvised — and they have already settled the frame and
-sign conventions that are easy to get wrong from memory.
+For a standard, named computation, run the recipe as shipped with
+`run_recipe(name, inputs, call)`: `inputs` binds what it reads (each value a Python
+expression evaluated in the sandbox, `load_data(...)` included), `call` applies one of
+its functions when the recipe is a library — e.g.
+`run_recipe("rankine_hugoniot", inputs={"n": "load_data('np')", "shock": "np.datetime64('2015-03-17T04:45')"}, call="rh_jump(*upstream_downstream(n.time, n.values, shock), ...)")`.
+Recipes carry their scientific reference, so the result is attributable rather than
+improvised — and they have already settled the frame and sign conventions that are easy
+to get wrong from memory.
 
 | Task | Recipe |
 |---|---|
@@ -23,9 +27,9 @@ sign conventions that are easy to get wrong from memory.
 | Magnetopause standoff from solar wind pressure | `pressure_balance` |
 | Pitch angle distribution | `pitch_angle_dist` |
 
-`load_recipe` returns the **source code** — it is not a function you can call inside the
-sandbox. Read it, adapt the variable names to your data, and include it in your
-`run_python` code.
+`load_recipe` returns the **source code**, for reading: use it to learn a recipe's
+inputs and function names, then run it with `run_recipe`. Do not paste the source into
+`run_python` — a pasted copy is what gets its windows and constants rewritten.
 
 Use `list_recipes()` when unsure what exists. Write your own derivation only when no
 recipe matches, and say so explicitly in the answer.
@@ -40,7 +44,7 @@ the upstream frame** — `(V_shock − V_upstream)/V_A`, not `V_shock/V_A`.
 
 | Task | Use |
 |---|---|
-| Standard named computation | `load_recipe` → `run_python` (see RULE ZERO) |
+| Standard named computation | `run_recipe(name, inputs, call)` (see RULE ZERO) |
 | Single-point estimate (β, f_ci, λ_D, V_A, d_i) | `plasma_beta`, `gyrofrequency`, `debye_length`, `alfven_speed`, `inertial_length` directly via `run_python` |
 | Time-series of a derived quantity | `load_data("name")` in `run_python`, computing per sample |
 | Power spectral density | `power_spectrum` via `run_python` |

@@ -105,16 +105,16 @@ FINAL_ANSWER_DEF = ToolDef(
                     "properties": {
                         "name": {
                             "type": "string",
-                            "description": "The export or dataset the number comes from, "
-                            "or a short label when it does not.",
+                            "description": "A short label for the quantity.",
                         },
                         "value": {"description": "The number as stated in the answer."},
                         "units": {"type": "string"},
                         "source": {
                             "type": "string",
-                            "description": "The export name it was computed as, "
-                            "'literature' for a published value, 'asserted' for a number "
-                            "you did not compute.",
+                            "description": "The exact export() name the number is recorded "
+                            "under; 'literature' for a published value; 'asserted' for a "
+                            "number that was printed, read off a plot or computed in your "
+                            "head and never exported.",
                         },
                     },
                     "required": ["name", "value"],

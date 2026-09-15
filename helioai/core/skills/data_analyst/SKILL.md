@@ -2,7 +2,7 @@
 name: data_analyst
 description: Download and analyze heliophysics time series — statistics, FFT, multi-mission comparison, event detection, plotting.
 when_to_use: The user wants to retrieve data, compute statistics, plot a time series, compare multiple missions, detect plasma events (shocks, reconnection, CME, SIR), or run any numerical analysis on speasy parameters.
-allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_recipe, run_python]
+allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_recipe, run_recipe, run_python]
 ---
 
 # Procedure — analyze a time series
@@ -11,14 +11,21 @@ allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_r
 A text description of a plot is not a figure. To produce a figure, call run_python with `plt.show()`.
 
 ## RULE ZERO-BIS — a computation with a recipe is NEVER hand-written, even when you already know the formula
-Knowing the physics is not the point — `load_recipe(name)` before writing a single line for any
-task in the table below, unconditionally. A recipe carries calibrated parameters (averaging
-windows, physical constants) and a self-test that code written from memory does not have. Getting
-the formula right from memory and still being wrong is exactly how this table earned its entries:
-a hand-written Rankine-Hugoniot on this same event guessed an eV→K conversion instead of using the
-constant, picked averaging windows the recipe's own calibration table flags as the worst
-combination, and landed 10% off a compression ratio the recipe gets exactly. Load first, adapt
-second — never the other way around.
+Knowing the physics is not the point — for any task in the table below, run the recipe as shipped
+with `run_recipe(name, inputs)`, unconditionally. `inputs` binds what the recipe reads, each value
+a Python expression evaluated in the sandbox: `run_recipe("theta_bn", inputs={"B": "load_data('b')",
+"shock_time": "np.datetime64('2015-03-17T04:00:00')"})` — the recipe derives its own averaging
+windows, computes, and exports; its exports are the numbers you report. For a recipe that is a
+library of functions (`rankine_hugoniot`, `shock_timing_2sc`, `pressure_balance`) add `call`, one
+expression applying its function to the inputs. `load_recipe(name)` is for *reading* a recipe when
+you need to know what it expects; do not paste its source into `run_python`. A recipe carries
+calibrated parameters (averaging windows, physical constants) and a self-test that code written
+from memory does not have. Getting the formula right from memory and still being wrong is exactly
+how this table earned its entries: a hand-written Rankine-Hugoniot on this same event guessed an
+eV→K conversion instead of using the constant, picked averaging windows the recipe's own
+calibration table flags as the worst combination, and landed 10% off a compression ratio the recipe
+gets exactly; three runs of θ_Bn on one shock, windows chosen by hand, gave 54.85°, 59.95° and
+64.27°.
 
 ## RULE ONE — download outside the sandbox, always
 Call `get_timeseries` (or `get_events_timeseries`) BEFORE `run_python` — the sandbox has a 60 s
@@ -32,7 +39,7 @@ using one also gives you provenance.
 
 | Task | Recipe |
 |---|---|
-| Shock normal angle θ_Bn | `theta_bn` |
+| Shock normal angle θ_Bn | `theta_bn` — bind `B` (the downloaded series) and `shock_time`; the recipe derives 8-minute windows clear of the ramp and refuses a window that contains it. Bind `B_up`/`B_dn` yourself only when the user specifies the windows. |
 | Discontinuity / current-sheet normal (minimum variance) | `mvab` |
 | Shock jump conditions, compression ratio, shock speed | `rankine_hugoniot` — **also picks the upstream/downstream averaging windows**; call `upstream_downstream(t, values, shock_time)` per quantity and never pass averages you computed yourself. Choosing those windows by hand is where this analysis goes wrong: a generous guard band with a long window sounds careful, lands in the decaying sheath, and returns a compression of 1.89 instead of 2.59 with every downstream number wrong. |
 | Rotational vs tangential discontinuity | `walen_test` |
@@ -115,9 +122,10 @@ If `get_timeseries` returns a `quality` block with `notable: true`, report it (m
 
 ## Superposed epoch (catalog → SEA)
 1. `get_events_timeseries(catalog_id, param_id, start, stop)` — persists all events, returns a `dataset` key.
-2. `load_recipe("superposed_epoch")`.
-3. run_python: `events = load_data("<param_last_segment>_events")` (list of `ns(time, values, start, stop)`),
-   set `component` (0/1/2 for Bx/By/Bz, scalar handled too), paste the recipe. Never re-fetch — events are already persisted.
+2. `run_recipe("superposed_epoch", inputs={"events": "load_data('<param_last_segment>_events')", "component": 2})`
+   — `component` 0/1/2 for Bx/By/Bz (a scalar is handled). The recipe keeps a data gap a gap and
+   exports the median, quartiles, a bootstrap CI and the count of contributing events per epoch.
+   Never re-fetch — events are already persisted.
 
 ## Event detection
 Implement threshold / derivative / boundary criteria in run_python; report event times and key

@@ -1,0 +1,32 @@
+[
+ {
+  "id": "wind_shock_2004",
+  "family": "event_detection",
+  "text": "Find an interplanetary shock in WIND data around 2004-11-07 and compute θ_Bn",
+  "expects": "Several shocks on 2004-11-07 — 10:03 UT (weak, quiet upstream) and 17:59 UT (strong, SSC 18:27 UT driver). A good answer names which one it took and why, states the crossing time, the normal and θ_Bn with an uncertainty, and lists the Wind MFI/SWE ids it used. Across repetitions the key metric is whether the runs agree on the shock (times_utc) and on θ_Bn."
+ },
+ {
+  "id": "mms1_position_2019",
+  "family": "position",
+  "text": "Where was MMS1 on 2019-02-27 12:00? Plot its GSM position against the Shue magnetopause and the Jelinek bow shock",
+  "expects": "A GSM position in R_E at 12:00 UT from an MMS1 ephemeris product (MEC), a figure with both model boundaries, and a statement of which region MMS1 was in. No delegation needed beyond one data role; no θ_Bn."
+ },
+ {
+  "id": "sea_icme_2015",
+  "family": "catalog_sea",
+  "text": "Superposed epoch analysis: find an AMDA catalog of interplanetary shocks or ICMEs observed at L1 in 2015 (use list_catalogs), take up to 15 events, download the OMNI or Wind IMF |B| across each event with get_events_timeseries, then run the superposed_epoch recipe on them. Report the median |B| profile and its peak.",
+  "expects": "list_catalogs → a shock/ICME catalogue → get_events_timeseries once (not 15 get_timeseries calls) → superposed_epoch recipe. The answer names the catalogue, the number of events kept, the median |B| peak value and its epoch offset."
+ },
+ {
+  "id": "thetabn_wind_2015",
+  "family": "recipe_thetabn",
+  "text": "For the interplanetary shock seen by Wind around 04:00 UT on 2015-03-17: find the 3-second MFI magnetic field in GSM, download 03:30–04:30 UT, plot |B| and Bz with the shock marked, then compute theta_Bn with the theta_bn recipe using 8-minute upstream and downstream averages clear of the ramp, and report the normal and the magnetic compression ratio.",
+  "expects": "The 2015-03-17 ~04:00 UT (St Patrick's Day storm) shock: a 3 s Wind MFI GSM product (WI_H3-RTN is wrong; H0/H2 GSM is right), a figure, θ_Bn from the theta_bn recipe with 8-min windows, the normal vector and B_down/B_up. Single shock, so θ_Bn should be stable across runs; the spread measures the analysis, not the pick."
+ },
+ {
+  "id": "plasma_beta_lead",
+  "family": "lead_only",
+  "text": "Plasma beta for B=5 nT, n=5 cm^-3, T=1e5 K",
+  "expects": "β ≈ 0.69 (n k T / (B²/2μ0), protons only; ≈1.39 counting electrons at the same T). Should be answered by the lead alone in one or two turns with the plasmapy tool or a recipe, no delegation, no download."
+ }
+]

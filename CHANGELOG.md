@@ -10,6 +10,11 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Fixed
 
+- **`superposed_epoch` no longer refuses `nT (1min)` against `nT`.** CDAWeb labels some
+  products with their cadence in parentheses after the unit; a live composite of Wind
+  `BF1` events was refused three times as "incompatible units" until the caller dropped
+  `units` altogether. A parenthesis that follows a unit is an annotation and is dropped
+  before units are compared or converted; `(nT)` alone is left as it is.
 - **The recipe check no longer accuses a run that used the sandbox's Shue or Jelínek
   model.** `mp_shue1998` and `bs_jelinek2012` are published boundary models shipped with
   their reference; a run that called one and exported `magnetopause_r_at_mms_Re` was

@@ -33,6 +33,8 @@ Usage inside run_python:
     # Then run this script. Set component=0 to select a single column of multi-component data.
 """
 
+import re
+
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -42,9 +44,20 @@ except ImportError:
     u = None
 
 
+_TRAILING_ANNOTATION = re.compile(r"^(?P<unit>.*\S)\s*\([^()]*\)$")
+
+
 def _unit_label(unit):
-    """Return the unit string attached to one event."""
-    return str(unit or "")
+    """Return the unit string attached to one event, without a trailing annotation.
+
+    CDAWeb labels some products `nT (1min)` or `nT (3sec)`: the parenthesis is the
+    cadence, not part of the unit, and left in place it made `nT (1min)` and `nT`
+    "incompatible". Only a parenthesis that *follows* a unit is dropped — `(nT)` alone
+    is kept as it is.
+    """
+    label = str(unit or "").strip()
+    m = _TRAILING_ANNOTATION.match(label)
+    return m.group("unit").strip() if m else label
 
 
 def _unit_list_for_message(units):

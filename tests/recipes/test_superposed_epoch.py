@@ -221,6 +221,23 @@ def test_superposed_epoch_refuses_incompatible_event_units(recipe):
     assert exports == {}
 
 
+def test_superposed_epoch_reads_a_cadence_annotation_as_part_of_the_label_not_the_unit(recipe):
+    """CDAWeb labels `WI_H0_MFI/BF1` as `nT (1min)`. A live run mixing it with plain `nT`
+    events was refused three times as "incompatible units" and only ran once the caller
+    dropped `units` altogether. The parenthesis is an annotation, not a unit."""
+    events = _constant_events([(1.0, "nT (1min)")] * 3 + [(1.0, "nT")] * 3)
+
+    run = recipe("superposed_epoch", events=events, units="nT", n_grid=11, n_boot=20)
+
+    assert run.exports["epoch_median"]["units"] == "nT"
+    assert np.allclose(run.value("epoch_median"), 1.0)
+
+    inferred = recipe(
+        "superposed_epoch", events=_constant_events([(1.0, "nT (1min)")] * 6), n_grid=11, n_boot=20
+    )
+    assert inferred.exports["epoch_median"]["units"] == "nT"
+
+
 def test_superposed_epoch_converts_event_units_to_caller_unit(recipe):
     events = _constant_events([(1.0, "nT")] * 6)
 

@@ -203,17 +203,38 @@ switched on alone and compared on the same questions, N runs each:
 def _parse_experiments(raw: str) -> frozenset[str]:
     """Parse HELIOAI_EXPERIMENTS='final_answer,deferred_tools' → the set of names.
 
-    Unknown names are an error, not a warning: an experiment that silently does nothing
-    would be measured as if it did, and the comparison would be wrong without anyone
-    knowing.
+    Kept lenient on purpose: this runs at `import helioai.config`, which must not fail —
+    the MCP server and the web app start from it before any model is built. A misspelt
+    name is refused by `validate_experiments`, called where the API key is already
+    validated (`build_llm_client`, `helioai doctor`), so nothing that runs the agent can
+    measure an experiment that silently does nothing.
     """
-    names = frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
-    unknown = names - EXPERIMENTS
+    return frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
+
+
+def validate_experiments(experiments: frozenset[str] | None = None) -> frozenset[str]:
+    """Refuse unknown experiment names — an error, not a warning.
+
+    An experiment that silently does nothing would be measured as if it did, and the
+    comparison would be wrong without anyone knowing.
+
+    Args:
+        experiments: The set to check; `settings.agent.experiments` when None.
+
+    Returns:
+        The same set, when every name is known.
+
+    Raises:
+        RuntimeError: Naming the unknown entries and the known ones.
+    """
+    if experiments is None:
+        experiments = settings.agent.experiments
+    unknown = experiments - EXPERIMENTS
     if unknown:
-        raise ValueError(
+        raise RuntimeError(
             f"HELIOAI_EXPERIMENTS: unknown {sorted(unknown)}; known: {sorted(EXPERIMENTS)}"
         )
-    return names
+    return experiments
 
 
 @dataclass

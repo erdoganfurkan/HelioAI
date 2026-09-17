@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from helioai.config import settings
+from helioai.config import settings, validate_experiments
 from helioai.core.llm.base import LLMClient
 
 _UUID_TOKEN = "{uuid}"
@@ -78,6 +78,7 @@ def build_llm_client(provider: str | None = None, model: str | None = None) -> L
         'OpenAICompatClient'
     """
     p = (provider or settings.llm.provider).lower()
+    validate_experiments()
 
     if p == "azure":
         from helioai.core.llm.azure_openai import AzureOpenAIClient

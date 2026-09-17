@@ -34,11 +34,25 @@ def test_experiments_parse_as_a_normalised_set(monkeypatch):
     assert config._load().agent.experiments == {"final_answer", "deferred_tools"}
 
 
-def test_an_unknown_experiment_is_refused_not_ignored(monkeypatch):
-    """A misspelt name that silently did nothing would be measured as if it ran."""
-    monkeypatch.setenv("HELIOAI_EXPERIMENTS", "final_answer,final_anwser")
-    with pytest.raises(ValueError, match="final_anwser"):
-        config._load()
+def test_an_unknown_experiment_is_refused_where_the_model_is_built(monkeypatch):
+    """`import helioai.config` must not fail on a typo — the MCP server and the web app
+    start from it before any model is built (PR #11 made the import key-free for that).
+    The refusal lives where the API key is already checked, and in `doctor`."""
+    from helioai.core.llm.factory import build_llm_client
+    from helioai.doctor import check_experiments
+
+    monkeypatch.setenv("HELIOAI_EXPERIMENTS", "final_anwser")
+    loaded = config._load()
+    assert loaded.agent.experiments == {"final_anwser"}
+    with pytest.raises(RuntimeError, match="final_anwser"):
+        config.validate_experiments(loaded.agent.experiments)
+
+    monkeypatch.setattr(settings.agent, "experiments", frozenset({"final_anwser"}))
+    with pytest.raises(RuntimeError, match="final_anwser"):
+        build_llm_client("groq")
+    assert check_experiments().status == "fail"
+    monkeypatch.setattr(settings.agent, "experiments", frozenset({"final_answer"}))
+    assert check_experiments().status == "ok"
 
 
 def test_every_experiment_the_code_consults_is_a_known_name():

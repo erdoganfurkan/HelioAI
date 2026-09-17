@@ -89,6 +89,18 @@ def check_provider() -> Check:
     return Check("llm provider", OK, f"{provider}: configured")
 
 
+def check_experiments() -> Check:
+    from helioai.config import validate_experiments
+
+    try:
+        names = validate_experiments()
+    except RuntimeError as e:
+        return Check("experiments", FAIL, str(e))
+    return Check(
+        "experiments", OK, ", ".join(sorted(names)) if names else "none (default behaviour)"
+    )
+
+
 def check_provider_online(timeout_s: float = 5.0) -> Check:
     """One GET to the provider's model list, for the OpenAI-compatible providers.
 
@@ -208,6 +220,7 @@ def run_checks(online: bool = False) -> list[Check]:
         "install",
         "env_file",
         "provider",
+        "experiments",
         "index",
         "sandbox",
         "speasy_inventory",

@@ -151,7 +151,8 @@ def _exporting_runs(recipe) -> dict[str, dict]:
 # `P_dyn_nPa` in "km/s" would parse; they would still be wrong provenance.
 EXPECTED_DIMENSION: dict[str, str] = {
     "theta_bn": "angle",
-    "theta_bn_std_deg": "angle",
+    "theta_bn_sampling_std_deg": "angle",
+    "theta_bn_window_spread_deg": "angle",
     "normal_spread_deg": "angle",
     "B_up_mean_nT": "magnetic flux density",
     "B_dn_mean_nT": "magnetic flux density",

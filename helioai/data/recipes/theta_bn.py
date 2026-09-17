@@ -1,7 +1,7 @@
 # name: theta_bn
 # description: Compute the shock normal angle theta_Bn from upstream and downstream magnetic field vectors.
-# inputs: B_up (array of shape (N,3) or (3,) in nT, upstream), B_dn (array of shape (N,3) or (3,), downstream); or B (series with .time and .values) plus shock_time; or B alone to list shock candidates; optional guard_min, span_min, n_candidates
-# outputs: theta_bn (deg), shock_normal, compression_ratio (magnetic |<B_dn>|/|<B_up>|), B_up_mean_nT, B_dn_mean_nT, theta_bn_std_deg, normal_spread_deg, Bn_std_nT
+# inputs: B_up (array of shape (N,3) or (3,) in nT, upstream), B_dn (array of shape (N,3) or (3,), downstream); or B (series with .time and .values) plus shock_time; or B alone to list shock candidates (optional density and speed series screen them); optional guard_min, span_min, n_candidates
+# outputs: theta_bn (deg), shock_normal, compression_ratio (magnetic |<B_dn>|/|<B_up>|), B_up_mean_nT, B_dn_mean_nT, theta_bn_window_spread_deg (B + shock_time only), theta_bn_sampling_std_deg, normal_spread_deg, Bn_std_nT
 # reference: Coplanarity theorem (Colburn & Sonett 1966); Schwartz (1998), "Shock and Discontinuity Normals, Mach Numbers and Related Parameters", ISSI SR-001, ch. 10.
 
 """Shock normal angle theta_Bn.
@@ -23,10 +23,16 @@ Usage with a measured crossing time, preferred because the recipe owns the windo
 Usage when the crossing time is not known yet — find it first, do not hunt for it with
 hand-written run_python cells (one live run spent nine of its twelve turns on that):
     B = load_data("b3gsm")
-    # Run this script with B alone: it prints the n_candidates largest |B| jumps over
-    # one-minute windows (time, jump in nT, downstream/upstream ratio) and stops. Look
-    # at them against the plot, pick one, then run again with shock_time set to it.
-    # The same list is available as a function: find_shock_candidates(B, n=5).
+    density = load_data("np")          # optional, strongly recommended
+    speed = load_data("vgse")          # optional; a vector or a scalar speed
+    # Run this script with B alone (plus density/speed when you have them): it prints a
+    # screening list of |B| jumps — time of the steepest rise, jump in nT, ratio — and,
+    # when plasma is given, whether density and speed jump with the field. A fast
+    # forward shock steps in all three at once; a sheath compression or a discontinuity
+    # steps in |B| alone, and on 2004-11-07 four such structures out-jumped both real
+    # shocks. Read the list against the plot, pick the crossing, then run again with
+    # shock_time set to it. The same list is available as a function:
+    # find_shock_candidates(B, n=10, density=density, speed=speed).
 
 Usage with windows already chosen by the analyst:
     B_up = var.values[mask_up]     # (N,3) over the upstream interval, or its mean 3-vector
@@ -45,12 +51,17 @@ the recipe reports repeatability diagnostics instead: bootstrap scatter in theta
 B · n̂ across both windows. Mean-vector inputs report these diagnostics as None and do not
 export them.
 
-The bootstrap resamples rows i.i.d.; that understates uncertainty for correlated plasma
-data, and it does not measure the live window-choice spread (54.85-64.27° on one shock).
-The shock_time path addresses that separate failure by fixing the windows and applying
-abrupt-step and trend checks. WINDOW_TREND_MAX is the allowed first-half to second-half
-|B| trend as a fraction of the between-window |B| jump. Those checks are heuristics,
-not proof that a window is stationary.
+The bootstrap (`theta_bn_sampling_std_deg`) resamples rows i.i.d. inside two FIXED windows.
+It measures how well the two means are determined by the samples in them — on 5 000 samples
+of 92 ms data it comes out at 0.2° — and nothing else. It is not the uncertainty of theta_Bn:
+at a fixed shock and a fixed method, the choice of averaging windows moved the answer by
+26° (41.5–68.0° over 49 guard/span conventions on the 2004-11-07 17:59 UT Wind shock, whose
+downstream sits in an ICME sheath) and by 2° on 2015-03-17 04:00 UT. So the shock_time path
+also evaluates the angle over a small grid of conventions around the one it uses and exports
+`theta_bn_window_spread_deg`, the half-range of that ensemble: the number to quote as "±".
+The two are named for what they measure so that neither can be read as the other.
+
+Those window checks (abrupt step, trend) are heuristics, not proof that a window is stationary.
 """
 
 import numpy as np
@@ -58,6 +69,11 @@ import numpy as np
 GUARD_MIN = 2.0
 SPAN_MIN = 8.0
 WINDOW_TREND_MAX = 0.25
+# The conventions the shock_time path re-evaluates the angle over. Chosen around the
+# default (2, 8) rather than as a wide sweep: the point is to expose how much the answer
+# depends on a defensible window choice, not to search for the extreme.
+SPREAD_GUARDS_MIN = (1.0, 2.0, 3.0)
+SPREAD_SPANS_MIN = (6.0, 8.0, 10.0, 12.0)
 
 if __name__ == "__main__" and "export" not in globals():
 
@@ -114,12 +130,12 @@ def _series_diagnostics(B_up, B_dn, n_hat):
     up = np.asarray(B_up, dtype=float)
     dn = np.asarray(B_dn, dtype=float)
     if up.ndim != 2 or dn.ndim != 2 or up.shape[1:] != (3,) or dn.shape[1:] != (3,):
-        return {"theta_bn_std_deg": None, "normal_spread_deg": None, "Bn_std_nT": None}
+        return {"theta_bn_sampling_std_deg": None, "normal_spread_deg": None, "Bn_std_nT": None}
 
     up_rows = up[_finite_row_mask(up)]
     dn_rows = dn[_finite_row_mask(dn)]
     if len(up_rows) < 5 or len(dn_rows) < 5:
-        return {"theta_bn_std_deg": None, "normal_spread_deg": None, "Bn_std_nT": None}
+        return {"theta_bn_sampling_std_deg": None, "normal_spread_deg": None, "Bn_std_nT": None}
 
     rng = np.random.default_rng(0)
     angles = []
@@ -133,14 +149,14 @@ def _series_diagnostics(B_up, B_dn, n_hat):
             normals.append(sample["shock_normal"])
 
     if not angles:
-        return {"theta_bn_std_deg": None, "normal_spread_deg": None, "Bn_std_nT": None}
+        return {"theta_bn_sampling_std_deg": None, "normal_spread_deg": None, "Bn_std_nT": None}
 
     normals = np.asarray(normals)
     dots = np.clip(np.abs(normals @ n_hat), -1.0, 1.0)
     spreads = np.degrees(np.arccos(dots))
     b_normal = np.concatenate([up_rows @ n_hat, dn_rows @ n_hat])
     return {
-        "theta_bn_std_deg": float(np.std(angles)),
+        "theta_bn_sampling_std_deg": float(np.std(angles)),
         "normal_spread_deg": float(np.percentile(spreads, 68)),
         "Bn_std_nT": float(np.std(b_normal)),
     }
@@ -162,7 +178,7 @@ def theta_bn(B_up, B_dn):
     dict with theta_bn_deg (degrees, 0-90), geometry ("quasi-parallel" below
     45 deg, "quasi-perpendicular" above), shock_normal (unit 3-vector),
     compression_ratio (the magnetic compression |<B_dn>| / |<B_up>|),
-    B_up_mean_nT and B_dn_mean_nT (the vectors actually used), and series-only diagnostics theta_bn_std_deg,
+    B_up_mean_nT and B_dn_mean_nT (the vectors actually used), and series-only diagnostics theta_bn_sampling_std_deg,
     normal_spread_deg and Bn_std_nT. On a NaN or zero input, or on collinear or
     identical vectors, the normal is undefined and the dict carries an "error"
     key and nothing else: a NaN used to flow through to theta_bn_deg and,
@@ -193,38 +209,107 @@ def theta_bn(B_up, B_dn):
 
 
 CANDIDATE_STEP_MIN = 1.0
+CANDIDATE_MIN_RATIO = 1.2
+SCREEN_DENSITY_RATIO_MIN = 1.2
+SCREEN_SPEED_JUMP_MIN_KM_S = 20.0
+SCREEN_GUARD_MIN = 2.0
+SCREEN_SPAN_MIN = 10.0
 
 
-def find_shock_candidates(B, n=5, search=None, step_min=CANDIDATE_STEP_MIN):
-    """The n largest |B| jumps of a series, as candidate shock crossings.
+def _series_parts(series):
+    if isinstance(series, tuple):
+        t, values = series
+    else:
+        t, values = series.time, series.values
+    t = np.asarray(t).astype("datetime64[ns]")
+    v = np.asarray(values, dtype=float)
+    mag = np.linalg.norm(v, axis=1) if v.ndim > 1 else v.ravel()
+    return t, mag
 
-    A fast forward shock is a step in |B| of a few nT completed within seconds; on a
-    day of 3-s data the biggest one-minute jumps are where to look. This is a screening
-    list, not a detection: a discontinuity, a sheath structure or a data edge can jump
-    too, and a reverse or slow shock steps down. Look at the candidates on the plot and
-    choose; the recipe never chooses for you.
+
+def _steepest_rise(t, mag, i0, i1):
+    """The sample of the largest single-step |B| increase in [i0, i1]: the ramp itself,
+    not the centre of the one-minute box that caught it."""
+    seg = mag[i0 : i1 + 1]
+    if seg.size < 2:
+        return t[i0]
+    d = np.diff(seg)
+    d = np.where(np.isfinite(d), d, -np.inf)
+    return t[i0 + int(np.argmax(d)) + 1]
+
+
+def _window_median(t, mag, t0, t1):
+    inside = (t >= t0) & (t <= t1)
+    vals = mag[inside]
+    vals = vals[np.isfinite(vals)]
+    return float(np.median(vals)) if vals.size >= 3 else float("nan")
+
+
+def _screen_candidate(time, density, speed):
+    """Whether density and speed jump across `time` the way they do at a fast forward
+    shock. Medians over the guard/span windows of the screen: robust to the odd fill."""
+    t0 = np.datetime64(time, "ns")
+    guard = np.timedelta64(int(SCREEN_GUARD_MIN * 60), "s")
+    span = np.timedelta64(int(SCREEN_SPAN_MIN * 60), "s")
+    out = {}
+    if density is not None:
+        t, n = _series_parts(density)
+        up = _window_median(t, n, t0 - guard - span, t0 - guard)
+        dn = _window_median(t, n, t0 + guard, t0 + guard + span)
+        out["n_ratio"] = round(dn / up, 3) if np.isfinite(up) and np.isfinite(dn) and up > 0 else None
+    if speed is not None:
+        t, v = _series_parts(speed)
+        up = _window_median(t, v, t0 - guard - span, t0 - guard)
+        dn = _window_median(t, v, t0 + guard, t0 + guard + span)
+        out["dV_km_s"] = round(dn - up, 1) if np.isfinite(up) and np.isfinite(dn) else None
+    checks = []
+    if "n_ratio" in out:
+        checks.append(out["n_ratio"] is not None and out["n_ratio"] >= SCREEN_DENSITY_RATIO_MIN)
+    if "dV_km_s" in out:
+        checks.append(out["dV_km_s"] is not None and out["dV_km_s"] >= SCREEN_SPEED_JUMP_MIN_KM_S)
+    if not checks:
+        out["screen"] = "unscreened (|B| only)"
+    elif all(checks):
+        out["screen"] = "fast-forward: n and V jump with |B|"
+    else:
+        out["screen"] = "not a fast-forward shock: |B| jumps alone"
+    return out
+
+
+def find_shock_candidates(
+    B, n=10, search=None, step_min=CANDIDATE_STEP_MIN, density=None, speed=None, min_ratio=CANDIDATE_MIN_RATIO
+):
+    """|B| jumps of a series that could be shock crossings, screened against the plasma.
+
+    A fast forward shock steps up in |B|, density and speed within seconds, together. A
+    sheath compression, a discontinuity or a data edge steps in |B| alone — and can step
+    further: on 2004-11-07 (Wind, 92 ms) four sheath structures out-jumped both real
+    shocks, so the largest |B| jump is not the shock and a list cut at five hid the second
+    one entirely. The list is therefore (1) every |B| rise above `min_ratio`, up to `n`,
+    largest first, and (2) when `density` and/or `speed` are given, three times as many
+    rises are examined, each entry says whether the plasma jumps with the field, and the
+    ones that pass are listed first — so a screened shock outranks a larger sheath jump. It remains a screening
+    list, not a detection: read it against the plot and choose. The recipe never chooses.
 
     Parameters
     ----------
     B : series with `.time` (datetime64) and `.values` ((N,) or (N, 3)), as `load_data`
         returns it, or a `(t, values)` pair.
-    n : how many candidates to return, best first.
+    n : at most how many candidates to return.
     search : optional (start, stop) datetime64 pair restricting the search.
     step_min : the window, in minutes, over which a jump is measured.
+    density, speed : optional series (same shapes as `B`; a vector speed is taken by its
+        magnitude) used to screen each candidate over guard 2 / span 10 minute windows.
+    min_ratio : the smallest after/before |B| ratio that counts as a candidate.
 
     Returns
     -------
-    list of dicts {time, jump_nT, ratio, B_before_nT, B_after_nT}, largest jump first.
-    A step spreads over every sample within `step_min` of it on either side, so
-    candidates closer than 2·step_min to a larger one are the same step and are merged.
+    list of dicts {time, jump_nT, ratio, B_before_nT, B_after_nT, screen[, n_ratio,
+    dV_km_s]}. `time` is the steepest single-sample rise inside the box that caught the
+    jump — the ramp — so it is the value to pass back as `shock_time`. Candidates closer
+    than 2·step_min to a larger one are the same step and are merged.
     """
-    if isinstance(B, tuple):
-        t, values = B
-    else:
-        t, values = B.time, B.values
-    t = np.asarray(t)
-    v = np.asarray(values, dtype=float)
-    mag = np.linalg.norm(v, axis=1) if v.ndim > 1 else v
+    t, mag = _series_parts(B)
     if search is not None:
         keep = (t >= np.datetime64(search[0])) & (t <= np.datetime64(search[1]))
         t, mag = t[keep], mag[keep]
@@ -239,25 +324,37 @@ def find_shock_candidates(B, n=5, search=None, step_min=CANDIDATE_STEP_MIN):
     ok = finite & finite[before] & finite[after] & (after > before)
     jumps[ok] = mag[after][ok] - mag[before][ok]
     order = np.argsort(-np.nan_to_num(jumps, nan=-np.inf))
+    # With plasma to screen against, look three times deeper than the list is long: the
+    # shock that matters can sit far down an amplitude ranking (10:03 UT on 2004-11-07 was
+    # 19th) and the screen, not the amplitude, is what brings it up.
+    scan = n * 3 if (density is not None or speed is not None) else n
     out = []
     for i in order:
         if not np.isfinite(jumps[i]) or jumps[i] <= 0:
             break
-        if any(abs(t_s[i] - np.datetime64(c["time"], "s")) <= 2 * step for c in out):
-            continue
         b0, b1 = float(mag[before[i]]), float(mag[after[i]])
-        out.append(
-            {
-                "time": str(t_s[i]),
-                "jump_nT": round(float(jumps[i]), 3),
-                "ratio": round(b1 / b0, 3) if b0 > 0 else float("nan"),
-                "B_before_nT": round(b0, 3),
-                "B_after_nT": round(b1, 3),
-            }
-        )
-        if len(out) >= n:
+        ratio = b1 / b0 if b0 > 0 else float("inf")
+        if ratio < min_ratio:
+            continue
+        if any(abs(t_s[i] - np.datetime64(c["_box"], "s")) <= 2 * step for c in out):
+            continue
+        ramp = _steepest_rise(t, mag, int(before[i]), int(after[i]))
+        entry = {
+            "time": str(ramp.astype("datetime64[s]")),
+            "jump_nT": round(float(jumps[i]), 3),
+            "ratio": round(ratio, 3) if np.isfinite(ratio) else ratio,
+            "B_before_nT": round(b0, 3),
+            "B_after_nT": round(b1, 3),
+            "_box": str(t_s[i]),
+        }
+        entry.update(_screen_candidate(ramp, density, speed))
+        out.append(entry)
+        if len(out) >= scan:
             break
-    return out
+    for c in out:
+        del c["_box"]
+    out.sort(key=lambda c: (not c["screen"].startswith("fast-forward"), -c["jump_nT"]))
+    return out[:n]
 
 
 def shock_windows(shock_time, guard_min: float = GUARD_MIN, span_min: float = SPAN_MIN):
@@ -360,14 +457,58 @@ def windows_from_series(B, shock_time, guard_min=GUARD_MIN, span_min=SPAN_MIN):
     return u_rows, d_rows, windows
 
 
+def window_spread(B, shock_time, guards_min=SPREAD_GUARDS_MIN, spans_min=SPREAD_SPANS_MIN):
+    """theta_Bn over a grid of guard/span conventions around the one the recipe uses.
+
+    This is the uncertainty a reader needs: the same shock, the same method and windows
+    that all pass the stationarity checks gave 41.5–68.0° on 2004-11-07 17:59 UT and
+    62 ± 2° on 2015-03-17 04:00 UT. Conventions the checks reject, or that fall outside
+    the data, are simply left out — the spread is over defensible windows only.
+
+    Parameters
+    ----------
+    B, shock_time : as for `windows_from_series`.
+    guards_min, spans_min : the grid, in minutes.
+
+    Returns
+    -------
+    dict with `angles_deg` (the accepted values, in grid order), `n_conventions`,
+    `min_deg`, `median_deg`, `max_deg` and `spread_deg` = (max − min) / 2; empty
+    `angles_deg` when fewer than two conventions were accepted.
+    """
+    angles = []
+    for g in guards_min:
+        for sp in spans_min:
+            try:
+                u, d, _ = windows_from_series(B, shock_time, g, sp)
+            except ValueError:
+                continue
+            r = _solve_from_means(_to_vec(u), _to_vec(d))
+            if "error" not in r:
+                angles.append(float(r["theta_bn_deg"]))
+    if len(angles) < 2:
+        return {"angles_deg": angles, "n_conventions": len(angles)}
+    a = np.asarray(angles)
+    return {
+        "angles_deg": angles,
+        "n_conventions": len(angles),
+        "min_deg": float(a.min()),
+        "median_deg": float(np.median(a)),
+        "max_deg": float(a.max()),
+        "spread_deg": float((a.max() - a.min()) / 2.0),
+    }
+
+
 def _export_result(result):
     export("theta_bn", np.array([result["theta_bn_deg"]]), "deg")
     export("shock_normal", np.asarray(result["shock_normal"]), "")
     export("compression_ratio", np.array([result["compression_ratio"]]), "")
     export("B_up_mean_nT", np.asarray(result["B_up_mean_nT"]), "nT")
     export("B_dn_mean_nT", np.asarray(result["B_dn_mean_nT"]), "nT")
-    if result.get("theta_bn_std_deg") is not None:
-        export("theta_bn_std_deg", np.array([result["theta_bn_std_deg"]]), "deg")
+    if result.get("theta_bn_window_spread_deg") is not None:
+        export("theta_bn_window_spread_deg", np.array([result["theta_bn_window_spread_deg"]]), "deg")
+    if result.get("theta_bn_sampling_std_deg") is not None:
+        export("theta_bn_sampling_std_deg", np.array([result["theta_bn_sampling_std_deg"]]), "deg")
     if result.get("normal_spread_deg") is not None:
         export("normal_spread_deg", np.array([result["normal_spread_deg"]]), "deg")
     if result.get("Bn_std_nT") is not None:
@@ -393,28 +534,47 @@ _B = globals().get("B")
 _shock_time = globals().get("shock_time")
 _guard_min = globals().get("guard_min", GUARD_MIN)
 _span_min = globals().get("span_min", SPAN_MIN)
+_density = globals().get("density")
+_speed = globals().get("speed")
 result = None
+_spread = None
 
 try:
     if _B_up is not None and _B_dn is not None:
         B_up = _B_up
         B_dn = _B_dn
+        print("theta_bn: windows chosen by the caller (B_up/B_dn) — no window spread is computed; state them in the report")
     elif _B is not None and _shock_time is not None:
         B_up, B_dn, _windows = windows_from_series(_B, _shock_time, _guard_min, _span_min)
         print(f"upstream window: {_fmt_time(_windows[0])} to {_fmt_time(_windows[1])}")
         print(f"downstream window: {_fmt_time(_windows[2])} to {_fmt_time(_windows[3])}")
+        _spread = window_spread(_B, _shock_time)
     elif _B is not None:
-        shock_candidates = find_shock_candidates(_B, n=int(globals().get("n_candidates", 5)))
+        shock_candidates = find_shock_candidates(
+            _B, n=int(globals().get("n_candidates", 10)), density=_density, speed=_speed
+        )
         if not shock_candidates:
             print("theta_bn: no |B| jump found in B — check the interval and the data")
         else:
-            print("theta_bn: shock_time not set — the largest |B| jumps, to choose from:")
+            if _density is None and _speed is None:
+                print(
+                    "theta_bn: shock_time not set — screening list of |B| rises (|B| only: pass "
+                    "density and speed too, a shock steps in all three at once, a sheath structure in |B| alone):"
+                )
+            else:
+                print("theta_bn: shock_time not set — screening list of |B| rises, checked against density and speed:")
             for _c in shock_candidates:
+                _extra = "".join(
+                    f", {_k} {_c[_k]}" for _k in ("n_ratio", "dV_km_s") if _c.get(_k) is not None
+                )
                 print(
                     f"  {_c['time']}  +{_c['jump_nT']} nT  "
-                    f"({_c['B_before_nT']} → {_c['B_after_nT']} nT, ratio {_c['ratio']})"
+                    f"({_c['B_before_nT']} → {_c['B_after_nT']} nT, ratio {_c['ratio']}{_extra})  [{_c['screen']}]"
                 )
-            print("pick one, then run again with shock_time = np.datetime64('<time>')")
+            print(
+                "read them against the plot, name the one you take and why the others are not it, "
+                "then run again with shock_time = np.datetime64('<time>')"
+            )
     else:
         if __name__ == "__main__":
             B_up = np.array([5.0, -2.0, 1.0])
@@ -424,6 +584,8 @@ try:
 
     if "B_up" in globals() and "B_dn" in globals():
         result = theta_bn(B_up, B_dn)
+        if result is not None and "error" not in result and _spread and _spread.get("spread_deg") is not None:
+            result["theta_bn_window_spread_deg"] = round(_spread["spread_deg"], 2)
 except ValueError as _e:
     result = {"error": str(_e)}
 
@@ -433,4 +595,11 @@ elif "error" in result:
     print("theta_bn:", result["error"])
 else:
     _export_result(result)
+    if _spread and _spread.get("spread_deg") is not None:
+        print(
+            f"window sensitivity: theta_Bn {_spread['min_deg']:.1f}–{_spread['max_deg']:.1f} deg "
+            f"(median {_spread['median_deg']:.1f}) over {_spread['n_conventions']} guard/span conventions "
+            f"— quote theta_bn ± theta_bn_window_spread_deg ({_spread['spread_deg']:.1f} deg); "
+            f"theta_bn_sampling_std_deg is the bootstrap inside the fixed windows only"
+        )
     print(result)

@@ -69,11 +69,11 @@
   "id": "wind_swe_ids_2004",
   "family": "id_resolution",
   "text": "Plot Wind SWE proton density and proton thermal speed for the full day 2004-11-07, and report their mean values before and after 18:00 UT.",
-  "expects": "The right ids resolved from one or two searches — `cda/WI_H1_SWE/Proton_Np_nonlin` and `cda/WI_H1_SWE/Proton_W_nonlin` (SWE has no `Proton_Temp`; its temperature is a thermal speed) — downloaded once, plotted, two means each. This is the path that `search_budget` and `search_variables` were written for: a recorded run spent twelve turns searching for ids that do not exist.",
+  "expects": "The right ids resolved from one or two searches — `cda/WI_H1_SWE/Proton_Np_nonlin` and `cda/WI_H1_SWE/Proton_W_nonlin` (or their `_moment` variants) (SWE has no `Proton_Temp`; its temperature is a thermal speed) — downloaded once, plotted, two means each. This is the path that `search_budget` and `search_variables` were written for: a recorded run spent twelve turns searching for ids that do not exist.",
   "truth": {
    "param_ids": [
-    "Proton_Np_nonlin",
-    "Proton_W_nonlin"
+    "WI_H1_SWE/Proton_Np_",
+    "WI_H1_SWE/Proton_W_"
    ],
    "bogus_ids": [
     "Proton_Temp",
@@ -81,7 +81,7 @@
     "Proton_Vth",
     "Proton_T_"
    ],
-   "note": "Verified against the CDAWeb WI_H1_SWE variable list."
+   "note": "Verified against the CDAWeb WI_H1_SWE variable list: both the `_nonlin` and `_moment` variants are valid, so only the dataset and the variable stem are required."
   }
  }
 ]

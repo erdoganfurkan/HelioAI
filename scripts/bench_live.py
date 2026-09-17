@@ -95,8 +95,12 @@ ALTERNATIVE_MARKERS: tuple[str, ...] = (
     r"\binstead of\b",
     r"\bother candidates?\b",
     r"\balternative candidates?\b",
-    r"\bsecond (?:structure|jump|shock|candidate|crossing)\b",
+    r"\bsecond,? (?:weaker |larger |smaller |earlier |later )?(?:structure|jump|shock|candidate|crossing|event)\b",
+    r"\ba (?:larger|weaker|smaller|stronger|earlier|later) (?:one|shock|jump|step|structure|event)\b",
     r"\bnot (?:the|a) shock\b",
+    r"\bnot analy[sz]ed\b",
+    r"\bsecondary\b",
+    r"\bselected\b[^.]{0,80}\bas the\b",
 )
 _ALTERNATIVES_RE = re.compile("|".join(ALTERNATIVE_MARKERS), re.IGNORECASE)
 
@@ -114,7 +118,15 @@ _SIGMA_RE = re.compile(
 )
 _SIGMA_WINDOW = 80
 
-_TIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?!\d)")
+# `2004-11-07T17:59`, `2004-11-07 17:59`, `**2004-11-07 at 17:59:12 UT**`, `2004-11-07, 17:59`:
+# the "at" form cost one `main` session its shock time in the second bench and turned a
+# 3/3 agreement into a "not stated".
+_TIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?:\**\s*(?:T|at|,)?\**\s*)(\d{2}):(\d{2})(?!\d)")
+_CLOCK_RE = re.compile(r"\b(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?\s*(?:UT|UTC|Z)\b")
+_RANGE_RE = re.compile(r"\d{2}:\d{2}(?::\d{2})?\s*(?:UT)?\s*[–—-]\s*\d{2}:\d{2}")
+_VECTOR_RE = re.compile(
+    r"[\(\[]\s*[-+−]?\d+(?:\.\d+)?\s*,\s*[-+−]?\d+(?:\.\d+)?\s*,\s*[-+−]?\d+(?:\.\d+)?\s*[\)\]]"
+)
 _BENCH_SESSION_RE = re.compile(r"^(?:[0-9a-f]{8}-bench-|bench-)(?P<qid>.+?)(?:-[0-9a-f]{8})?$")
 _CAPPED_LEAD_RE = re.compile(r"exceeded \d+ iterations")
 
@@ -165,8 +177,33 @@ def parse_times(text: str) -> list[str]:
 
 
 def mentions_alternatives(text: str) -> bool:
-    """Whether the answer explains a candidate it rejected (see `ALTERNATIVE_MARKERS`)."""
+    """Whether the answer names a candidate it did not take (see `ALTERNATIVE_MARKERS`).
+
+    A wording metric: it says the answer weighed something else, not that the reason
+    given was right. Its false negatives were audited on the fourteen Wind answers of
+    the first two benches; audit again before citing it on a new question family.
+    """
     return bool(_ALTERNATIVES_RE.search(text))
+
+
+def clock_times(text: str) -> list[str]:
+    """Distinct `HH:MM` clock stamps the answer marks as UT, dated or not.
+
+    `parse_times` needs a date; an answer that says "17:59:12 UT" and "10:03 UT" in
+    prose names two crossings all the same. How many distinct stamps an answer names is
+    the wording-free companion of `mentions_alternatives`.
+    """
+    return sorted({f"{h}:{m}" for h, m in _CLOCK_RE.findall(text)})
+
+
+def states_its_windows(text: str) -> bool:
+    """Whether the answer prints its averaging intervals and the mean vectors it used.
+
+    The one thing `main`'s answer of 2026-09-15 did that no branch answer did: its
+    56.1° could be re-derived in thirty seconds from the windows and B_up/B_dn it
+    printed. Two time ranges and two 3-vectors is the bar.
+    """
+    return len(_RANGE_RE.findall(text)) >= 2 and len(_VECTOR_RE.findall(text)) >= 2
 
 
 @dataclass
@@ -198,6 +235,13 @@ class SessionScore:
     theta_bn: float | None = None
     theta_bn_sigma: float | None = None
     mentions_alternatives: bool = False
+    clock_times: list[str] = field(default_factory=list)
+    states_windows: bool = False
+    recipe_path: str = "-"
+    shock_ok: bool | None = None
+    theta_bands: dict[str, bool] = field(default_factory=dict)
+    ids_ok: bool | None = None
+    bogus_ids: list[str] = field(default_factory=list)
     verdict: dict | None = None
     provenance: dict | None = None
     errors: list[str] = field(default_factory=list)
@@ -232,7 +276,8 @@ class SessionScore:
             "s": f"{self.duration_s:.0f}" if self.duration_s is not None else "-",
             "turns": str(self.lead_turns) + ("!" if self.capped_lead else ""),
             "deleg": ";".join(
-                f"{d['role']}:{d['n_iterations']}" + ("!" if d.get("capped") else "")
+                f"{d['role']}:{d['n_iterations']}"
+                + ("!" if d.get("capped") else "?" if d.get("capped") is None else "")
                 for d in self.delegations
             )
             or "-",
@@ -248,6 +293,13 @@ class SessionScore:
             "sigma": f"{self.theta_bn_sigma:g}" if self.theta_bn_sigma is not None else "-",
             "times": ",".join(t[5:] for t in self.times_utc) or "-",
             "alt": "y" if self.mentions_alternatives else "n",
+            "n_t": str(len(self.clock_times)),
+            "win": "y" if self.states_windows else "n",
+            "path": self.recipe_path,
+            "shock": _flag(self.shock_ok),
+            "cfa": _flag(self.theta_bands.get("cfa")),
+            "wband": _flag(self.theta_bands.get("window")),
+            "ids": _flag(self.ids_ok) + (f"!{len(self.bogus_ids)}" if self.bogus_ids else ""),
             "verdict": _triple(self.verdict),
             "prov": _triple(self.provenance),
             "words": str(self.answer_words),
@@ -257,6 +309,10 @@ class SessionScore:
 
 def _kilo(n: int) -> str:
     return f"{n / 1000:.0f}k" if n else "-"
+
+
+def _flag(value: bool | None) -> str:
+    return "-" if value is None else ("y" if value else "n")
 
 
 def _triple(d: dict | None) -> str:
@@ -302,12 +358,30 @@ def _add_param(score: SessionScore, art: dict) -> None:
         score.param_ids.append(pid)
 
 
+def _theta_bn_path(args: dict) -> str | None:
+    if args.get("name") != "theta_bn":
+        return None
+    inputs = args.get("inputs") or {}
+    if "B_up" in inputs or "B_dn" in inputs:
+        return "hand_windows"
+    if "shock_time" in inputs:
+        return "shock_time"
+    if "B" in inputs:
+        return "candidates"
+    return "empty"
+
+
 def _score_events(score: SessionScore, events: list[tuple[str, dict, float]]) -> None:
     lead_turn_max = 0
     done_seen = None
+    paths: list[str] = []
     for kind, data, _ts in events:
         if kind == "tool_call":
             _count_tool(score, data.get("name", ""))
+            if data.get("name") == "run_recipe":
+                path = _theta_bn_path(data.get("arguments") or data.get("args") or {})
+                if path and (not paths or paths[-1] != path):
+                    paths.append(path)
             if "sub_agent_ctx" not in data:
                 lead_turn_max = max(lead_turn_max, int(data.get("turn") or 0))
         elif kind == "artifact":
@@ -336,6 +410,7 @@ def _score_events(score: SessionScore, events: list[tuple[str, dict, float]]) ->
         elif kind == "user" and not score.question_text:
             score.question_text = str(data.get("text", ""))
     score.lead_turns = done_seen if done_seen is not None else lead_turn_max
+    score.recipe_path = "→".join(paths) if paths else "none"
     stamps = [ts for _k, _d, ts in events if ts is not None]
     if len(stamps) >= 2:
         score.duration_s = (max(stamps) - min(stamps)) * 86400.0
@@ -361,11 +436,14 @@ def _score_messages(score: SessionScore, messages: list[tuple], span: tuple | No
             if not isinstance(result, dict):
                 continue
             err = str(result.get("error") or "")
+            # A `main` task result has no `capped` field and the role's own calls are not
+            # recorded: the cap is known only when the error text says so, else unknown.
+            capped = True if ("iterations" in err or result.get("capped")) else None
             score.delegations.append(
                 {
                     "role": args.get("agent_role", "?"),
                     "n_iterations": int(result.get("n_iterations") or 0),
-                    "capped": bool(result.get("capped")) or "iterations" in err,
+                    "capped": capped,
                 }
             )
             for art in result.get("artifacts") or []:
@@ -416,6 +494,7 @@ def score_session(conn: sqlite3.Connection, user_id: str, session_id: str) -> Se
             score.question_text = next((c for r, c, *_ in messages if r == "user" and c), "")
     elif shape == "messages":
         _score_messages(score, messages, span)
+        score.recipe_path = "n/a"
 
     answer = next((c for r, c, *_ in reversed(messages) if r == "assistant" and c.strip()), "")
     if not answer and events:
@@ -425,11 +504,59 @@ def score_session(conn: sqlite3.Connection, user_id: str, session_id: str) -> Se
     score.times_utc = parse_times(answer)
     score.theta_bn, score.theta_bn_sigma = parse_theta(answer)
     score.mentions_alternatives = mentions_alternatives(answer)
+    score.clock_times = clock_times(answer)
+    score.states_windows = states_its_windows(answer)
     score.tokens = _load_tokens(conn, user_id, session_id)
     m = _BENCH_SESSION_RE.match(session_id)
     if m:
         score.question_id = m.group("qid")
     return score
+
+
+def judge_against_truth(score: SessionScore, truth: dict | None) -> None:
+    """Fill the truth-dependent flags of a score from a question's `truth` block.
+
+    `truth` (in `bench_questions.json`) may carry: `shock_utc` — the catalogued crossing
+    as `YYYY-MM-DDTHH:MM`, matched to ±`shock_tolerance_min` (default 2) against the
+    dated stamps of the answer; `theta_bands` — named `[lo, hi]` degree bands, each
+    judged separately (the CfA shock database's per-method range and the recipe's own
+    window-convention range disagree on 2004-11-07, so both are reported rather than
+    one declared right); `param_ids` — substrings that must all appear in the answer or
+    its parameter artefacts; `bogus_ids` — substrings that must not appear (ids the
+    model invented on a recorded run). Absent keys leave the flag None.
+
+    Args:
+        score: The session to annotate, in place.
+        truth: The question's truth block, or None.
+    """
+    if not truth:
+        return
+    shock = truth.get("shock_utc")
+    if shock:
+        tol = int(truth.get("shock_tolerance_min", 2))
+        target = datetime.fromisoformat(shock)
+        stamps = [datetime.fromisoformat(t) for t in score.times_utc]
+        score.shock_ok = any(abs((t - target).total_seconds()) <= tol * 60 for t in stamps)
+    bands = truth.get("theta_bands") or {}
+    if bands and score.theta_bn is not None:
+        score.theta_bands = {name: lo <= score.theta_bn <= hi for name, (lo, hi) in bands.items()}
+    elif bands:
+        score.theta_bands = dict.fromkeys(bands, False)
+    haystack = score.answer + " " + " ".join(score.param_ids)
+    wanted = truth.get("param_ids") or []
+    if wanted:
+        score.ids_ok = all(w in haystack for w in wanted)
+    score.bogus_ids = [b for b in truth.get("bogus_ids") or [] if b in haystack]
+
+
+def truth_by_question(questions: list[dict]) -> dict[str, dict]:
+    """`{question_id: truth}` for the questions that declare one, each carrying the
+    question text so a session run outside the harness can be matched to it."""
+    return {
+        q["id"]: {**q["truth"], "question_text": q.get("text", "")}
+        for q in questions
+        if q.get("truth")
+    }
 
 
 def aggregate(scores: Iterable[SessionScore]) -> list[dict]:
@@ -445,8 +572,9 @@ def aggregate(scores: Iterable[SessionScore]) -> list[dict]:
 
     Returns:
         One dict per question with `question`, `n`, `distinct`, `theta_mean`,
-        `theta_std`, `theta_n`, `alt_frac`, `err_n`, `turns_mean`, `tokens_mean`,
-        `seconds_mean`; means are None when nothing contributed.
+        `theta_std`, `theta_n`, `alt_frac`, `win_frac`, `shock_ok`, `cfa_ok`,
+        `wband_ok`, `ids_ok` (each `k/n` over the judged runs), `err_n`, `turns_mean`,
+        `tokens_mean`, `seconds_mean`; means are None when nothing contributed.
     """
     groups: dict[str, list[SessionScore]] = {}
     for s in scores:
@@ -466,6 +594,11 @@ def aggregate(scores: Iterable[SessionScore]) -> list[dict]:
                 "theta_std": statistics.stdev(thetas) if len(thetas) > 1 else None,
                 "theta_n": len(thetas),
                 "alt_frac": sum(s.mentions_alternatives for s in group) / len(group),
+                "win_frac": sum(s.states_windows for s in group) / len(group),
+                "shock_ok": _fraction([s.shock_ok for s in group]),
+                "cfa_ok": _fraction([s.theta_bands.get("cfa") for s in group]),
+                "wband_ok": _fraction([s.theta_bands.get("window") for s in group]),
+                "ids_ok": _fraction([s.ids_ok for s in group]),
                 "err_n": sum(1 for s in group if s.errors),
                 "turns_mean": statistics.fmean(s.lead_turns for s in group),
                 "tokens_mean": statistics.fmean(tokens) if tokens else None,
@@ -473,6 +606,12 @@ def aggregate(scores: Iterable[SessionScore]) -> list[dict]:
             }
         )
     return out
+
+
+def _fraction(flags: list[bool | None]) -> str | None:
+    """`k/n` over the flags that were judged; None when none was."""
+    judged = [f for f in flags if f is not None]
+    return f"{sum(judged)}/{len(judged)}" if judged else None
 
 
 def format_table(rows: list[dict[str, str]]) -> str:
@@ -502,6 +641,11 @@ def aggregate_rows(agg: list[dict]) -> list[dict[str, str]]:
             "theta_std": _fmt(a["theta_std"]),
             "theta_n": str(a["theta_n"]),
             "alt": f"{a['alt_frac']:.0%}",
+            "win": f"{a['win_frac']:.0%}",
+            "shock": a["shock_ok"] or "-",
+            "cfa": a["cfa_ok"] or "-",
+            "wband": a["wband_ok"] or "-",
+            "ids": a["ids_ok"] or "-",
             "err": str(a["err_n"]),
             "turns": _fmt(a["turns_mean"]),
             "tokens": _kilo(int(a["tokens_mean"])) if a["tokens_mean"] else "-",
@@ -566,6 +710,7 @@ def manifest_entry(
     model: str = "",
     env: dict[str, str] | None = None,
     timestamp: str | None = None,
+    user_id: str = BENCH_USER,
 ) -> dict:
     """One manifest record, built from values alone so it can be tested without a run.
 
@@ -581,6 +726,7 @@ def manifest_entry(
         model: Model or deployment.
         env: Values of `RECORDED_ENV`.
         timestamp: ISO UTC; now when omitted.
+        user_id: The user the session is filed under (`--user`), so batches stay apart.
 
     Returns:
         A JSON-serialisable dict.
@@ -594,7 +740,7 @@ def manifest_entry(
         "env": env if env is not None else {k: os.environ.get(k, "") for k in RECORDED_ENV},
         "timestamp": timestamp or datetime.now(UTC).isoformat(timespec="seconds"),
         "question_id": question_id,
-        "user_id": BENCH_USER,
+        "user_id": user_id,
         "session_id": session_id,
         "rep": rep,
         "seconds": result.get("seconds"),
@@ -657,6 +803,7 @@ def run_batch(
     out: Path,
     runner: Callable[[str, str], dict],
     log: Callable[[str], None] = print,
+    user_id: str = BENCH_USER,
 ) -> list[dict]:
     """Run every question `n` times, sequentially, appending to the manifest as it goes.
 
@@ -672,6 +819,7 @@ def run_batch(
         runner: `(session_id, question_text) -> result dict`; the live one drives
             `stream_chat`, a test passes a stub.
         log: Progress sink, one line per run.
+        user_id: Recorded in each entry; the runner is bound to the same user.
 
     Returns:
         The entries this batch appended.
@@ -703,6 +851,7 @@ def run_batch(
                 provider=provider,
                 model=model,
                 env=env,
+                user_id=user_id,
             )
             append_manifest(out, entry)
             appended.append(entry)
@@ -721,7 +870,7 @@ def _provider_model_safe() -> tuple[str, str]:
         return "", ""
 
 
-async def _drive(session_id: str, text: str) -> dict:
+async def _drive(session_id: str, text: str, user_id: str = BENCH_USER) -> dict:
     """One question end to end, as `helioai/interfaces/cli.py::_run_query` does it.
 
     Remote MCP tools are discovered inside the question's own event loop, as the CLI
@@ -739,7 +888,7 @@ async def _drive(session_id: str, text: str) -> dict:
     error_seen = False
     t0 = time.monotonic()
     try:
-        async for ev in stream_chat(llm, BENCH_USER, session_id, text, restricted=True):
+        async for ev in stream_chat(llm, user_id, session_id, text, restricted=True):
             n_events += 1
             last_kind = ev["event"]
             if last_kind == "error":
@@ -755,9 +904,9 @@ async def _drive(session_id: str, text: str) -> dict:
     }
 
 
-def live_runner(session_id: str, text: str) -> dict:
+def live_runner(session_id: str, text: str, user_id: str = BENCH_USER) -> dict:
     """The runner `run` uses: a fresh event loop and client per question, as the CLI."""
-    return asyncio.run(_drive(session_id, text))
+    return asyncio.run(_drive(session_id, text, user_id))
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -772,8 +921,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         n=args.n,
         label=args.label,
         out=Path(args.out),
-        runner=live_runner,
+        runner=lambda sid, text: live_runner(sid, text, args.user),
         log=lambda s: print(s, flush=True),
+        user_id=args.user,
     )
     return 0
 
@@ -800,8 +950,14 @@ def score_targets(
     conn: sqlite3.Connection,
     manifest: list[dict] | None,
     sessions: list[tuple[str, str]],
+    truths: dict[str, dict] | None = None,
 ) -> list[SessionScore]:
-    """Score every session a manifest and/or explicit `--session` arguments name."""
+    """Score every session a manifest and/or explicit `--session` arguments name.
+
+    A `--session` run of a known question text is matched to its truth by text, so the
+    maintainer's web sessions are judged like bench ones.
+    """
+    truths = truths or {}
     scores: list[SessionScore] = []
     for entry in manifest or []:
         s = score_session(conn, entry.get("user_id", BENCH_USER), entry["session_id"])
@@ -809,7 +965,23 @@ def score_targets(
         scores.append(s)
     for user_id, session_id in sessions:
         scores.append(score_session(conn, user_id, session_id))
+    for s in scores:
+        if not s.question_id:
+            s.question_id = _question_by_text(s.question_text, truths)
+        judge_against_truth(s, truths.get(s.question_id) if s.question_id else None)
     return scores
+
+
+def _question_by_text(text: str, truths: dict[str, dict]) -> str | None:
+    """The question whose text and `text` share their first forty characters — the web
+    UI trims nothing, but a maintainer retyping a question may drop its tail."""
+    key = " ".join(text.split())[:40]
+    if len(key) < 40:
+        return None
+    for qid, t in truths.items():
+        if " ".join(t.get("question_text", "").split())[:40] == key:
+            return qid
+    return None
 
 
 def cmd_score(args: argparse.Namespace) -> int:
@@ -820,9 +992,10 @@ def cmd_score(args: argparse.Namespace) -> int:
     if not manifest and not sessions:
         raise SystemExit("nothing to score: pass --manifest and/or --session")
     db = Path(args.db) if args.db else _default_db()
+    truths = truth_by_question(load_questions(Path(args.questions)))
     conn = open_readonly(db)
     try:
-        scores = score_targets(conn, manifest, sessions)
+        scores = score_targets(conn, manifest, sessions, truths)
     finally:
         conn.close()
 
@@ -859,6 +1032,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--only", nargs="*", metavar="ID", help="question ids to run")
     r.add_argument("--label", default="", help="name of the configuration under test")
     r.add_argument("--out", default="bench_manifest.json", help="manifest to append to")
+    r.add_argument("--user", default=BENCH_USER, help="user id the sessions are filed under")
     r.set_defaults(func=cmd_run)
 
     s = sub.add_parser("score", help="score sessions from the database, read-only")
@@ -870,6 +1044,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="score this session too (repeatable); e.g. web:<uuid>",
     )
     s.add_argument("--db", help="sessions.db (default: the configured one)")
+    s.add_argument("--questions", default=str(DEFAULT_QUESTIONS), help="for the truth blocks")
     s.add_argument("--csv", help="write the per-session table here")
     s.add_argument("--json", help="write per-session scores and the aggregate here")
     s.set_defaults(func=cmd_score)

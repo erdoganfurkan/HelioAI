@@ -44,7 +44,7 @@ except ImportError:
     u = None
 
 
-_TRAILING_ANNOTATION = re.compile(r"^(?P<unit>.*\S)\s*\([^()]*\)$")
+_TRAILING_ANNOTATION = re.compile(r"^(?P<unit>.*\S)\s+\(\d[^()]*\)$")
 
 
 def _unit_label(unit):
@@ -52,8 +52,11 @@ def _unit_label(unit):
 
     CDAWeb labels some products `nT (1min)` or `nT (3sec)`: the parenthesis is the
     cadence, not part of the unit, and left in place it made `nT (1min)` and `nT`
-    "incompatible". Only a parenthesis that *follows* a unit is dropped — `(nT)` alone
-    is kept as it is.
+    "incompatible". Only a cadence-shaped annotation is dropped — separated from the
+    unit by whitespace and starting with a digit. A parenthesised denominator is part
+    of the unit: `1/(cm2 s sr MeV)`, `W/(m^2 Hz)` and `cm^(-3)` must survive intact,
+    or two different fluxes both collapse to `1/` and composite as "compatible".
+    `(nT)` alone is kept as it is.
     """
     label = str(unit or "").strip()
     m = _TRAILING_ANNOTATION.match(label)

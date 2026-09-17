@@ -238,6 +238,31 @@ def test_superposed_epoch_reads_a_cadence_annotation_as_part_of_the_label_not_th
     assert inferred.exports["epoch_median"]["units"] == "nT"
 
 
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "1/(cm2 s sr MeV)",
+        "#/(cm^2-s-sr-keV)",
+        "W/(m^2 Hz)",
+        "erg/(cm^2 s)",
+        "cm^(-3)",
+        "m^2 (s sr)",
+    ],
+)
+def test_a_parenthesised_denominator_is_part_of_the_unit_not_an_annotation(recipe, unit):
+    """The first cadence fix stripped any trailing parenthesis: `1/(cm2 s sr MeV)` became
+    `1/`, so two different fluxes would have composited as compatible. Only `unit (1min)`
+    — whitespace, then a digit — is an annotation."""
+    mixed = _constant_events([(1.0, unit)] * 3 + [(1.0, f"{unit} (1min)")] * 3)
+    run = recipe("superposed_epoch", events=mixed, n_grid=11, n_boot=20)
+    assert run.exports["epoch_median"]["units"] == unit
+    label = run.namespace["_unit_label"]
+    assert label(unit) == unit
+    assert label("nT (1min)") == "nT"
+    assert label("nT (3 sec)") == "nT"
+    assert label("(nT)") == "(nT)"
+
+
 def test_superposed_epoch_converts_event_units_to_caller_unit(recipe):
     events = _constant_events([(1.0, "nT")] * 6)
 

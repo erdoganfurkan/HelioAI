@@ -13,8 +13,32 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 - **`superposed_epoch` no longer refuses `nT (1min)` against `nT`.** CDAWeb labels some
   products with their cadence in parentheses after the unit; a live composite of Wind
   `BF1` events was refused three times as "incompatible units" until the caller dropped
-  `units` altogether. A parenthesis that follows a unit is an annotation and is dropped
-  before units are compared or converted; `(nT)` alone is left as it is.
+  `units` altogether. Only a cadence-shaped annotation — whitespace, then a digit — is
+  dropped before units are compared or converted; a parenthesised denominator such as
+  `1/(cm2 s sr MeV)` or `W/(m^2 Hz)` is part of the unit and is kept, and so is `(nT)`.
+- **`theta_bn` says what its uncertainty is, and lists shock candidates that are shocks.**
+  Measured on the real Wind 92 ms field of 2004-11-07: at a fixed crossing and a fixed
+  method, the averaging windows alone moved θ_Bn from 41.5° to 68.0° over 49 guard/span
+  conventions, while the exported bootstrap read `± 0.19°` — it resamples rows inside two
+  fixed windows and measures only that. The recipe now exports
+  `theta_bn_window_spread_deg`, the half-range of θ_Bn over a grid of conventions around
+  the one it uses (6.2° on that shock, 1.2° on 2015-03-17 04:00 UT, where the CfA shock
+  database's own methods span 58.8–66.1°), prints the ensemble, and renames the bootstrap
+  `theta_bn_sampling_std_deg` so neither can be read as the other. Windows chosen by the
+  caller (`B_up`/`B_dn`) carry no spread and the recipe says so. `find_shock_candidates`
+  ranked four ICME-sheath compressions above both real shocks of that day and cut the list
+  at five, so the second shock (10:03 UT) was never shown: it now returns every |B| rise
+  above a ratio of 1.2, up to ten, screens each against `density` and `speed` when they
+  are bound (a fast forward shock steps in all three at once), lists the screened ones
+  first, and reports the steepest single-sample rise as the time to pass back as
+  `shock_time`. On the same data both real shocks now head the list, at 17:59:12 and
+  10:03:43 UT.
+- **Two sessions whose ids share their first six characters no longer share a workspace.**
+  `make_session_label` keyed the directory on `session_id[:6]`; the web API lets a client
+  choose its ids, and a benchmark that named its runs `bench-<question>-<hex>` gave every
+  run of a question one directory, so from the second run on the sub-agent's inventory
+  handed it the first run's downloads. The loop now passes the user's existing labels and
+  the suffix grows until the label is new.
 - **The recipe check no longer accuses a run that used the sandbox's Shue or Jelínek
   model.** `mp_shue1998` and `bs_jelinek2012` are published boundary models shipped with
   their reference; a run that called one and exported `magnetopause_r_at_mms_Re` was
@@ -338,19 +362,23 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 - **Four behaviours that change what the model sees or is told are now named experiments,
   off by default: `HELIOAI_EXPERIMENTS=deferred_tools,final_answer,search_budget,
-  search_variables`.** Each shipped on the strength of a single live run; together they
-  answered an ordinary question worse than the loop they replaced, and nothing could say
-  which one cost what — the nineteen recorded runs of that question since June spread
-  θ_Bn from 44° to 80°, so one run per branch is noise, not a comparison. With the
-  variable unset the lead's prompt, its tool set, the roles' prompts and skills, the
-  search budgets and the search payload are the pre-experiment ones; naming an experiment
-  changes exactly its prompt text and its `Policy` field (`tests/test_experiments.py`). An
-  unknown name is an error at startup. `run_recipe` stays registered and reachable; the
-  wording that told the roles to prefer it over reading a recipe is not switchable text
-  and is not the default. `scripts/bench_live.py` runs a fixed question set N times per
-  configuration and scores the sessions from the journal — shock time, θ_Bn ± σ, turns,
-  lookups, tokens, whether the answer names the candidates it rejected — so an experiment
-  is switched back on by measurement, one at a time.
+  search_variables`.** Each shipped on the strength of a single live run and none was ever
+  measured against the loop it replaced; when the same question came out differently on
+  `main` and on this branch, nothing could say which one cost what — and the nineteen
+  recorded runs of that question since June spread θ_Bn from 44° to 80°, so one run per
+  branch is noise, not a comparison. With the variable unset the lead's prompt, its tool
+  set, the roles' prompts and skills, the search budgets and the search payload are the
+  pre-experiment ones; naming an experiment changes exactly its prompt text and its
+  `Policy` field (`tests/test_experiments.py`). Two things the default is *not*: it is not
+  `main` — `run_recipe` and the corrected recipes are in, so the default is `main`'s prompts
+  plus the new recipe path — and with `final_answer` off the lead never states claims, so
+  the claim verdict (the "N backed / 0 contradicted" line) is not produced; the unknown-id,
+  recipe-bypass and prose checks still run. An unknown experiment name is refused where the
+  API key is checked (`build_llm_client`, `helioai doctor`), not at import: the MCP server
+  and the web app must still start. `scripts/bench_live.py` runs a fixed question set N
+  times per configuration and scores the sessions from the journal — shock time, θ_Bn ± σ,
+  turns, lookups, tokens, whether the answer names the candidates it rejected — so an
+  experiment is switched back on by measurement, one at a time.
 - **The recipes were reviewed by a heliophysicist and corrected; their numbers change.**
   Each correction shipped with a synthetic test whose answer is known, red before the
   fix, and the shelf now has one contract: a recipe reads its inputs with

@@ -433,7 +433,7 @@ async def _stream_turn(
 
     label = store.get_workspace_dir(user_id, session_id)
     if not label:
-        label = _ws.make_session_label(user_text, session_id)
+        label = _ws.make_session_label(user_text, session_id, store.workspace_dirs(user_id))
         store.save(user_id, session_id, history)
         store.set_workspace_dir(user_id, session_id, label)
     ctx = RunContext.for_session(user_id, session_id, label=label)

@@ -631,3 +631,29 @@ async def test_lead_and_sub_agent_usage_is_charged_to_the_session(monkeypatch, t
         "cached_tokens": 900,
         "n_calls": 3,
     }
+
+
+@pytest.mark.asyncio
+async def test_two_sessions_whose_ids_share_six_characters_get_two_workspaces(
+    monkeypatch, tmp_path
+) -> None:
+    """The bench found it: `bench-wind-…` ids all mapped to one directory, and from the
+    second run on the inventory handed the sub-agent the first run's data. The loop now
+    passes the user's existing labels to `make_session_label`."""
+    from helioai.core import agent_loop
+    from helioai.core.llm.base import Message
+    from helioai.core.session import SessionStore
+
+    store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr(agent_loop, "store", store)
+
+    class _Say:
+        async def chat(self, messages, tools, **k):
+            return Message(role="assistant", content="ok")
+
+    for sid in ("session-001", "session-002"):
+        async for _ in agent_loop.stream_chat(_Say(), "web", sid, "Find a shock", restricted=False):
+            pass
+    a = store.get_workspace_dir("web", "session-001")
+    b = store.get_workspace_dir("web", "session-002")
+    assert a and b and a != b

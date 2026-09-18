@@ -179,24 +179,26 @@ class AgentConfig:
     experiments: frozenset[str] = frozenset()
 
 
-EXPERIMENTS: frozenset[str] = frozenset(
-    {"deferred_tools", "final_answer", "search_budget", "search_variables"}
-)
+EXPERIMENTS: frozenset[str] = frozenset({"deferred_tools", "search_budget", "search_variables"})
 """The behaviours that change what the model sees or is told, each off by default.
 
 Every one of them was committed on the strength of a single live run and never measured
-against the loop it replaced; together they turned out to answer an ordinary question
-worse than that loop did. They stay in the code as named experiments so that each can be
-switched on alone and compared on the same questions, N runs each:
+against the loop it replaced. They stay in the code as named experiments so that each can
+be switched on alone and compared on the same questions, N runs each
+(`scripts/bench_live.py`):
 
 - `deferred_tools`: the lead sees the formulary and catalogue tools only after asking
   for them with `search_tools`, and its prompt says so.
-- `final_answer`: the lead may close with `final_answer(answer, claims)`, and its prompt
-  asks it to when it states measured numbers.
 - `search_budget`: a `data_analyst` past three lookups (a `plasma_physicist` past two)
   with nothing downloaded receives a correction listing the ids it already has.
 - `search_variables`: the top hit of a parameter search lists every variable of its
   dataset.
+
+`final_answer` was one of them and is now the default: on the third bench (34 clean runs,
+four configurations) it cost nothing on any question, re-enabled the claim verdict — zero
+contradictions over nine — and named rejected candidates as often as the loop it replaced.
+The two search experiments showed no value there (eight id-resolution runs correct without
+them); they stay off until a question that fails without them is recorded.
 """
 
 

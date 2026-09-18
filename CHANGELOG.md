@@ -360,25 +360,33 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Changed
 
-- **Four behaviours that change what the model sees or is told are now named experiments,
-  off by default: `HELIOAI_EXPERIMENTS=deferred_tools,final_answer,search_budget,
+- **Behaviours that change what the model sees or is told are named experiments, off by
+  default, and go on by measurement: `HELIOAI_EXPERIMENTS=deferred_tools,search_budget,
   search_variables`.** Each shipped on the strength of a single live run and none was ever
   measured against the loop it replaced; when the same question came out differently on
   `main` and on this branch, nothing could say which one cost what — and the nineteen
   recorded runs of that question since June spread θ_Bn from 44° to 80°, so one run per
   branch is noise, not a comparison. With the variable unset the lead's prompt, its tool
   set, the roles' prompts and skills, the search budgets and the search payload are the
-  pre-experiment ones; naming an experiment changes exactly its prompt text and its
-  `Policy` field (`tests/test_experiments.py`). Two things the default is *not*: it is not
-  `main` — `run_recipe` and the corrected recipes are in, so the default is `main`'s prompts
-  plus the new recipe path — and with `final_answer` off the lead never states claims, so
-  the claim verdict (the "N backed / 0 contradicted" line) is not produced; the unknown-id,
-  recipe-bypass and prose checks still run. An unknown experiment name is refused where the
-  API key is checked (`build_llm_client`, `helioai doctor`), not at import: the MCP server
-  and the web app must still start. `scripts/bench_live.py` runs a fixed question set N
-  times per configuration and scores the sessions from the journal — shock time, θ_Bn ± σ,
-  turns, lookups, tokens, whether the answer names the candidates it rejected — so an
-  experiment is switched back on by measurement, one at a time.
+  reference loop's; naming an experiment changes exactly its prompt text and its `Policy`
+  field (`tests/test_experiments.py`). The default is not `main`: `run_recipe` and the
+  corrected recipes are in, and so is **`final_answer`**, which graduated on the third
+  benchmark — 34 clean runs, one workspace each, four configurations interleaved: no cost
+  on any of the five questions, the claim verdict back (zero contradictions over nine),
+  rejected candidates named as often as by the reference loop. The two search experiments
+  showed no value there (eight id-resolution runs correct without them) and stay off until
+  a question that fails without them is recorded; `deferred_tools` was not isolated. An
+  unknown experiment name is refused where the API key is checked (`build_llm_client`,
+  `helioai doctor`), not at import: the MCP server and the web app must still start.
+  `scripts/bench_live.py` runs a fixed question set N times per configuration and scores
+  the sessions from the journal against a truth block per question — shock time, θ_Bn
+  bands, valid ids, whether the answer states its windows and names what it rejected.
+- **Two prompt sentences the third benchmark asked for.** The lead reads "around <date>"
+  as the whole UT day (a window centred on midnight put the day's main shock at its edge,
+  with no downstream to average, and the analyst — correctly — analysed the other one);
+  the `data_analyst` skill screens shock candidates against density and speed through
+  `theta_bn`, reports `theta_bn_window_spread_deg` as the ±, binds `B` + `shock_time`
+  rather than hand windows, and prints the windows and mean vectors it used.
 - **The recipes were reviewed by a heliophysicist and corrected; their numbers change.**
   Each correction shipped with a synthetic test whose answer is known, red before the
   fix, and the shelf now has one contract: a recipe reads its inputs with

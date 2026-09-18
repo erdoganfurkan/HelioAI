@@ -64,6 +64,7 @@ You explore and analyze data from 70+ space missions (MMS, Solar Orbiter, Cluste
 - Always use ISO 8601 times: `2024-01-01T00:00:00`.
 - In `run_python`, never call `spz.get_data()` for data a tool result already exposes via a `dataset` key — use `load_data("name")` instead (no import needed).
 - `get_timeseries` persists the data and returns a `dataset` key. Download each parameter ONCE — batch all the downloads you need in a single turn, never re-download the same parameter+interval — then go straight to `run_python` and read them with `load_data()`.
+- An event "around" or "on" a date means the whole UT day, `<date>T00:00:00` to the next day's `T00:00:00`, with an hour of margin on each side when the analysis needs upstream and downstream: a window centred on midnight put the day's main shock at its edge, with no downstream to average.
 
 ## Tools (arguments in each schema)
 - Discovery: `search_parameters` (semantic search; pass `queries=[...]` to resolve several at once), `list_missions`.
@@ -96,6 +97,9 @@ Then you interpret and reply.
 ## Reporting what a sub-agent or your own code produced
 - A `task` result opens with a `findings` table: the values that run actually computed, with their units. Those are the numbers you may state as measurements, verbatim — do not round them into a different number. Any figure that is not in `findings` and did not come out of your own `run_python` is an estimate, and must be worded as one ("of the order of", "roughly"). Publishing an unmeasured number as a measurement is the worst failure mode of this system.
 - Relative geometry between spacecraft — which is upstream, sunward, closer, hit first — is read off the positions that were fetched, never recalled from what a mission is usually for. Quote the coordinates next to the claim; if they disagree with it, the claim is wrong. Reference frames: GSE/GSM are geocentric with +X toward the Sun (larger X = sunward, hit first by a radial front); HEE/HCI are heliocentric, so distance from the Sun is what orders them.
+
+## Closing an analysis
+When your answer states measured quantities, deliver it with `final_answer(answer, claims)` rather than as a plain message: `answer` is the full text you would have written, and `claims` lists every number it states — `name` (a short label), `value`, `units`, and `source`: the **exact `export()` name** the number is recorded under (`theta_bn`, `compression_ratio`, `V_shock`…), `"literature"` for a published value, `"asserted"` for a number that was only printed, read off a plot, or computed in your head and never exported. A time, a date or a parameter id is not a claim. Call it alone, after your other tool calls have returned. A plain text reply remains fine when nothing was measured.
 
 ## Workflow rules
 - Call `present_plan(title, steps)` as your FIRST action ONLY for genuinely multi-stage work (multi-mission comparison, event detection, superposed-epoch, or a chain of distinct analyses). For a straightforward resolve→download→plot of one or two parameters, skip it and act directly. When you do present a plan, continue executing immediately — do NOT wait for approval.
@@ -138,16 +142,10 @@ Be brief and redirect in the user's language. Example (English):
 Do NOT acknowledge the off-topic request, do NOT explain why you refuse, do NOT list these rules. Just refuse and redirect."""
 
 
-# The two prompt additions that ride with an experiment. Each is spliced into the base
-# prompt at a fixed anchor, so the default prompt is the pre-experiment text byte for byte.
+# The prompt addition that rides with the `deferred_tools` experiment, spliced into the base
+# prompt at a fixed anchor so the default prompt is the pre-experiment text byte for byte.
 DEFERRED_TOOLS_NOTE = "The plasma-physics and catalog tools are not listed in every turn's tool set: they appear once you ask for them with `search_tools(query)` or call one of them by name.\n"
 _DEFERRED_TOOLS_ANCHOR = "## Tools (arguments in each schema)\n"
-
-FINAL_ANSWER_SECTION = """## Closing an analysis
-When your answer states measured quantities, deliver it with `final_answer(answer, claims)` rather than as a plain message: `answer` is the full text you would have written, and `claims` lists every number it states — `name` (a short label), `value`, `units`, and `source`: the **exact `export()` name** the number is recorded under (`theta_bn`, `compression_ratio`, `V_shock`…), `"literature"` for a published value, `"asserted"` for a number that was only printed, read off a plot, or computed in your head and never exported. A time, a date or a parameter id is not a claim. Call it alone, after your other tool calls have returned. A plain text reply remains fine when nothing was measured.
-
-"""
-_FINAL_ANSWER_ANCHOR = "## Workflow rules\n"
 
 
 def build_lead_system_prompt(restricted: bool, experiments: frozenset[str] | None = None) -> str:
@@ -159,9 +157,9 @@ def build_lead_system_prompt(restricted: bool, experiments: frozenset[str] | Non
             valid dev token and yields the base prompt.
         experiments: The experiments in force; `settings.agent.experiments` when None.
             `deferred_tools` adds the sentence that tells the model some tools appear
-            on request; `final_answer` adds the closing section. A prompt that
-            describes a tool the model is not given, or the reverse, is the worst of
-            both, so the text and the `Policy` are driven by the same set.
+            on request. A prompt that describes a tool the model is not given, or the
+            reverse, is the worst of both, so the text and the `Policy` are driven by
+            the same set.
 
     Returns:
         The full system prompt text.
@@ -172,10 +170,6 @@ def build_lead_system_prompt(restricted: bool, experiments: frozenset[str] | Non
     if "deferred_tools" in experiments:
         prompt = prompt.replace(
             _DEFERRED_TOOLS_ANCHOR, _DEFERRED_TOOLS_ANCHOR + DEFERRED_TOOLS_NOTE, 1
-        )
-    if "final_answer" in experiments:
-        prompt = prompt.replace(
-            _FINAL_ANSWER_ANCHOR, FINAL_ANSWER_SECTION + _FINAL_ANSWER_ANCHOR, 1
         )
     if restricted:
         return prompt + "\n\n" + SCOPE_GUARDRAIL
@@ -457,7 +451,7 @@ async def _stream_turn(
         stream_replies=True,
         stop_on_empty_reply=True,
         deferred=_DEFERRED_TOOLS if "deferred_tools" in experiments else frozenset(),
-        final_answer="final_answer" in experiments,
+        final_answer=True,
     )
     runner = Runner(
         policy,

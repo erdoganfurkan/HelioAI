@@ -657,3 +657,108 @@ async def test_two_sessions_whose_ids_share_six_characters_get_two_workspaces(
     a = store.get_workspace_dir("web", "session-001")
     b = store.get_workspace_dir("web", "session-002")
     assert a and b and a != b
+
+
+# ──────────────────────── a capped delegation, as the lead reads it ──────────
+
+
+def _capped_sub_agent(findings: dict):
+    """A `stream_subagent` double whose run ended on its turn cap.
+
+    It yields exactly what the real one yields at a cap (`sub_agents.py`): the cap
+    message in `error`, `capped` true, and whatever it measured on the way there.
+    """
+
+    async def fake(**kwargs):
+        yield {
+            "event": "sub_agent_end",
+            "data": {
+                "task_id": kwargs["task_id"],
+                "role": kwargs["role"],
+                "findings": findings,
+                "summary": "",
+                "n_iterations": 12,
+                "error": "(sub-agent 'data_analyst' reached its 12-turn cap)",
+                "artifacts": [],
+                "capped": True,
+                "usage": {},
+            },
+        }
+
+    return fake
+
+
+async def _task_result_the_lead_reads(monkeypatch, tmp_path, findings: dict) -> dict:
+    """Run one delegating turn and return the `task` payload the model was handed.
+
+    The assertion target is the tool message in the history of the lead's *second*
+    call — what the model actually reads — not the `sub_agent_end` event, which is
+    what the three renderers read and which `4c0c150` already fixed.
+    """
+    from helioai.core import agent_loop
+    from helioai.core.llm.base import Message, ToolCall
+    from helioai.core.session import SessionStore
+
+    monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
+    monkeypatch.setattr(agent_loop, "stream_subagent", _capped_sub_agent(findings))
+
+    responses = [
+        Message(
+            role="assistant",
+            tool_calls=[
+                ToolCall(
+                    id="t1",
+                    name="task",
+                    arguments={"agent_role": "data_analyst", "description": "compute theta_Bn"},
+                )
+            ],
+        ),
+        Message(role="assistant", content="done."),
+    ]
+    seen: list[list] = []
+
+    class _FakeLLM:
+        async def chat(self, messages, tools, **k):
+            seen.append(list(messages))
+            return responses.pop(0)
+
+    async for _ in agent_loop.stream_chat(_FakeLLM(), "web", "s1", "theta?", restricted=False):
+        pass
+
+    tool_msgs = [
+        m
+        for m in seen[-1]
+        if getattr(m, "role", None) == "tool" and getattr(m, "name", None) == "task"
+    ]
+    assert tool_msgs, "the lead's last call must carry the task result"
+    return json.loads(tool_msgs[0].content)
+
+
+@pytest.mark.asyncio
+async def test_a_capped_run_with_findings_reaches_the_lead_as_capped_not_failed(
+    monkeypatch, tmp_path
+) -> None:
+    """`4c0c150` taught the three renderers that a role which ran out of turns with
+    values on the table finished at its cap; it did not teach the lead. The `task`
+    result the model reads carries no `capped` key at all, so eleven measured values
+    arrive next to `error: "(sub-agent … reached its 12-turn cap)"` and the only
+    reading available to the model is that the delegation failed."""
+    findings = {"theta_bn_deg": {"value": 47.3, "units": "deg", "code_path": "code_0.py"}}
+    payload = await _task_result_the_lead_reads(monkeypatch, tmp_path, findings)
+
+    assert payload["capped"] is True, "the model must be able to tell a cap from a crash"
+    assert payload["error"] is None, "a run that measured something did not fail"
+    assert payload["findings"] == findings
+
+
+@pytest.mark.asyncio
+async def test_a_capped_run_that_measured_nothing_still_reaches_the_lead_as_an_error(
+    monkeypatch, tmp_path
+) -> None:
+    """The other half, and the reason this is not a blanket `error = None`: a role that
+    spent its whole budget and exported nothing has nothing for the lead to report, and
+    `describe_sub_agent_end` gives that case the red cross it deserves."""
+    payload = await _task_result_the_lead_reads(monkeypatch, tmp_path, {})
+
+    assert payload["capped"] is True
+    assert payload["error"], "a cap with nothing measured is a failure"

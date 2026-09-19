@@ -656,3 +656,40 @@ async def test_get_events_timeseries_applies_the_same_window_rule(monkeypatch) -
     assert "error" not in result
     assert result["n_events_downloaded"] == 2
     assert [ev.start_time for ev in selected] == [_EDGE_EVENTS[1][0], _EDGE_EVENTS[2][0]]
+
+
+# ───────────────────────── a filter that cannot be applied ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_where_operator_is_an_error_not_an_empty_catalogue(monkeypatch) -> None:
+    """`_match` returned False for any operator it did not recognise, so a typo filtered
+    every event out and the tool reported `nb_events_filtered: 0` — a result
+    indistinguishable from a catalogue that genuinely holds nothing in the window. The
+    schema enum protects the model; a direct Python or MCP caller had nothing.
+
+    The error names the operators that do exist, because the caller's next move is to
+    pick one."""
+    events = [
+        _make_event("2005-01-01T00:00:00", "2005-01-02T00:00:00", meta={"speed": 400}),
+        _make_event("2005-02-01T00:00:00", "2005-02-02T00:00:00", meta={"speed": 700}),
+    ]
+    cid = _setup_catalog_mock(monkeypatch, events)
+    result = await get_catalog(cid, where={"column": "speed", "op": "greater_than", "value": 500})
+
+    assert "error" in result, "an operator that cannot be applied is not a filter result"
+    assert "greater_than" in result["error"]
+    assert "gt" in result["error"], "the error names the operators that do exist"
+    assert "nb_events_filtered" not in result, "no count may be reported for a filter never run"
+
+
+def test_the_where_operators_the_schema_offers_are_the_ones_the_code_applies() -> None:
+    """Two lists of operators drift. The tool schema's enum is built from the same
+    frozenset `_match` dispatches on, and this holds the registered schema to it."""
+    import helioai.tools.setup  # noqa: F401  registers the tools
+    from helioai.tools.catalog_tools import WHERE_OPS
+    from helioai.tools.registry import registry
+
+    schema = next(t for t in registry.list_tool_defs() if t.name == "get_catalog").parameters
+    enum = schema["properties"]["where"]["properties"]["op"]["enum"]
+    assert sorted(enum) == sorted(WHERE_OPS)

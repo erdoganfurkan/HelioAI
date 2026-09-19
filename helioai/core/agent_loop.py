@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from helioai.config import settings
+from helioai.core.event_display import finished_at_cap
 from helioai.core.events import NOT_JOURNALED, make
 from helioai.core.llm.base import LLMClient, Message, ToolCall, ToolDef
 from helioai.core.session import store, strip_orphan_tool_calls
@@ -617,6 +618,13 @@ async def _run_task(
                 yield sub_ev
                 continue
             end_data = sub_ev["data"]
+            # A run that reached its cap with values on the table finished; one that
+            # reached it with nothing did not. The renderers have drawn that line since
+            # 4c0c150 and the model could not: it read the cap message under `error`
+            # beside the findings, and `ToolResult.ok` was false with it, so the only
+            # reading available was that the delegation failed. `capped` says what
+            # happened; the error is kept for the half that really is one.
+            capped_but_finished = finished_at_cap(end_data)
             result = ToolResult.from_raw(
                 TASK_TOOL_NAME,
                 json.dumps(
@@ -625,10 +633,11 @@ async def _run_task(
                         # _summarize_tool_result drops when a stale result is
                         # trimmed, and the measured values must outlive the prose.
                         "findings": end_data.get("findings", {}),
+                        "capped": bool(end_data.get("capped", False)),
                         "summary": end_data.get("summary", ""),
                         "n_iterations": end_data.get("n_iterations", 0),
                         "artifacts": end_data.get("artifacts", []),
-                        "error": end_data.get("error"),
+                        "error": None if capped_but_finished else end_data.get("error"),
                     }
                 ),
             )

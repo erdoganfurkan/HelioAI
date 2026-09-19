@@ -268,6 +268,24 @@ def _delegations_clause(delegations: list[dict]) -> str:
     return text
 
 
+def finished_at_cap(data: dict) -> bool:
+    """Whether a delegation that ran out of turns still finished.
+
+    A role that ran out of turns is not one story but two, and which one it is turns on
+    whether it measured anything on the way there. The predicate is named once because
+    two readers need it and they must not drift: the three renderers, which show that
+    case amber rather than red, and the lead's `task` result, which is what the model
+    reads and which for a while said only `error`.
+
+    Args:
+        data: A `sub_agent_end` payload.
+
+    Returns:
+        True when the run hit its cap with findings on the table.
+    """
+    return bool(data.get("capped")) and bool(data.get("findings"))
+
+
 def describe_sub_agent_end(data: dict) -> tuple[str, str]:
     """The one line a `sub_agent_end` is shown as, and its tone.
 
@@ -285,7 +303,7 @@ def describe_sub_agent_end(data: dict) -> tuple[str, str]:
     """
     role = data.get("role", "")
     findings = data.get("findings") or {}
-    if data.get("capped") and findings:
+    if finished_at_cap(data):
         n = len(findings)
         return (
             f"{role}: finished at its {data.get('n_iterations', '?')}-turn cap — "

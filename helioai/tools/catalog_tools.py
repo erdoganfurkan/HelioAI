@@ -59,8 +59,22 @@ def _event_value(ev, column: str):
     return None
 
 
+WHERE_OPS: tuple[str, ...] = ("eq", "ne", "gt", "gte", "lt", "lte", "contains")
+"""The operators `_match` can apply, and the enum `get_catalog`'s schema offers.
+
+One tuple rather than two lists: the schema advertised what the model may send and the
+dispatch decided what actually ran, with nothing holding them together."""
+
+
 def _match(op: str, a, b) -> bool:
-    """Apply comparison operator op between event value a and filter value b."""
+    """Apply comparison operator op between event value a and filter value b.
+
+    Raises:
+        ValueError: `op` is not one of `WHERE_OPS`. It used to fall through to False,
+            which filtered every event out, so a typo read as an empty window.
+    """
+    if op not in WHERE_OPS:
+        raise ValueError(f"unknown where operator {op!r}; use one of {', '.join(WHERE_OPS)}")
     try:
         a_f, b_f = float(a), float(b)
         a, b = a_f, b_f
@@ -80,7 +94,7 @@ def _match(op: str, a, b) -> bool:
         return a is not None and a <= b
     if op == "contains":
         return b.lower() in str(a).lower() if a is not None else False
-    return False
+    raise AssertionError(f"{op!r} is listed in WHERE_OPS but has no branch here")
 
 
 _catalog_cache: dict = {"ts": 0.0, "entries": []}
@@ -444,7 +458,13 @@ def _get_catalog_sync(
         op = where.get("op", "eq")
         val = where.get("value")
         if col and op and val is not None:
-            events = [ev for ev in events if _match(op, _event_value(ev, col), val)]
+            # Refused rather than applied: an operator with no branch used to filter
+            # every event out, and a count of zero reads the same whether the filter
+            # was wrong or the window is genuinely empty.
+            try:
+                events = [ev for ev in events if _match(op, _event_value(ev, col), val)]
+            except ValueError as e:
+                return {"error": str(e)}
 
     nb_filtered = len(events)
 

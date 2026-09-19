@@ -340,7 +340,9 @@ registry.register(
                     "column": {"type": "string"},
                     "op": {
                         "type": "string",
-                        "enum": ["eq", "ne", "gt", "gte", "lt", "lte", "contains"],
+                        # From the dispatch, not beside it: what the model is offered and
+                        # what `_match` can apply were two lists of the same seven names.
+                        "enum": list(_cat.WHERE_OPS),
                     },
                     "value": {},
                 },

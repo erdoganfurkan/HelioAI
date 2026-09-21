@@ -510,6 +510,7 @@ async def search_parameters(
             }
         except Exception as e:
             log.warning("RAG batch search failed (%s), falling back to text scan", e)
+            reason = e
         try:
             import speasy as spz
 
@@ -517,7 +518,7 @@ async def search_parameters(
             return {
                 "provider": provider,
                 "groups": groups,
-                "note": "RAG index not built — using text fallback (provider filter ignored)",
+                "note": _fallback_note(reason),
             }
         except Exception as e2:
             return {"error": f"Search failed: {e2}"}
@@ -536,6 +537,7 @@ async def search_parameters(
         }
     except Exception as e:
         log.warning("RAG search failed (%s), falling back to speasy inventory scan", e)
+        reason = e
 
     # Fallback: naive text search on speasy inventory (provider filter ignored — best effort)
     try:
@@ -545,10 +547,31 @@ async def search_parameters(
         return {
             "query": query,
             "results": results,
-            "note": "RAG index not built — using text fallback (provider filter ignored)",
+            "note": _fallback_note(reason),
         }
     except Exception as e2:
         return {"error": f"Search failed: {e2}"}
+
+
+def _fallback_note(reason: Exception) -> str:
+    """The sentence a caller reads when the search fell back to a text scan.
+
+    It used to say "RAG index not built" whatever had failed. On an install whose
+    torch was too old for transformers, the index was present and the dense search died
+    at import — and the note, read by an MCP client's model with none of our context,
+    told the user to build an index that existed. The exception is the diagnosis; the
+    note carries it.
+
+    Args:
+        reason: What the RAG search raised.
+
+    Returns:
+        One line naming the failure and the degraded mode.
+    """
+    return (
+        f"RAG search unavailable ({type(reason).__name__}: {reason}) — using a text scan of "
+        "the speasy inventory instead (provider filter ignored)"
+    )
 
 
 def _fallback_search(spz, query: str, top_k: int) -> list[dict]:

@@ -28,6 +28,13 @@ dependencies = [
     "plasmapy>=2024.5",
     "chromadb>=0.5",
     "sentence-transformers>=3.0",
+    # torch is only reached through sentence-transformers, but the floor has to be ours:
+    # transformers 5 needs torch>=2.5 and declares it in no core requirement, so a resolver
+    # that backtracks torch to dodge an unrelated conflict (mpmath 1.4 vs sympy's <1.4 cap —
+    # uv does, pip does not) installs a torch transformers then disables, and the dense
+    # search dies at import with no error at the tool boundary. 2.6 is also the first
+    # torch with cp313/cp314 wheels.
+    "torch>=2.6",
     "openai>=1.30",
     "google-genai>=0.8",
     "fastapi>=0.115",
@@ -67,14 +74,6 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.4",
 ]
-
-[tool.uv]
-# torch is transitive (sentence-transformers). Left alone, the universal resolve
-# settles on 2.4.1, which ships no cp313/cp314 wheels and so breaks `uv sync` on
-# the Python versions PHEP 3 requires us to test. This is a lockfile concern
-# only — it is deliberately not a `dependencies` entry, since HelioAI never
-# imports torch and PyPI users should resolve it themselves.
-constraint-dependencies = ["torch>=2.6"]
 
 [project.scripts]
 helioai = "helioai.interfaces.cli:main"

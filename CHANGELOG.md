@@ -8,7 +8,7 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
-## [0.3.0] — 2026-10-02
+## [0.3.0] — 2026-09-21
 
 Two things changed in this release. **HelioAI is now a complete MCP tool provider**: an
 agent you already use — Claude Code, Claude Desktop, Codex — can call its tools, follow

@@ -164,11 +164,22 @@ def check_index() -> Check:
         import chromadb
 
         client = chromadb.PersistentClient(path=str(chroma_dir))
-        count = client.get_collection(settings.rag.collection_name).count()
+        collection = client.get_collection(settings.rag.collection_name)
+        count = collection.count()
+        threshold = (collection.configuration_json.get("hnsw") or {}).get("sync_threshold")
     except Exception as e:
         return Check("search index", FAIL, f"{chroma_dir}: cannot open ({e})")
     age = _age_days(chroma_dir)
     detail = f"{count} products at {chroma_dir}, last built {age:.0f} days ago"
+    if count and threshold != 1:
+        # Writes past the last persist are replayed into the graph at every start, in a
+        # varying order: the same query ranks differently from one process to the next.
+        return Check(
+            "search index",
+            WARN,
+            f"{detail}; built before writes were persisted at once (sync_threshold "
+            f"{threshold}) — run `helioai index` once so a search ranks the same in every process",
+        )
     return Check("search index", OK if count else WARN, detail)
 
 

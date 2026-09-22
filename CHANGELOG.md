@@ -10,6 +10,19 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Fixed
 
+- **A search ranks the same in every process.** Chroma persists its HNSW graph only every
+  `sync_threshold` writes — 1000 by default — and replays whatever followed the last persist
+  into the in-memory graph at every start, in an order that varies. Measured on 2026-09-22
+  with one query embedding in five processes: five different dense top-50 lists, `ssc/mms1`
+  at rank 1 in four of them and absent from the fifth — the 325 SSCWeb trajectories added
+  last were the replayed tail, and the catalogue collection had never been persisted at
+  all. The indexer now opens both collections with a threshold of one (0.11 s per batch on
+  the full index, nothing left to replay) and settles a collection built before the setting
+  on open: modified, reopened, its tail persisted. `helioai doctor` warns on an index that
+  still carries the old threshold and names the one command that settles it.
+  `HelioBench/scripts/retrieval_replay.py`, which measures this, found the final fused
+  ranking stable on the 30 n1 queries before the fix; the dense channel alone was not, and
+  any change to the fusion would have carried its variance into the ranking the agent sees.
 - **`superposed_epoch` no longer refuses `nT (1min)` against `nT`.** CDAWeb labels some
   products with their cadence in parentheses after the unit; a live composite of Wind
   `BF1` events was refused three times as "incompatible units" until the caller dropped

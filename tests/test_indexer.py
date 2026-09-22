@@ -316,3 +316,66 @@ def test_an_ssc_trajectory_is_indexed_once_and_a_cda_node_is_untouched_by_the_ru
     cda_docs: list[dict] = []
     _walk(cda, "cda", cda_docs, set(), _FakeSpeasyIndex)
     assert [d["id"] for d in cda_docs] == ["cda/DS/p"]
+
+
+# ─────────────────────────────── open_collections ───────────────────────────
+
+
+def _persisted(chroma_dir) -> tuple[int | None, int]:
+    """(seq id the vector segment persisted up to, rows left in the write-ahead log).
+
+    Read from Chroma's own SQLite tables: nothing in its API says whether a write reached
+    the on-disk graph or only the log, and that difference is the whole point.
+    """
+    import sqlite3
+
+    db = sqlite3.connect(f"file:{chroma_dir}/chroma.sqlite3?mode=ro", uri=True)
+    vector = [s[0] for s in db.execute("select id, type from segments") if "vector" in s[1]][0]
+    row = db.execute("select seq_id from max_seq_id where segment_id = ?", (vector,)).fetchone()
+    return (row[0] if row else None), db.execute(
+        "select count(*) from embeddings_queue"
+    ).fetchone()[0]
+
+
+def test_open_collections_persists_every_write_and_settles_a_legacy_collection(tmp_path):
+    """Chroma persists its HNSW graph every `sync_threshold` writes and replays the rest into
+    memory at every start, in a varying order — five processes, five rankings (2026-09-22).
+    A collection the indexer opens persists at once; one created before the setting is
+    settled on open, so nothing is left to replay."""
+    import chromadb
+    import numpy as np
+
+    from helioai.indexer import HNSW_SYNC_THRESHOLD, open_collections
+
+    chroma_dir = tmp_path / "chroma"
+    rng = np.random.default_rng(0)
+    legacy = chromadb.PersistentClient(path=str(chroma_dir)).get_or_create_collection(
+        "products", metadata={"hnsw:space": "cosine"}
+    )
+    legacy.upsert(ids=[f"p{i}" for i in range(300)], embeddings=rng.normal(size=(300, 8)).tolist())
+    assert _persisted(chroma_dir) == (None, 300), (
+        "300 writes below the default threshold: all in the log"
+    )
+
+    _, (products, catalogs) = open_collections(chroma_dir, ["products", "catalogs"])
+
+    assert _persisted(chroma_dir)[0] == 300 and _persisted(chroma_dir)[1] <= 1
+    assert products.count() == 300
+    for c in (products, catalogs):
+        assert c.configuration_json["hnsw"]["sync_threshold"] == HNSW_SYNC_THRESHOLD
+
+    products.upsert(ids=["p300"], embeddings=rng.normal(size=(1, 8)).tolist())
+    catalogs.upsert(ids=["c0"], embeddings=rng.normal(size=(1, 8)).tolist())
+    persisted, pending = _persisted(chroma_dir)
+    assert persisted == 301 and pending <= 2, "one write, persisted at once"
+
+
+def test_open_collections_is_a_plain_open_when_nothing_is_legacy(tmp_path):
+    from helioai.indexer import HNSW_SYNC_THRESHOLD, open_collections
+
+    chroma_dir = tmp_path / "chroma"
+    _, (first,) = open_collections(chroma_dir, ["products"])
+    first.upsert(ids=["a"], embeddings=[[0.0] * 8])
+    _, (second,) = open_collections(chroma_dir, ["products"])
+    assert second.count() == 1
+    assert second.configuration_json["hnsw"]["sync_threshold"] == HNSW_SYNC_THRESHOLD

@@ -227,7 +227,7 @@ def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = Tr
         82433
     """
     try:
-        import chromadb
+        import chromadb  # noqa: F401 — the index cannot be built without it; opened in open_collections
         import speasy as spz
         from sentence_transformers import SentenceTransformer
         from speasy.core.inventory.indexes import SpeasyIndex
@@ -253,10 +253,8 @@ def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = Tr
         print(f"[indexer] loading embedding model {embed_model}…")
     model = SentenceTransformer(embed_model)
 
-    client = chromadb.PersistentClient(path=str(chroma_dir))
-    collection = client.get_or_create_collection(
-        name=collection_name,
-        metadata={"hnsw:space": "cosine"},
+    _, (collection, catalog_collection) = open_collections(
+        chroma_dir, [collection_name, settings.rag.catalogs_collection_name], verbose=verbose
     )
 
     existing_ids: set[str] = set()
@@ -320,9 +318,68 @@ def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = Tr
         print(f"[indexer] collection total: {collection.count()}")
 
     # Index catalogs + timetables into a separate collection
-    cat_total = _build_catalog_index(model, client, settings, rebuild=rebuild, verbose=verbose)
+    cat_total = _build_catalog_index(
+        model, catalog_collection, settings, rebuild=rebuild, verbose=verbose
+    )
 
     return total + cat_total
+
+
+HNSW_SYNC_THRESHOLD = 1
+
+
+def open_collections(chroma_dir, names: list[str], *, verbose: bool = False):
+    """Open or create the index's collections so that every write is persisted at once.
+
+    Chroma's local HNSW segment persists to disk only every `sync_threshold` writes — 1000
+    by default. Whatever follows the last persist stays in the write-ahead log and is
+    replayed into the in-memory graph at every process start, in an order that varies, so
+    the graph varies and the ranking with it. Measured on 2026-09-22: the 325 SSCWeb
+    trajectories added after the last persist gave five different dense top-50 lists in five
+    processes for one query embedding, `ssc/mms1` at rank 1 in four of them and absent from
+    the fifth. The catalogue collection, 221 entries, had never been persisted at all. A
+    threshold of one costs 0.11 s per batch on the full 82k index and leaves nothing to
+    replay, so a search ranks the same in every process and a read-only process never
+    writes to the index.
+
+    A collection created before this setting keeps the threshold it was loaded with, so it
+    is modified and the client reopened: the replay on reopen persists its tail. Reopening
+    clears Chroma's process-wide client cache — fine in `helioai index`, and the reason this
+    is not done lazily by a process that also serves searches.
+
+    Args:
+        chroma_dir: The Chroma directory, created when absent.
+        names: Collection names, opened in order.
+        verbose: Print when a legacy collection is settled.
+
+    Returns:
+        `(client, collections)` — the client the collections belong to.
+    """
+    import chromadb
+    from chromadb.api.client import SharedSystemClient
+
+    hnsw = {"space": "cosine", "sync_threshold": HNSW_SYNC_THRESHOLD}
+    client = chromadb.PersistentClient(path=str(chroma_dir))
+    collections = [
+        client.get_or_create_collection(name=n, configuration={"hnsw": hnsw}) for n in names
+    ]
+    legacy = [
+        c
+        for c in collections
+        if (c.configuration_json.get("hnsw") or {}).get("sync_threshold") != HNSW_SYNC_THRESHOLD
+    ]
+    if not legacy:
+        return client, collections
+    for c in legacy:
+        c.modify(configuration={"hnsw": {"sync_threshold": HNSW_SYNC_THRESHOLD}})
+    SharedSystemClient.clear_system_cache()
+    client = chromadb.PersistentClient(path=str(chroma_dir))
+    collections = [client.get_collection(n) for n in names]
+    for c in collections:
+        c.count()
+    if verbose:
+        print(f"[indexer] settled {len(legacy)} collection(s): pending writes persisted")
+    return client, collections
 
 
 def _walk(
@@ -553,18 +610,12 @@ def _build_text(
     return " ".join(parts)
 
 
-def _build_catalog_index(model, client, settings, rebuild: bool, verbose: bool) -> int:
+def _build_catalog_index(model, collection, settings, rebuild: bool, verbose: bool) -> int:
     """Index AMDA catalogs + timetables into a dedicated ChromaDB collection."""
     try:
         import speasy as spz
     except ImportError:
         return 0
-
-    collection_name = settings.rag.catalogs_collection_name
-    collection = client.get_or_create_collection(
-        name=collection_name,
-        metadata={"hnsw:space": "cosine"},
-    )
 
     if rebuild:
         existing = set()

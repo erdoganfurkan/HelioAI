@@ -261,7 +261,29 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   the catalogue index that `helioai index` built and nothing read. `magnitude` refuses
   anything but three components, in the sandbox and in the exported notebook alike. The
   standalone notebook header reads the cell's syntax tree, not its text — a comment
-  mentioning `u.nT` no longer imports astropy.
+  mentioning `u.nT` no longer imports astropy. And when the series a download returns
+  stops short of the window asked for — a gap at the edge, a file not yet delivered — the
+  result carries one sentence, `window_note` ("obtained A → B (asked C → D)"), where
+  before the asked-for window was announced and only the timestamps knew; the web
+  parameter card prints the same sentence. Tolerance is the larger of a minute and 5 % of
+  the window, so a cadence offset or a daily file boundary stays silent.
+- **The question is read once, into a contract — the `intent` event, in observation.**
+  The first site of the judgment seam. With `HELIOAI_JUDGMENT_BACKEND=jev` and the
+  `judgment_intent` experiment named, the lead hands the user's question, verbatim and
+  alone, to the judge concurrently with the first model call, and reads the answer only
+  when the turn is over: what is to be delivered (a value, a figure, a catalogue, an
+  explanation, a procedure), which SPASE measurement type the request is about — a `Choice`
+  over the index's own vocabulary, so a later comparison with what was retrieved is an
+  exact string match — which coordinate frame, and whether an event, an uncertainty, a
+  method or two spacecraft were named. A date is asked as three closed choices (year,
+  month, day) and assembled by the code with its precision; the judge never writes a
+  date, or any free text, into the system. Each field decides or abstains (`None`) —
+  "the judge did not say" and "the request named nothing" are kept apart — and every call
+  is recorded in `judgment.jsonl`. The event is rendered by the CLI, the web client and the
+  magic, and read by nothing yet: the six HelioBench questions with an `expects` block were
+  put through it and every decided field agreed with the key; the deliverable abstains on
+  a request that asks for a plot and a number at once, which is the field's next shape.
+  `RunContext` carries the question (`query`) for the sites that follow.
 - **Spacecraft positions are searchable: the 314 SSCWeb trajectories are indexed.** An
   SSC inventory node has neither `xmlid` nor `description`, so the indexer skipped every
   one of them and the index held no spacecraft position at all — "where was MMS1" could

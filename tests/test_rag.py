@@ -585,6 +585,46 @@ def test_a_product_that_cannot_cover_the_window_is_demoted_before_the_cut():
     assert [c["id"] for c in ranked] == [fits["id"], live["id"], stale["id"]]
 
 
+def test_a_demoted_hit_says_why_and_a_clean_one_says_nothing():
+    """The ranking was an order with no reason attached: a product at rank 4 for being
+    housekeeping and one at rank 4 for a close call looked the same to the model."""
+    from helioai.tools.rag import _apply_domain_rerank, _demotions
+
+    q = "Wind proton density"
+    browse = {"id": "cda/WI_K0_SWE/Np", "quality": "browse", "description": ""}
+    ace = {"id": "cda/AC_H0_SWE/Np", "quality": "", "description": ""}
+    good = {"id": "cda/WI_H1_SWE/Proton_Np_moment", "quality": "", "description": ""}
+    assert [n for _, n in _demotions(q, browse)] == ["browse_quality"]
+    assert [n for _, n in _demotions(q, ace)] == ["other_mission"]
+    assert _demotions(q, good) == []
+    names = {n for _, n in _demotions(q, {"id": "amda/sw_n", "quality": "", "description": ""})}
+    assert names == {""}, "the unattributable-mission nudge is a tie-break, not a flag"
+
+    ranked = _apply_domain_rerank(q, [browse, ace, good])
+    assert [c["id"] for c in ranked] == [good["id"], browse["id"], ace["id"]]
+    assert ranked[0]["_flags"] == [] and ranked[1]["_flags"] == ["browse_quality"]
+    assert ranked[2]["_flags"] == ["other_mission"]
+
+
+def test_flags_reach_the_hit_and_private_keys_do_not(isolated_rag) -> None:
+    rng = np.random.default_rng(2)
+    vecs = rng.random((2, 128)).astype("float32")
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    isolated_rag.add(
+        ids=["cda/WI_H1_SWE/Proton_Np_moment", "cda/AC_H0_SWE/Np"],
+        embeddings=vecs.tolist(),
+        documents=["Wind proton density.", "ACE proton density."],
+        metadatas=[
+            {"name": "Np", "provider": "cda", "xmlid": "a"},
+            {"name": "Np", "provider": "cda", "xmlid": "b"},
+        ],
+    )
+    by_id = {r["id"]: r for r in search("Wind proton density", top_k=2)}
+    assert by_id["cda/AC_H0_SWE/Np"]["flags"] == ["other_mission"]
+    assert "flags" not in by_id["cda/WI_H1_SWE/Proton_Np_moment"]
+    assert not any(k.startswith("_") for r in by_id.values() for k in r)
+
+
 def test_rerank_never_drops_a_candidate():
     from helioai.tools.rag import _apply_domain_rerank
 

@@ -493,7 +493,14 @@ def _types_of(measurement_type: str | None) -> frozenset[str]:
 
 
 def _rerank_penalty(query: str, candidate: dict, window: tuple[str, str] | None = None) -> int:
-    """0 = keep, higher = push down. Never drops, only reorders.
+    """0 = keep, higher = push down. Never drops, only reorders. See `_demotions`."""
+    return sum(weight for weight, _ in _demotions(query, candidate, window))
+
+
+def _demotions(
+    query: str, candidate: dict, window: tuple[str, str] | None = None
+) -> list[tuple[int, str]]:
+    """Every reason a candidate is pushed down, as (weight, name). Never drops, only reorders.
 
     Measured on the notebook's own Act I queries, where the correct product sat at rank
     4, 24, 2, 3 and 7 while rank 1 went to a browse-quality product, a different
@@ -507,43 +514,48 @@ def _rerank_penalty(query: str, candidate: dict, window: tuple[str, str] | None 
     mission is. A product whose coverage cannot overlap the window the caller intends to
     download goes down further than any of these: it is useless for that download, and it
     used to be flagged only inside the top-k, after the cut had already happened.
+
+    The names are what the model reads as `flags` on a demoted hit: the ranking used to
+    be an order with no reason attached, so a product at rank 4 for being housekeeping and
+    one at rank 4 for a close call looked the same. The one-point nudge on an unattributable
+    mission is not named — it is a tie-break, not a defect of the product.
     """
-    penalty = 0
+    out: list[tuple[int, str]] = []
     if window and not _covers(candidate.get("coverage", ""), window):
-        penalty += 3
+        out.append((3, "outside_window"))
     wanted_type = _wanted_type(query)
     if wanted_type:
         got_types = _types_of(candidate.get("_measurement_type"))
         if got_types and not (got_types & wanted_type):
-            penalty += 2
+            out.append((2, "other_quantity"))
     dataset = candidate["id"].split("/")[1].lower() if candidate["id"].count("/") >= 1 else ""
     if dataset.startswith(_NON_SCIENCE_PREFIXES):
-        penalty += 4
+        out.append((4, "housekeeping"))
     wanted = _query_mission(query)
     if wanted:
         got = _candidate_mission(candidate["id"])
         if got is not None and got != wanted:
-            penalty += 2
+            out.append((2, "other_mission"))
         elif got is None:
             # Unattributable (AMDA/CSA ids carry no CDAWeb prefix). Only a nudge, not
             # the mismatch penalty: those products are legitimate and often the right
             # answer, they just lose a tie against a product that provably belongs to
             # the mission the user named. `amda/sw_n` outranking Wind's own density is
             # what this costs one point.
-            penalty += 1
+            out.append((1, ""))
     if candidate.get("quality") == "browse" and not _BROWSE_WANTED.search(query):
-        penalty += 1
+        out.append((1, "browse_quality"))
     if not _AUXILIARY_WANTED.search(query) and _is_auxiliary(
         candidate["id"], candidate.get("description", "")
     ):
-        penalty += 2
+        out.append((2, "auxiliary"))
     if (
         _POSITION_QUERY.search(query)
         and not _MODEL_DERIVED_TEXT.search(query)
         and _MODEL_DERIVED_TEXT.search(candidate.get("description", ""))
     ):
-        penalty += 2
-    return penalty
+        out.append((2, "model_derived"))
+    return out
 
 
 def _variant_key(param_id: str) -> str:
@@ -583,8 +595,14 @@ def _collapse_variants(candidates: list[dict]) -> list[dict]:
 def _apply_domain_rerank(
     query: str, candidates: list[dict], window: tuple[str, str] | None = None
 ) -> list[dict]:
-    """Stable reorder by penalty — relevance order is preserved inside each tier."""
-    return sorted(candidates, key=lambda c: _rerank_penalty(query, c, window))
+    """Stable reorder by penalty — relevance order is preserved inside each tier.
+
+    Each candidate keeps its named reasons under `_flags`, for the hit to render."""
+    for c in candidates:
+        demotions = _demotions(query, c, window)
+        c["_penalty"] = sum(w for w, _ in demotions)
+        c["_flags"] = [name for _, name in demotions if name]
+    return sorted(candidates, key=lambda c: c["_penalty"])
 
 
 def _coverage_of(meta: dict | None) -> str:
@@ -736,9 +754,10 @@ def _fuse_query(
     # nothing. Variants are collapsed after the rerank so the best-placed one is kept.
     ranked = _collapse_variants(_apply_domain_rerank(query, candidates, window))
     for c in ranked:
-        c.pop("_full_text", None)
-        c.pop("_measurement_type", None)
-        c.pop("_raw", None)
+        if c.get("_flags"):
+            c["flags"] = c["_flags"]
+        for key in ("_full_text", "_measurement_type", "_raw", "_penalty", "_flags"):
+            c.pop(key, None)
     return ranked[:top_k]
 
 

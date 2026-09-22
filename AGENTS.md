@@ -56,6 +56,7 @@ helioai/
 │   ├── sub_agents.py       stream_subagent — delegation + tool whitelist
 │   ├── tool_exec.py        shared by BOTH loops — put shared logic here, never duplicate it
 │   ├── session.py          per-(user_id, session_id) SQLite history
+│   ├── judgment.py         the one seam to a System One judge — every question and threshold; `null` backend = today's loop
 │   ├── skills/             6 SKILL.md prompt files
 │   └── llm/                base, openai_compat (groq/ollama/azure/opencode), azure, gemini, factory
 ├── tools/

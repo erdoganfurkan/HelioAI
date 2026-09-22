@@ -342,6 +342,59 @@ class VisionConfig:
     timeout_s: float = 20.0
 
 
+JUDGMENT_BACKENDS: frozenset[str] = frozenset({"null", "jev"})
+"""Who answers the judgment questions of `helioai.core.judgment`.
+
+`null` abstains on every question, and it is the default: every call site runs the
+deterministic code it runs today when the answer is `None`, so a build with this backend
+is the loop as it was before the module existed. `jev` is TypeSafe's System One model
+through the optional `judgment` extra. There is no third "local" backend on purpose — the
+deterministic path is not a judge, it is the fallback, and naming it as a backend would
+suggest the two could disagree.
+"""
+
+
+@dataclass
+class JudgmentConfig:
+    """A System One judge beside the loop, in observation.
+
+    Every question HelioAI asks it lives in `helioai.core.judgment`, so what is delegated
+    to a proprietary model can be audited in one file. The backend is one axis; which
+    sites may ask is the other, one `EXPERIMENTS` name per site — so "the judge does not
+    help here" and "the layer costs something" can be told apart. Off by default, and
+    nothing it answers corrects the model: it annotates and it is recorded.
+    """
+
+    backend: str = "null"
+    model: str = "jev-latest"
+    timeout_s: float = 2.0
+    api_key: str = ""
+
+
+def validate_judgment(cfg: JudgmentConfig | None = None) -> str:
+    """Refuse an unknown judgment backend — an error, not a warning.
+
+    Same reasoning as `validate_experiments`: a backend name that silently fell back to
+    abstaining would be measured as if it had judged. Called where the API key is
+    already checked, never at import.
+
+    Args:
+        cfg: The config to check; `settings.judgment` when None.
+
+    Returns:
+        The backend name, when known.
+
+    Raises:
+        RuntimeError: Naming the unknown backend and the known ones.
+    """
+    backend = (cfg or settings.judgment).backend
+    if backend not in JUDGMENT_BACKENDS:
+        raise RuntimeError(
+            f"HELIOAI_JUDGMENT_BACKEND: unknown {backend!r}; known: {sorted(JUDGMENT_BACKENDS)}"
+        )
+    return backend
+
+
 @dataclass
 class DevConfig:
     """Shared secret unlocking unrestricted mode past the heliophysics guardrail.
@@ -397,6 +450,7 @@ class Settings:
     literature: LiteratureConfig = field(default_factory=LiteratureConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
+    judgment: JudgmentConfig = field(default_factory=JudgmentConfig)
     dev: DevConfig = field(default_factory=DevConfig)
     web_auth: WebAuthConfig = field(default_factory=WebAuthConfig)
 
@@ -502,6 +556,12 @@ def _load() -> Settings:
             enabled=os.environ.get("HELIOAI_VISION_ENABLED", "0") not in ("0", "", "false"),
             provider=os.environ.get("HELIOAI_VISION_PROVIDER", "azure").lower(),
             model=os.environ.get("HELIOAI_VISION_MODEL", ""),
+        ),
+        judgment=JudgmentConfig(
+            backend=os.environ.get("HELIOAI_JUDGMENT_BACKEND", "null").strip().lower() or "null",
+            model=os.environ.get("HELIOAI_JUDGMENT_MODEL", "jev-latest"),
+            timeout_s=float(os.environ.get("HELIOAI_JUDGMENT_TIMEOUT_S", "2.0")),
+            api_key=os.environ.get("TYPESAFE_API_KEY", ""),
         ),
         rag=RAGConfig(chroma_dir=data_dir / "chroma", hybrid_enabled=hybrid_enabled),
         dev=DevConfig(token=dev_token),

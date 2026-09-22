@@ -79,6 +79,7 @@ Issues = "https://github.com/erdoganfurkan/HelioAI/issues"
 
 [project.optional-dependencies]
 solarmach = ["solarmach>=0.5"]
+judgment = ["typesafe-sdk>=0.7"]
 docs = [
     "mkdocs-material>=9.5",
     "mkdocstrings[python]>=0.26",

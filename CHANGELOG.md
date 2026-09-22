@@ -157,6 +157,24 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Added
 
+- **A seam for a System One judge beside the loop — `helioai.core.judgment`, in
+  observation.** HelioAI verifies itself thoroughly (claims against the ledger, ids against
+  the index, code against the recipes, tools against the plan) and nothing verifies it
+  against the question it was asked. Before any such check exists, this module fixes where
+  it will live and what it may do: every question HelioAI puts to a judge is written here,
+  in one file a reviewer can read in one sitting; the answer is typed (`Noul` → yes / no /
+  abstain, `Choice` → one option of a closed set / abstain) and abstention is `None`, never
+  a sentinel that could be summed into a plausible wrong answer. The default backend,
+  `HELIOAI_JUDGMENT_BACKEND=null`, abstains on everything, so the loop is exactly the one
+  that shipped before; `jev` asks TypeSafe's model through the optional `judgment` extra
+  and `TYPESAFE_API_KEY`, and only at sites whose `judgment_<site>` experiment is named —
+  two axes, so "the judge does not help here" and "the layer costs something" can be told
+  apart. Every call is bounded (`HELIOAI_JUDGMENT_TIMEOUT_S`, default 2 s; the round trip
+  measured from France is 266 ms median, 373 ms p95) and recorded as one JSON line under
+  the session workspace, `judgment.jsonl`, with the state in full — a disagreement that
+  cannot be adjudicated later is not a measurement. Nothing here corrects the model. An
+  unknown backend is refused where the API key is checked and by `helioai doctor`, which
+  gains a `judgment` line. No site asks yet; this is the seam the next entries plug into.
 - **Spacecraft positions are searchable: the 314 SSCWeb trajectories are indexed.** An
   SSC inventory node has neither `xmlid` nor `description`, so the indexer skipped every
   one of them and the index held no spacecraft position at all — "where was MMS1" could

@@ -434,6 +434,27 @@ def test_solar_wind_is_not_the_Wind_spacecraft():
     assert _query_mission("interface region imaging") is None, "'ace' inside a word"
 
 
+def test_a_numbered_spacecraft_names_its_mission():
+    """`\\bmms\\b` never matched "mms1": the mission penalty was dead on every multi-spacecraft
+    mission exactly when the user named the spacecraft, which is always."""
+    from helioai.tools.rag import _MISSION_PATTERNS, _MISSION_QUERY, _query_mission
+
+    assert _query_mission("MMS1 FGM burst magnetic field GSM") == "mms"
+    assert _query_mission("mms-3 spacecraft position") == "mms"
+    assert _query_mission("Cluster C1 FGM spin resolution") == "cluster"
+    assert _query_mission("C3 CIS HIA ion density") == "cluster"
+    assert _query_mission("STA IMPACT magnetic field RTN") == "stereo"
+    assert _query_mission("STEREO-A PLASTIC proton density") == "stereo"
+    assert _query_mission("THEMIS-A FGM GSM") == "themis"
+    assert _query_mission("tha fgs magnetic field") == "themis"
+    assert _query_mission("VG1 MAG heliospheric field") == "voyager"
+    assert _query_mission("PSP FIELDS MAG RTN") == "parker"
+    assert _query_mission("solo mag rtn normal mode") == "solar orbiter"
+    assert _query_mission("the magnetic field of the solar wind") is None, "THEMIS-E is 'the'"
+    assert _query_mission("hourly Dst geomagnetic index") is None
+    assert set(_MISSION_QUERY) == set(_MISSION_PATTERNS), "one query pattern per mission"
+
+
 def test_candidate_mission_from_the_dataset_prefix():
     from helioai.tools.rag import _candidate_mission
 

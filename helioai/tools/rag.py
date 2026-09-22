@@ -331,6 +331,29 @@ _MISSION_PATTERNS: dict[str, tuple[str, ...]] = {
     "maven": ("mvn_",),
 }
 
+# How a query names each mission, including the spacecraft-numbered short forms people
+# actually type. Deriving the pattern from the mission name — `\bmms\b` — never matched
+# "mms1", "c1", "sta" or "vg1", so the mission penalty was dead on every multi-spacecraft
+# mission exactly when the user named the spacecraft, which is always (measured: 0 for the
+# 30 hits of three probes; `amda/c1_b_gsm` outranked every MMS product for "MMS1 FGM").
+# THEMIS-E's probe id is "the": the English article, so it is left out on purpose.
+_MISSION_QUERY: dict[str, str] = {
+    "wind": r"wind",
+    "ace": r"ace",
+    "dscovr": r"dscovr",
+    "mms": r"mms(?:[\s-]?[1-4])?",
+    "cluster": r"cluster(?:[\s-]?[1-4])?|c[1-4]",
+    "themis": r"themis(?:[\s-]?[a-e])?|th[a-d]",
+    "stereo": r"stereo(?:[\s-]?(?:a|b|ahead|behind))?|st[ab]",
+    "geotail": r"geotail",
+    "omni": r"omni",
+    "ulysses": r"ulysses",
+    "voyager": r"voyager(?:[\s-]?[12])?|vg[12]",
+    "solar orbiter": r"solar\s+orbiter|solo",
+    "parker": r"parker(?:\s+solar\s+probe)?|psp",
+    "maven": r"maven|mvn",
+}
+
 
 def _query_mission(query: str) -> str | None:
     """The mission a query names, or None.
@@ -340,8 +363,8 @@ def _query_mission(query: str) -> str | None:
     question and buries the answer.
     """
     q = re.sub(r"\bsolar\s+wind\b", " ", f" {query.lower()} ")
-    for mission, _ in _MISSION_PATTERNS.items():
-        if re.search(rf"\b{re.escape(mission)}\b", q):
+    for mission, pattern in _MISSION_QUERY.items():
+        if re.search(rf"\b(?:{pattern})\b", q):
             return mission
     return None
 

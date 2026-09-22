@@ -212,6 +212,24 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   cannot be adjudicated later is not a measurement. Nothing here corrects the model. An
   unknown backend is refused where the API key is checked and by `helioai doctor`, which
   gains a `judgment` line. No site asks yet; this is the seam the next entries plug into.
+- **Tool results say what the system already knew, in fields, not in prose.** Five
+  payload changes, each additive, from the same finding: HelioAI held facts in typed fields
+  three calls before it asked a model to guess them from truncated English.
+  `get_timeseries` returns `obtained_start`/`obtained_stop` beside the requested window
+  (a series clipped to the archive or to a gap was announced with the window asked for —
+  the 2026-09-18 θ_Bn of 12° for a 54° shock, every downstream check green), and a partial
+  overlap carries `available_start`/`available_stop` as keys as the non-overlapping refusal
+  always did. `cadence_ms` rides beside the `cadence` string; `quality.n_gaps` counts what
+  the ten-entry `gaps` list cut. A `search_parameters` hit renders `measurement_type` and
+  `region` when the archive states them, and `flags` names each reason the ranking pushed
+  it down (`other_mission`, `browse_quality`, `outside_window`, `other_quantity`,
+  `housekeeping`, `auxiliary`, `model_derived`) — the order carried no reason before, and a
+  margin between two RRF sums was rejected as a confidence number because two such sums
+  are close by construction. `list_catalogs` takes a `query` and orders by relevance through
+  the catalogue index that `helioai index` built and nothing read. `magnitude` refuses
+  anything but three components, in the sandbox and in the exported notebook alike. The
+  standalone notebook header reads the cell's syntax tree, not its text — a comment
+  mentioning `u.nT` no longer imports astropy.
 - **Spacecraft positions are searchable: the 314 SSCWeb trajectories are indexed.** An
   SSC inventory node has neither `xmlid` nor `description`, so the indexer skipped every
   one of them and the index held no spacecraft position at all — "where was MMS1" could

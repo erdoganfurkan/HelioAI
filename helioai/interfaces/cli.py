@@ -185,6 +185,17 @@ def _same_words(a: str, b: str) -> bool:
     return _MARKUP.sub("", a) == _MARKUP.sub("", b)
 
 
+def _intent_line(data: dict) -> str:
+    """One dim line for the contract the judge read: only what it decided, nothing else."""
+    parts = [f"{k}: {data[k]}" for k in ("deliverable", "quantity", "frame", "date") if data.get(k)]
+    parts += [
+        k.replace("_", " ")
+        for k in ("event_named", "uncertainty_required", "method_named", "two_spacecraft")
+        if data.get(k) is True
+    ]
+    return " · ".join(parts) or "nothing decided"
+
+
 def _render_event(ev: dict) -> None:
     from helioai.core.event_display import describe_findings
 
@@ -275,6 +286,9 @@ def _render_event(ev: dict) -> None:
 
     elif name == "figure_review":
         print(f"{pad}\033[95m🔍 figure review: {data.get('text', '')}\033[0m")
+
+    elif name == "intent":
+        print(f"{pad}\033[2m🎯 intent: {_intent_line(data)}\033[0m")
 
     elif name == "provenance":
         counts = (

@@ -323,6 +323,124 @@ def _warn_once(site: str, error: Exception) -> None:
         log.warning("judgment_abstained", site=site, error=f"{type(error).__name__}: {error}")
 
 
+# ── The intent contract ──────────────────────────────────────────────────────────────
+#
+# What a question commits the answer to, read once from the question alone. Every field
+# is a Choice over a closed set or a yes/no: the judge never writes free text into the
+# system, and a date arrives as its named components — the code assembles the datetime,
+# because ordering dates is arithmetic and arithmetic is not what a reading model is for.
+# The quantity is a Choice over the index's own measurement-type vocabulary, so a later
+# join between "what was asked" and "what was retrieved" is an exact comparison of two
+# strings, not a judgement.
+
+_YEARS = tuple(str(y) for y in range(1990, 2028))
+_MONTHS = tuple(f"{m:02d}" for m in range(1, 13))
+_DAYS = tuple(f"{d:02d}" for d in range(1, 32))
+NONE = "none"
+
+INTENT_QUESTIONS: dict[str, Question] = {
+    "deliverable": Choice(
+        "What does the request want delivered? A measured value or number; a figure or plot; "
+        "a catalogue or list of events; an explanation with no computation; a procedure or "
+        "code to run elsewhere; or something else.",
+        ("value", "figure", "catalogue", "explanation", "procedure", "other"),
+        floor=0.6,
+    ),
+    "quantity": Choice(
+        "Which SPASE measurement type is the physical quantity the request is about? "
+        "MagneticField for B, IMF, field components or magnitude; ThermalPlasma for density, "
+        "temperature, velocity, plasma beta of the bulk plasma; EnergeticParticles for fluxes "
+        "above thermal energies, SEP, cosmic rays; Ephemeris for a position, orbit, trajectory; "
+        "ElectricField, Waves, IonComposition as named; none when the request names no quantity "
+        "(a catalogue lookup, an explanation).",
+        (
+            "MagneticField",
+            "ElectricField",
+            "ThermalPlasma",
+            "EnergeticParticles",
+            "IonComposition",
+            "Ephemeris",
+            "Waves",
+            "Spectrum",
+            NONE,
+        ),
+        floor=0.6,
+    ),
+    "frame": Choice(
+        "Which coordinate frame does the request name for the data, if any?",
+        ("GSE", "GSM", "RTN", "GEO", "SM", "HEE", "HCI", "other", NONE),
+        floor=0.6,
+    ),
+    "year": Choice("Which year does the request name, if any?", _YEARS + (NONE,), floor=0.6),
+    "month": Choice(
+        "Which month (01–12) does the request name, if any?", _MONTHS + (NONE,), floor=0.6
+    ),
+    "day": Choice(
+        "Which day of the month (01–31) does the request name, if any?", _DAYS + (NONE,), floor=0.6
+    ),
+    "event_named": Noul("Does the request name a specific event, date or time interval?"),
+    "uncertainty_required": Noul(
+        "Does the request ask for an uncertainty, an error bar, a confidence or a spread?"
+    ),
+    "method_named": Noul(
+        "Does the request name a specific method, recipe, formula or reference to use?"
+    ),
+    "two_spacecraft": Noul(
+        "Does the request compare or combine two or more spacecraft or instruments?"
+    ),
+}
+
+
+async def intent_contract(query: str) -> Answers | None:
+    """The contract for one question, or None — see `INTENT_QUESTIONS`.
+
+    Args:
+        query: The user's question, verbatim.
+    """
+    if not query or not query.strip():
+        return None
+    return await ask("intent", {"question": query}, INTENT_QUESTIONS)
+
+
+def contract_fields(answers: Answers) -> dict[str, Any]:
+    """The `intent` event's payload: the decided answers, the date assembled by the code.
+
+    A Choice of `none`, or an abstention, is `None` in the payload — the reader must not
+    mistake "the judge did not say" for "the request named nothing". `date` is the ISO day,
+    month or year the components make, with `date_precision` saying which.
+    """
+    out: dict[str, Any] = {}
+    for name in INTENT_QUESTIONS:
+        value = answers.get(name)
+        out[name] = None if value in (None, NONE) else value
+    year, month, day = out.pop("year"), out.pop("month"), out.pop("day")
+    if year and month and day:
+        out["date"], out["date_precision"] = f"{year}-{month}-{day}", "day"
+    elif year and month:
+        out["date"], out["date_precision"] = f"{year}-{month}", "month"
+    elif year:
+        out["date"], out["date_precision"] = year, "year"
+    else:
+        out["date"], out["date_precision"] = None, None
+    out["model"] = answers.model
+    out["latency_ms"] = round(answers.latency_ms, 1)
+    return out
+
+
+async def collect(task: asyncio.Task) -> dict[str, Any] | None:
+    """Read a contract task the turn started; abstain if it has not answered in time.
+
+    The task ran concurrently with the model; by the time the answer is out it has almost
+    always finished. A turn never waits on the judge longer than one judgment budget.
+    """
+    try:
+        answers = await asyncio.wait_for(task, timeout=settings.judgment.timeout_s)
+    except Exception as e:
+        _warn_once("intent", e)
+        return None
+    return contract_fields(answers) if answers is not None else None
+
+
 class _JevBackend:
     """TypeSafe's System One through `typesafe-sdk`, imported only when first asked.
 

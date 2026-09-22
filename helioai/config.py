@@ -179,7 +179,9 @@ class AgentConfig:
     experiments: frozenset[str] = frozenset()
 
 
-EXPERIMENTS: frozenset[str] = frozenset({"deferred_tools", "search_budget", "search_variables"})
+EXPERIMENTS: frozenset[str] = frozenset(
+    {"deferred_tools", "search_budget", "search_variables", "judgment_intent"}
+)
 """The behaviours that change what the model sees or is told, each off by default.
 
 Every one of them was committed on the strength of a single live run and never measured
@@ -193,6 +195,11 @@ be switched on alone and compared on the same questions, N runs each
   with nothing downloaded receives a correction listing the ids it already has.
 - `search_variables`: the top hit of a parameter search lists every variable of its
   dataset.
+- `judgment_intent`: with a judging backend (`HELIOAI_JUDGMENT_BACKEND=jev`), the user's
+  question is read once by the judge, concurrently with the first model call, into an
+  intent contract — deliverable, quantity, date, whether an uncertainty, a method or two
+  spacecraft were asked for — emitted as an `intent` event after the answer. Observation:
+  nothing in the loop reads it yet.
 
 `final_answer` was one of them and is now the default: on the third bench (34 clean runs,
 four configurations) it cost nothing on any question, re-enabled the claim verdict — zero

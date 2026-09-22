@@ -303,6 +303,12 @@ function renderEvent(view, ev) {
   } else if (event === 'figure_review') {
     renderFigureReview(view, data.text);
 
+  } else if (event === 'intent') {
+    // What the judge read the question as asking for — observation, it decides nothing.
+    const parts = ['deliverable', 'quantity', 'frame', 'date'].filter(k => data[k]).map(k => `${k}: ${data[k]}`)
+      .concat(['event_named', 'uncertainty_required', 'method_named', 'two_spacecraft'].filter(k => data[k] === true).map(k => k.replace(/_/g, ' ')));
+    appendTlEvent(view, '🎯', `intent — ${parts.join(' · ') || 'nothing decided'}`, 'tl-note');
+
   } else if (event === 'recipe_bypassed') {
     // Advisory, not a banner: exports resemble a computation with a calibrated recipe,
     // either never loaded or loaded and not actually called — worth a glance, not an alarm.

@@ -38,6 +38,10 @@ class RunContext:
         agent: `"lead"` or the sub-agent role.
         task_id: The delegation's correlation id, for a sub-agent.
         no_network: Whether `run_python` is denied a network namespace.
+        query: The user's question for this turn, verbatim. It used to stop at the lead's
+            loop: a sub-agent saw only the lead's brief, and nothing downstream could ask
+            whether a result answered what the person typed. Carried on the context, it
+            reaches every sub-agent through `child()` for free.
     """
 
     user_id: str
@@ -47,6 +51,7 @@ class RunContext:
     agent: str = "lead"
     task_id: str | None = None
     no_network: bool = False
+    query: str | None = None
 
     @classmethod
     def for_session(
@@ -59,7 +64,7 @@ class RunContext:
             user_id: Owner of the session.
             session_id: The conversation.
             label: Its workspace directory name, when already minted.
-            **extra: `agent`, `task_id`, `no_network`.
+            **extra: `agent`, `task_id`, `no_network`, `query`.
         """
         return cls(
             user_id=user_id,

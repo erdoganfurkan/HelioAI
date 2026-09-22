@@ -360,6 +360,21 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Changed
 
+- **`theta_bn` averages over 13-minute windows, the Harvard-CfA convention, instead of
+  8-minute ones.** The CfA shock database publishes θ_Bn method by method, and its
+  magnetic-coplanarity (MC) entries rest on 260 field samples per side — 13 min at 3 s — so
+  a recipe that is itself an MC estimate can only be compared to it at those windows. On
+  CfA shock 00368 (Wind, 2004-11-07 17:59:05 ± 60 s UT) the recipe at guard 2 min / span
+  13 min gives **54.3°** against the CfA's **MC 54.5 ± 3.6°**, with the two window means
+  matching the CfA's asymptotic states, and the velocity- and mixed-coplanarity normals
+  computed on the same windows land within 0.3σ of its VC, MX1, MX2 and MX3; the former
+  default gave 49.1° on that shock. The difference was a window convention, not a method
+  error — which is exactly what the exported `theta_bn_window_spread_deg` exists to say.
+  On 2015-03-17 04:00 UT the same change moves the answer from 62.2° to 60.9° (CfA MC
+  58.8 ± 2.7°). The spread grid moves with the default, to spans of 8, 10, 13 and 15 min
+  (guards 1, 2, 3): 49.1–57.7° on the 2004 shock, 60.7–63.6° on the 2015 one. The
+  quickstart notebook asks for 13-minute windows accordingly; the 62.68° it reported under
+  0.3.0 was correct for the 8-minute convention it asked for then.
 - **Behaviours that change what the model sees or is told are named experiments, off by
   default, and go on by measurement: `HELIOAI_EXPERIMENTS=deferred_tools,search_budget,
   search_variables`.** Each shipped on the strength of a single live run and none was ever
@@ -395,7 +410,7 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   validator compares unit-aware, and a speed recorded bare could not vouch for
   "V_shock = 579 km/s". Recipe by recipe:
     - `theta_bn`: the upstream/downstream windows can be derived from the shock time
-      (`shock_time` + the series `B`; guard 2 min, span 8 min; a window with a step or a
+      (`shock_time` + the series `B`; guard 2 min, span 13 min — see *Changed*; a window with a step or a
       trend that looks like the ramp is refused) instead of chosen by the model — three
       live runs on the same shock had given 54.85°, 59.95° and 64.27°. Exports gain the
       normal, the magnetic compression ratio, the two window means, a bootstrap spread of

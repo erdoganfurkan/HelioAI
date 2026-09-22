@@ -17,8 +17,10 @@ theta_Bn > 45° → quasi-perpendicular shock
 Usage with a measured crossing time, preferred because the recipe owns the windows:
     B = load_data("b3gsm")
     shock_time = np.datetime64("2015-03-17T04:00:00")
-    # Then run this script. It uses 8-minute windows separated from the shock by
-    # the 2-minute guard band, rejecting windows that still contain the ramp.
+    # Then run this script. It uses 13-minute windows separated from the shock by
+    # the 2-minute guard band, rejecting windows that still contain the ramp. 13 min of
+    # 3 s data is the 260-sample average the Harvard-CfA shock database uses, so the
+    # angle is comparable to its magnetic-coplanarity (MC) entry.
 
 Usage when the crossing time is not known yet — find it first, do not hunt for it with
 hand-written run_python cells (one live run spent nine of its twelve turns on that):
@@ -61,19 +63,29 @@ also evaluates the angle over a small grid of conventions around the one it uses
 `theta_bn_window_spread_deg`, the half-range of that ensemble: the number to quote as "±".
 The two are named for what they measure so that neither can be read as the other.
 
+The default convention (guard 2 min, span 13 min) is the Harvard-CfA one — 260 field
+samples at 3 s per side — chosen so the exported angle is comparable to the database's own
+MC value. Checked on 2026-09-21 against CfA shock 00368 (Wind, 2004-11-07 17:59:05 UT):
+with these windows the recipe gives 54.3° against the CfA's MC 54.5 ± 3.6°, and the
+velocity- and mixed-coplanarity normals computed on the same windows land within 0.3σ of
+the CfA's VC, MX1, MX2 and MX3 entries. The former 8-minute default gave 49.1° on that
+shock — a window convention, not a method error — and 62.2° instead of 60.9° on
+2015-03-17 04:00 UT (CfA 58.8 ± 2.7°).
+
 Those window checks (abrupt step, trend) are heuristics, not proof that a window is stationary.
 """
 
 import numpy as np
 
 GUARD_MIN = 2.0
-SPAN_MIN = 8.0
+SPAN_MIN = 13.0
 WINDOW_TREND_MAX = 0.25
 # The conventions the shock_time path re-evaluates the angle over. Chosen around the
-# default (2, 8) rather than as a wide sweep: the point is to expose how much the answer
-# depends on a defensible window choice, not to search for the extreme.
+# default (2, 13) rather than as a wide sweep: the point is to expose how much the answer
+# depends on a defensible window choice, not to search for the extreme. On the 2004-11-07
+# shock this grid spans 49.1–57.7° (the old 8-minute answer and the CfA's both inside it).
 SPREAD_GUARDS_MIN = (1.0, 2.0, 3.0)
-SPREAD_SPANS_MIN = (6.0, 8.0, 10.0, 12.0)
+SPREAD_SPANS_MIN = (8.0, 10.0, 13.0, 15.0)
 
 if __name__ == "__main__" and "export" not in globals():
 
@@ -461,9 +473,11 @@ def window_spread(B, shock_time, guards_min=SPREAD_GUARDS_MIN, spans_min=SPREAD_
     """theta_Bn over a grid of guard/span conventions around the one the recipe uses.
 
     This is the uncertainty a reader needs: the same shock, the same method and windows
-    that all pass the stationarity checks gave 41.5–68.0° on 2004-11-07 17:59 UT and
-    62 ± 2° on 2015-03-17 04:00 UT. Conventions the checks reject, or that fall outside
-    the data, are simply left out — the spread is over defensible windows only.
+    that all pass the stationarity checks gave 41.5–68.0° on 2004-11-07 17:59 UT over a
+    wide sweep of 49 conventions, and 49.1–57.7° over this grid (the CfA's MC 54.5 ± 3.6°
+    inside it); on 2015-03-17 04:00 UT the same grid gives 60.7–63.6°. Conventions the
+    checks reject, or that fall outside the data, are simply left out — the spread is
+    over defensible windows only.
 
     Parameters
     ----------

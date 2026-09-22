@@ -2,6 +2,12 @@
 
 Import this module once at startup (cli.py / web main.py) to make all tools
 available to the agent loop. Tools are registered via the registry singleton.
+
+Every registered tool is in the lead's schemas, but the lead's prompt names only the
+ones it is meant to reach for itself. `run_recipe` is the deliberate case: it is the
+analysis step, and analysis is what the lead delegates — `data_analyst` and
+`plasma_physicist` carry it in their skills, and the lead's prompt does not list it, so
+the lead is not nudged into running the physics in its own turns (decided 2026-09-22).
 """
 
 from __future__ import annotations

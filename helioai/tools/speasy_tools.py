@@ -599,7 +599,7 @@ def _search_parameters_sync(
         try:
             from helioai.tools.rag import search_batch as rag_search_batch
 
-            batch = rag_search_batch(queries, top_k=top_k, provider=provider)
+            batch = rag_search_batch(queries, top_k=top_k, provider=provider, window=window)
             note = _provider_note(provider)
             return {
                 "provider": provider,
@@ -633,7 +633,7 @@ def _search_parameters_sync(
     try:
         from helioai.tools.rag import search as rag_search
 
-        results = rag_search(query, top_k=top_k, provider=provider)
+        results = rag_search(query, top_k=top_k, provider=provider, window=window)
         note = _provider_note(provider)
         return {
             "query": query,

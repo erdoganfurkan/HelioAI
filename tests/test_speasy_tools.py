@@ -88,7 +88,9 @@ async def test_search_parameters_calls_rag_search(monkeypatch) -> None:
         {"id": "amda/ace_b_gse", "name": "Bx", "description": "ACE B field", "score": 0.92},
         {"id": "amda/ace_b_y", "name": "By", "description": "ACE B field Y", "score": 0.88},
     ]
-    monkeypatch.setattr(rag_module, "search", lambda q, top_k=5, provider=None: fake_results)
+    monkeypatch.setattr(
+        rag_module, "search", lambda q, top_k=5, provider=None, window=None: fake_results
+    )
 
     result = await search_parameters("ACE magnetic field")
     assert isinstance(result, dict)
@@ -103,14 +105,14 @@ async def test_search_parameters_calls_rag_search(monkeypatch) -> None:
 
 
 async def test_search_parameters_returns_query_field(monkeypatch) -> None:
-    monkeypatch.setattr(rag_module, "search", lambda q, top_k=5, provider=None: [])
+    monkeypatch.setattr(rag_module, "search", lambda q, top_k=5, provider=None, window=None: [])
     result = await search_parameters("solar wind density", top_k=3)
     assert result["query"] == "solar wind density"
     assert result["results"] == []
 
 
 async def test_search_parameters_batch_returns_groups(monkeypatch) -> None:
-    def fake_batch(queries, top_k=5, provider=None):
+    def fake_batch(queries, top_k=5, provider=None, window=None):
         return [
             [{"id": f"amda/p{i}", "name": q, "description": "", "score": 0.9}]
             for i, q in enumerate(queries)
@@ -126,6 +128,22 @@ async def test_search_parameters_batch_returns_groups(monkeypatch) -> None:
     assert all("score" not in r for g in result["groups"] for r in g["results"])
 
 
+async def test_the_download_window_reaches_the_ranking(monkeypatch) -> None:
+    """A product that cannot cover the interval used to be flagged inside the top-k, after
+    the cut; the ranking itself now knows the window, so it is demoted before the cut."""
+    seen: dict = {}
+
+    def fake_search(q, top_k=5, provider=None, window=None):
+        seen["window"] = window
+        return []
+
+    monkeypatch.setattr(rag_module, "search", fake_search)
+    await search_parameters("Wind MFI", start="2015-03-17T00:00:00", stop="2015-03-18T00:00:00")
+    assert seen["window"] == ("2015-03-17T00:00:00", "2015-03-18T00:00:00")
+    await search_parameters("Wind MFI", start="2015-03-17T00:00:00")
+    assert seen["window"] is None, "both ends are needed for the filter to apply"
+
+
 async def test_search_parameters_requires_query_or_queries() -> None:
     result = await search_parameters()
     assert "error" in result
@@ -137,7 +155,7 @@ async def test_fallback_note_names_what_actually_failed(monkeypatch) -> None:
     model with none of our context would have told the user to build an index that
     existed. The exception is the diagnosis, so the note carries it."""
 
-    def boom(q, top_k=5, provider=None):
+    def boom(q, top_k=5, provider=None, window=None):
         raise NameError("name 'nn' is not defined")
 
     monkeypatch.setattr(rag_module, "search", boom)
@@ -155,7 +173,7 @@ async def test_fallback_note_names_what_actually_failed(monkeypatch) -> None:
 
 
 async def test_batch_fallback_note_names_what_actually_failed(monkeypatch) -> None:
-    def boom(queries, top_k=5, provider=None):
+    def boom(queries, top_k=5, provider=None, window=None):
         raise RuntimeError("chroma unreachable")
 
     monkeypatch.setattr(rag_module, "search_batch", boom)

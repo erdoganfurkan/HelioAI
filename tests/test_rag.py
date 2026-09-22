@@ -488,6 +488,73 @@ def test_browse_is_kept_when_it_is_what_was_asked_for():
     assert _rerank_penalty("Wind proton density", k0) == 1
 
 
+def test_a_product_that_names_another_quantity_is_demoted_and_an_untyped_one_is_not():
+    """`measurement_type` is indexed on 16 % of the products (AMDA, CSA) and consulted by
+    nothing. A typed product that measures another quantity than the query asks for goes
+    down like a product of another mission; an untyped one — all of CDA — is untouched."""
+    from helioai.tools.rag import _rerank_penalty, _types_of, _wanted_type
+
+    assert _wanted_type("MMS1 spacecraft position GSE 2019") == {"ephemeris"}
+    assert _wanted_type("Wind MFI magnetic field 3 second") == {"magneticfield"}
+    assert _wanted_type("hourly Dst geomagnetic index") is None, "no class for indices"
+    assert _types_of("Magnetic_Field, Radio_and_Plasma_Waves") == {
+        "magneticfield",
+        "radioandplasmawaves",
+    }
+    assert _types_of("ThermalPlasma") == {"thermalplasma"} and _types_of("") == frozenset()
+
+    q = "MMS1 spacecraft position GSE 2019"
+    e_field = {
+        "id": "amda/mms1_e_gse",
+        "quality": "",
+        "_measurement_type": "Electric_Field",
+    }
+    ephem = {"id": "amda/mms1_xyz_gse", "quality": "", "_measurement_type": "Ephemeris"}
+    untyped = {
+        "id": "cda/MMS1_MEC_SRVY_L2_EPHT89D/mms1_mec_r_gse",
+        "quality": "",
+        "_measurement_type": "",
+    }
+    assert _rerank_penalty(q, e_field) == 2
+    assert _rerank_penalty(q, ephem) == 0
+    assert _rerank_penalty(q, untyped) == 0
+    multi = {
+        "id": "csa/C1_CP_STAFF/B",
+        "quality": "",
+        "_measurement_type": "Electric_Field, Magnetic_Field",
+    }
+    assert _rerank_penalty("Cluster magnetic field", multi) == 0, "any listed class matches"
+
+
+def test_a_product_that_cannot_cover_the_window_is_demoted_before_the_cut():
+    """The flag `covers_window: false` was set on the top-k after the cut; a covering
+    product at rank 6 never reached the model. The ranking itself now reads the window."""
+    from helioai.tools.rag import _apply_domain_rerank, _rerank_penalty
+
+    window = ("2019-06-01T00:00:00", "2019-06-02T00:00:00")
+    stale = {
+        "id": "cda/MMS1_MEC_BRST_L2_EPHT89D/mms1_mec_r_gse",
+        "quality": "",
+        "coverage": "1994-11-01 → 1997-12-31",
+    }
+    live = {
+        "id": "cda/MMS1_MEC_SRVY_L2_EPHT89Q/mms1_mec_r_gse",
+        "quality": "",
+        "coverage": "2025-09-24 → 2026-09-21",
+    }
+    fits = {"id": "amda/mms1_xyz_gse", "quality": "", "coverage": "2015-09-01 → 2026-09-01"}
+    unknown = {"id": "amda/mms1_xyz_gsm", "quality": "", "coverage": ""}
+    assert _rerank_penalty("MMS1 spacecraft position", stale, window) == 3
+    assert _rerank_penalty("MMS1 spacecraft position", live, window) == 3
+    assert _rerank_penalty("MMS1 spacecraft position", fits, window) == 0
+    assert _rerank_penalty("MMS1 spacecraft position", unknown, window) == 0, (
+        "absent coverage covers"
+    )
+    assert _rerank_penalty("MMS1 spacecraft position", stale) == 0, "no window, no penalty"
+    ranked = _apply_domain_rerank("MMS1 spacecraft position", [live, stale, fits], window)
+    assert [c["id"] for c in ranked] == [fits["id"], live["id"], stale["id"]]
+
+
 def test_rerank_never_drops_a_candidate():
     from helioai.tools.rag import _apply_domain_rerank
 

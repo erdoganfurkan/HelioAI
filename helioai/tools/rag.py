@@ -429,15 +429,93 @@ _MODEL_DERIVED_TEXT = re.compile(
 )
 
 
-def _rerank_penalty(query: str, candidate: dict) -> int:
+# The quantity a query names → the SPASE measurement-type family that answers it. Only
+# the unambiguous words: an index ("Dst", "AE") has no class in the index, and "proton"
+# alone is thermal or energetic depending on the instrument, so neither is mapped.
+_WANTED_TYPE: tuple[tuple[re.Pattern, frozenset[str]], ...] = (
+    (
+        re.compile(r"\b(?:position|ephemeris|orbit|trajectory|location|xyz)\b", re.I),
+        frozenset({"ephemeris"}),
+    ),
+    (
+        re.compile(r"\b(?:magnetic field|imf|b[- ]?field|bgs[em]|brtn|fgm|mfi|mag)\b", re.I),
+        frozenset({"magneticfield"}),
+    ),
+    (
+        re.compile(
+            r"\b(?:density|temperature|bulk (?:speed|velocity)|thermal plasma|plasma moments?)\b",
+            re.I,
+        ),
+        frozenset({"thermalplasma", "ioncomposition"}),
+    ),
+    (
+        re.compile(r"\b(?:energetic|\d+\s*[km]ev|cosmic rays?|particle flux|sep)\b", re.I),
+        frozenset({"energeticparticles", "ioncomposition"}),
+    ),
+    (
+        re.compile(r"\b(?:electric field|e[- ]?field|edp)\b", re.I),
+        frozenset({"electricfield", "radioandplasmawaves"}),
+    ),
+    (
+        re.compile(r"\b(?:waves?|spectrogram|spectral density|power spectrum)\b", re.I),
+        frozenset(
+            {
+                "waves",
+                "wavespassive",
+                "radioandplasmawaves",
+                "spectrum",
+                "electricfield",
+                "magneticfield",
+            }
+        ),
+    ),
+)
+
+
+def _wanted_type(query: str) -> frozenset[str] | None:
+    """The measurement-type family a query asks for, or None when it names no quantity."""
+    for pattern, family in _WANTED_TYPE:
+        if pattern.search(query):
+            return family
+    return None
+
+
+def _types_of(measurement_type: str | None) -> frozenset[str]:
+    """A product's SPASE types as one vocabulary: AMDA writes `MagneticField`, CSA writes
+    `Magnetic_Field, Radio_and_Plasma_Waves` — same classes, two spellings and a list."""
+    if not measurement_type:
+        return frozenset()
+    return frozenset(
+        t.strip().replace("_", "").replace(".", "").lower()
+        for t in str(measurement_type).split(",")
+        if t.strip()
+    )
+
+
+def _rerank_penalty(query: str, candidate: dict, window: tuple[str, str] | None = None) -> int:
     """0 = keep, higher = push down. Never drops, only reorders.
 
     Measured on the notebook's own Act I queries, where the correct product sat at rank
     4, 24, 2, 3 and 7 while rank 1 went to a browse-quality product, a different
-    mission, or spacecraft housekeeping. Both signals are already in the index; nothing
+    mission, or spacecraft housekeeping. Every signal is already in the index; nothing
     here needs a reindex.
+
+    Two signals read fields the index carried and nothing consulted. A product whose
+    `measurement_type` names another quantity than the query (an electric field for a
+    "magnetic field" query) goes down like a product of another mission; a product with no
+    type — 84 % of the index, all of CDA — is untouched, exactly as an unattributable
+    mission is. A product whose coverage cannot overlap the window the caller intends to
+    download goes down further than any of these: it is useless for that download, and it
+    used to be flagged only inside the top-k, after the cut had already happened.
     """
     penalty = 0
+    if window and not _covers(candidate.get("coverage", ""), window):
+        penalty += 3
+    wanted_type = _wanted_type(query)
+    if wanted_type:
+        got_types = _types_of(candidate.get("_measurement_type"))
+        if got_types and not (got_types & wanted_type):
+            penalty += 2
     dataset = candidate["id"].split("/")[1].lower() if candidate["id"].count("/") >= 1 else ""
     if dataset.startswith(_NON_SCIENCE_PREFIXES):
         penalty += 4
@@ -502,9 +580,11 @@ def _collapse_variants(candidates: list[dict]) -> list[dict]:
     return kept
 
 
-def _apply_domain_rerank(query: str, candidates: list[dict]) -> list[dict]:
+def _apply_domain_rerank(
+    query: str, candidates: list[dict], window: tuple[str, str] | None = None
+) -> list[dict]:
     """Stable reorder by penalty — relevance order is preserved inside each tier."""
-    return sorted(candidates, key=lambda c: _rerank_penalty(query, c))
+    return sorted(candidates, key=lambda c: _rerank_penalty(query, c, window))
 
 
 def _coverage_of(meta: dict | None) -> str:
@@ -549,7 +629,15 @@ def _build_where(
 
 
 def _fuse_query(
-    query: str, dense_hit: tuple, top_k: int, *, provider, region, measurement_type, hybrid: bool
+    query: str,
+    dense_hit: tuple,
+    top_k: int,
+    *,
+    provider,
+    region,
+    measurement_type,
+    hybrid: bool,
+    window: tuple[str, str] | None = None,
 ) -> list[dict]:
     """Run the hybrid fusion + scoring for ONE query given its dense hit.
 
@@ -570,6 +658,7 @@ def _fuse_query(
             "full_text": doc_text or "",
             "cosine": max(0.0, min(1.0, (similarity + 1.0) / 2.0)),
             "coverage": _coverage_of(meta),
+            "measurement_type": (meta or {}).get("measurement_type", ""),
         }
 
     # Sparse (BM25) channel — exact token / id matching
@@ -592,6 +681,7 @@ def _fuse_query(
                     "full_text": _bm25_docs[idx] if idx < len(_bm25_docs) else "",
                     "cosine": 0.0,
                     "coverage": _coverage_of(meta),
+                    "measurement_type": (meta or {}).get("measurement_type", ""),
                 }
             if len(sparse_ranking) >= settings.rag.hybrid_fetch_k:
                 break
@@ -617,6 +707,7 @@ def _fuse_query(
             "coverage": info[pid].get("coverage", ""),
             "quality": _quality_of(pid, info[pid]["full_text"]),
             "_full_text": info[pid]["full_text"],
+            "_measurement_type": info[pid].get("measurement_type", ""),
             "_raw": raw.get(pid, 0.0),
         }
         for pid in ordered_ids
@@ -632,14 +723,15 @@ def _fuse_query(
         for c in candidates:
             c["score"] = round(c["_raw"], 4)
 
-    for c in candidates:
-        c.pop("_full_text", None)
-        c.pop("_raw", None)
-
     # Applied before the cut, deliberately: the correct product for "Wind proton
     # density" ranked 24th, so demoting inside an already-truncated top-5 would change
     # nothing. Variants are collapsed after the rerank so the best-placed one is kept.
-    return _collapse_variants(_apply_domain_rerank(query, candidates))[:top_k]
+    ranked = _collapse_variants(_apply_domain_rerank(query, candidates, window))
+    for c in ranked:
+        c.pop("_full_text", None)
+        c.pop("_measurement_type", None)
+        c.pop("_raw", None)
+    return ranked[:top_k]
 
 
 def search_batch(
@@ -649,6 +741,7 @@ def search_batch(
     provider: str | None = None,
     region: str | None = None,
     measurement_type: str | None = None,
+    window: tuple[str, str] | None = None,
 ) -> list[list[dict]]:
     """Resolve several queries in ONE pass — the 'composed RAG'.
 
@@ -663,6 +756,8 @@ def search_batch(
         provider: Same filter as `search()`.
         region: Same filter as `search()`.
         measurement_type: Same filter as `search()`.
+        window: `(start, stop)` the caller intends to download; products that cannot
+            cover it are ranked down before the cut, not merely flagged after it.
 
     Example:
         >>> ace, wind = search_batch(["ACE solar wind proton density",
@@ -677,7 +772,7 @@ def search_batch(
 
     # Check per-query cache; only encode/query Chroma for cache misses.
     def _cache_key(q: str) -> tuple:
-        return (q, provider, region, measurement_type, top_k)
+        return (q, provider, region, measurement_type, top_k, window)
 
     uncached = []
     for i, q in active:
@@ -745,6 +840,7 @@ def search_batch(
             region=region,
             measurement_type=measurement_type,
             hybrid=hybrid,
+            window=window,
         )
         if open_hits is not None:
             unfiltered = _fuse_query(
@@ -755,6 +851,7 @@ def search_batch(
                 region=region,
                 measurement_type=measurement_type,
                 hybrid=hybrid,
+                window=window,
             )
             res = _append_cross_provider(res, unfiltered, provider, _CROSS_PROVIDER_EXTRA)
         results[i] = res
@@ -846,6 +943,7 @@ def search(
     provider: str | None = None,
     region: str | None = None,
     measurement_type: str | None = None,
+    window: tuple[str, str] | None = None,
 ) -> list[dict]:
     """Semantic search over speasy catalog (single query).
 
@@ -872,6 +970,7 @@ def search(
         provider: Restrict to one provider (amda/cda/csa/ssc).
         region: SPASE region filter (exact indexed string).
         measurement_type: Measurement-type filter (exact indexed string).
+        window: `(start, stop)` the caller intends to download — see `search_batch`.
 
     Example:
         >>> search("ACE solar wind proton density", top_k=2)[0]
@@ -882,7 +981,12 @@ def search(
     if not query or not query.strip():
         return []
     return search_batch(
-        [query], top_k, provider=provider, region=region, measurement_type=measurement_type
+        [query],
+        top_k,
+        provider=provider,
+        region=region,
+        measurement_type=measurement_type,
+        window=window,
     )[0]
 
 

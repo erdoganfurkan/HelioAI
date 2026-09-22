@@ -326,10 +326,12 @@ def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = Tr
 
 
 HNSW_SYNC_THRESHOLD = 1
+HNSW_EF_SEARCH = 400
 
 
 def open_collections(chroma_dir, names: list[str], *, verbose: bool = False):
-    """Open or create the index's collections so that every write is persisted at once.
+    """Open or create the index's collections so that every write is persisted at once,
+    and so that the dense search looks wide enough to find a near-twin.
 
     Chroma's local HNSW segment persists to disk only every `sync_threshold` writes — 1000
     by default. Whatever follows the last persist stays in the write-ahead log and is
@@ -342,8 +344,16 @@ def open_collections(chroma_dir, names: list[str], *, verbose: bool = False):
     replay, so a search ranks the same in every process and a read-only process never
     writes to the index.
 
-    A collection created before this setting keeps the threshold it was loaded with, so it
-    is modified and the client reopened: the replay on reopen persists its tail. Reopening
+    `ef_search` is raised from Chroma's 100 to 400. The catalogue is full of near-twins —
+    314 SSCWeb trajectories that differ by a spacecraft name, hundreds of housekeeping
+    variables that differ by a suffix — and an approximate search with a narrow beam loses
+    the exact twin: `ssc/mms1`, the true nearest neighbour of "MMS1 spacecraft position GSE
+    2019", was absent from the dense top-50 at 100 and is rank 1 at 400, for 0.7 → 1.2 ms per
+    query (measured 2026-09-22). On the 30 HelioBench n1 queries the change moved recall@1
+    from 53.3 % to 56.7 %.
+
+    A collection created before these settings keeps the ones it was loaded with, so it is
+    modified and the client reopened: the replay on reopen persists its tail. Reopening
     clears Chroma's process-wide client cache — fine in `helioai index`, and the reason this
     is not done lazily by a process that also serves searches.
 
@@ -358,20 +368,23 @@ def open_collections(chroma_dir, names: list[str], *, verbose: bool = False):
     import chromadb
     from chromadb.api.client import SharedSystemClient
 
-    hnsw = {"space": "cosine", "sync_threshold": HNSW_SYNC_THRESHOLD}
+    wanted = {"sync_threshold": HNSW_SYNC_THRESHOLD, "ef_search": HNSW_EF_SEARCH}
     client = chromadb.PersistentClient(path=str(chroma_dir))
     collections = [
-        client.get_or_create_collection(name=n, configuration={"hnsw": hnsw}) for n in names
+        client.get_or_create_collection(
+            name=n, configuration={"hnsw": {"space": "cosine", **wanted}}
+        )
+        for n in names
     ]
     legacy = [
         c
         for c in collections
-        if (c.configuration_json.get("hnsw") or {}).get("sync_threshold") != HNSW_SYNC_THRESHOLD
+        if any((c.configuration_json.get("hnsw") or {}).get(k) != v for k, v in wanted.items())
     ]
     if not legacy:
         return client, collections
     for c in legacy:
-        c.modify(configuration={"hnsw": {"sync_threshold": HNSW_SYNC_THRESHOLD}})
+        c.modify(configuration={"hnsw": wanted})
     SharedSystemClient.clear_system_cache()
     client = chromadb.PersistentClient(path=str(chroma_dir))
     collections = [client.get_collection(n) for n in names]

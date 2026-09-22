@@ -345,7 +345,7 @@ def test_open_collections_persists_every_write_and_settles_a_legacy_collection(t
     import chromadb
     import numpy as np
 
-    from helioai.indexer import HNSW_SYNC_THRESHOLD, open_collections
+    from helioai.indexer import HNSW_EF_SEARCH, HNSW_SYNC_THRESHOLD, open_collections
 
     chroma_dir = tmp_path / "chroma"
     rng = np.random.default_rng(0)
@@ -363,6 +363,7 @@ def test_open_collections_persists_every_write_and_settles_a_legacy_collection(t
     assert products.count() == 300
     for c in (products, catalogs):
         assert c.configuration_json["hnsw"]["sync_threshold"] == HNSW_SYNC_THRESHOLD
+        assert c.configuration_json["hnsw"]["ef_search"] == HNSW_EF_SEARCH
 
     products.upsert(ids=["p300"], embeddings=rng.normal(size=(1, 8)).tolist())
     catalogs.upsert(ids=["c0"], embeddings=rng.normal(size=(1, 8)).tolist())

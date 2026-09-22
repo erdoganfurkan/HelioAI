@@ -23,6 +23,13 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   `HelioBench/scripts/retrieval_replay.py`, which measures this, found the final fused
   ranking stable on the 30 n1 queries before the fix; the dense channel alone was not, and
   any change to the fusion would have carried its variance into the ranking the agent sees.
+  The same opener raises the dense search beam (`ef_search` 100 → 400): the catalogue is
+  full of near-twins — trajectories that differ by a spacecraft name, housekeeping variables
+  that differ by a suffix — and a narrow approximate search loses the exact one. `ssc/mms1`,
+  the true nearest neighbour of "MMS1 spacecraft position GSE 2019", was absent from the
+  dense top-50 and is rank 1 now, for 0.7 → 1.2 ms per query; on the 30 HelioBench n1
+  queries recall@1 moves from 53.3 % to 56.7 %. A `helioai index` run applies both to an
+  existing index.
 - **`superposed_epoch` no longer refuses `nT (1min)` against `nT`.** CDAWeb labels some
   products with their cadence in parentheses after the unit; a live composite of Wind
   `BF1` events was refused three times as "incompatible units" until the caller dropped

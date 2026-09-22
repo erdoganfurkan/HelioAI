@@ -48,9 +48,18 @@ def test_data_quality_detects_gap() -> None:
     t[25:] += np.timedelta64(3, "h")  # large hole before sample 25
     v = np.ones(50)
     q = _data_quality(t, v, np)
-    assert len(q["gaps"]) == 1
+    assert len(q["gaps"]) == 1 and q["n_gaps"] == 1
     assert q["gaps"][0]["dur_h"] == pytest.approx(3.0 + 1 / 60, abs=0.05)
     assert q["notable"] is True
+
+
+def test_data_quality_counts_every_gap_and_lists_ten() -> None:
+    """Twelve holes used to read as ten with no sign of the cut."""
+    t = _times(200)
+    for k in range(12):
+        t[15 * (k + 1) :] += np.timedelta64(2, "h")
+    q = _data_quality(t, np.ones(200), np)
+    assert q["n_gaps"] == 12 and len(q["gaps"]) == 10
 
 
 def test_data_quality_detects_outlier() -> None:
@@ -469,9 +478,10 @@ def test_cadence_measures_samples_not_the_file_grid():
     values = np.full(len(times), np.nan)
     values[::375] = 42.0
 
-    cadence, n_valid = _sample_cadence(times, values)
+    cadence, n_valid, cadence_ms = _sample_cadence(times, values)
     assert cadence == "3 s", cadence
     assert n_valid == 20
+    assert cadence_ms == pytest.approx(3000.0), "the number beside the string"
 
 
 def test_cadence_of_a_gapless_product_is_unchanged():
@@ -483,8 +493,9 @@ def test_cadence_of_a_gapless_product_is_unchanged():
     times = np.datetime64("2015-03-17T00:00:00") + np.arange(100, dtype="int64") * np.timedelta64(
         16, "s"
     )
-    cadence, n_valid = _sample_cadence(times, np.arange(100.0))
+    cadence, n_valid, cadence_ms = _sample_cadence(times, np.arange(100.0))
     assert cadence == "16 s"
+    assert cadence_ms == pytest.approx(16000.0)
     assert n_valid == 100
 
 
@@ -497,7 +508,7 @@ def test_cadence_survives_a_non_numeric_variable():
     times = np.datetime64("2015-03-17T00:00:00") + np.arange(5, dtype="int64") * np.timedelta64(
         1, "m"
     )
-    cadence, n_valid = _sample_cadence(times, np.array(["a", "b", "c", "d", "e"]))
+    cadence, n_valid, _ = _sample_cadence(times, np.array(["a", "b", "c", "d", "e"]))
     assert cadence == "1 min"
     assert n_valid == 5
 

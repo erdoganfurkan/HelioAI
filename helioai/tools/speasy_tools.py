@@ -16,7 +16,7 @@ from helioai.tools.offload import run_blocking, speasy_gate
 log = logging.getLogger(__name__)
 
 
-def _sample_cadence(times, values) -> tuple[str, int]:
+def _sample_cadence(times, values) -> tuple[str, int, float | None]:
     """Median gap between samples that actually carry a measurement, and how many.
 
     Measured over the whole time grid instead, this reports the file's epoch spacing,
@@ -37,7 +37,10 @@ def _sample_cadence(times, values) -> tuple[str, int]:
         values: Matching values, already fill-blanked to NaN.
 
     Returns:
-        (human-readable cadence, number of samples carrying a measurement).
+        (human-readable cadence, number of samples carrying a measurement, the same
+        cadence in milliseconds or None). The number rides beside the string because a
+        recipe choosing a window in samples, or a join comparing two products' rates,
+        should not have to parse "3 s" back out of prose.
     """
     import numpy as np
 
@@ -54,18 +57,18 @@ def _sample_cadence(times, values) -> tuple[str, int]:
         pass  # non-numeric variable: the grid is all there is to measure
 
     if len(sample_times) < 2:
-        return "", n_valid
+        return "", n_valid, None
     try:
         med_ms = float(np.median(np.diff(sample_times.astype("datetime64[ms]").astype(float))))
     except Exception:
-        return "", n_valid
+        return "", n_valid, None
     if med_ms >= 3_600_000:
-        return f"{med_ms / 3_600_000:.4g} h", n_valid
+        return f"{med_ms / 3_600_000:.4g} h", n_valid, med_ms
     if med_ms >= 60_000:
-        return f"{med_ms / 60_000:.4g} min", n_valid
+        return f"{med_ms / 60_000:.4g} min", n_valid, med_ms
     if med_ms >= 1_000:
-        return f"{med_ms / 1_000:.4g} s", n_valid
-    return f"{med_ms:.4g} ms", n_valid
+        return f"{med_ms / 1_000:.4g} s", n_valid, med_ms
+    return f"{med_ms:.4g} ms", n_valid, med_ms
 
 
 async def get_timeseries(
@@ -221,7 +224,7 @@ def _get_timeseries_sync(
     # before the preview is thinned: `load_data()` hands back the full resolution, and
     # a cadence measured on the thinned copy would describe something the agent never
     # works with.
-    cadence, n_valid = _sample_cadence(times, values)
+    cadence, n_valid, cadence_ms = _sample_cadence(times, values)
 
     # Downsample if needed
     if n_points > max_points:
@@ -290,6 +293,7 @@ def _get_timeseries_sync(
         "units": str(units),
         "components": components,
         "cadence": cadence,
+        **({"cadence_ms": round(cadence_ms, 3)} if cadence_ms is not None else {}),
         "mission": mission,
         "instrument": instrument,
         "shape": shape,
@@ -409,11 +413,16 @@ def _data_quality(times, values, np, fillval=None, fill_mask=None) -> dict:
         missing_pct = round(100 * float(bad.sum()) / total, 1) if total else 0.0
 
         gaps: list[dict] = []
+        n_gaps = 0
         if len(times) > 2:
             deltas = np.diff(times.astype("datetime64[ms]").astype(float))
             med = float(np.median(deltas))
             if med > 0:
-                for i in np.where(deltas > 3 * med)[0][:10]:
+                where = np.where(deltas > 3 * med)[0]
+                n_gaps = int(where.size)
+                # The list is cut at ten so a gappy product does not flood the payload;
+                # the count says how many there really were.
+                for i in where[:10]:
                     gaps.append(
                         {
                             "start": str(times[i])[:19],
@@ -433,6 +442,7 @@ def _data_quality(times, values, np, fillval=None, fill_mask=None) -> dict:
         return {
             "missing_pct": missing_pct,
             "gaps": gaps,
+            "n_gaps": n_gaps,
             "outliers_5sigma": outliers,
             "notable": notable,
         }

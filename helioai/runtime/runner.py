@@ -32,6 +32,7 @@ from helioai.core.tool_exec import (
     cancel_pending,
     compact_history,
     emit_post_tool_events,
+    recipe_available,
     start_tool_calls,
     trusted_args,
     unknown_id_correction,
@@ -369,6 +370,7 @@ class Runner:
                 result, figure_verdict = await maybe_review(tc.name, result)
                 if figure_verdict:
                     yield make("figure_review", turn=turn, text=figure_verdict, **extra)
+                result = recipe_available(tc.name, tc.arguments, result, history)
                 for ev in emit_post_tool_events(
                     tc.name,
                     result,

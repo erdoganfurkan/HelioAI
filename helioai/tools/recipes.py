@@ -147,9 +147,50 @@ async def load_recipe(name: str) -> dict:
             "name": meta.get("name", name),
             "code": code,
             "metadata": meta,
+            "run_with": run_with(meta.get("name", name), code),
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+_GLOBALS_GET = re.compile(r"""globals\(\)\.get\(\s*["']([A-Za-z_]\w*)["']""")
+_PUBLIC_DEF = re.compile(r"^def\s+([A-Za-z]\w*)\s*\(", re.MULTILINE)
+
+
+def run_with(name: str, code: str) -> str:
+    """The one line that runs a recipe as shipped, read off its own source.
+
+    A model that has just read a recipe's code is one paste away from running a copy of
+    it in `run_python` — which is how a 54.85° θ_Bn came out of a 12-minute window the
+    recipe would never have chosen. The line names the tool and, exactly, what to bind:
+    the variables the recipe reads with `globals().get` when it is a script, its public
+    functions when it is a library. Not prose about what to do; the call itself.
+
+    Args:
+        name: The recipe.
+        code: Its source.
+
+    Returns:
+        A `run_recipe(...)` call template with the recipe's own input names or functions.
+    """
+    inputs = sorted(set(_GLOBALS_GET.findall(code)))
+    if inputs:
+        bound = ", ".join(f"{i!r}: ..." for i in inputs)
+        return (
+            f"run_recipe({name!r}, inputs={{{bound}}}) — bind the inputs you have (each a "
+            f"Python expression such as \"load_data('name')\" or a literal); the source above "
+            f"then runs verbatim on the session's data"
+        )
+    functions = [f for f in _PUBLIC_DEF.findall(code) if f != "export"]
+    if functions:
+        example = f"{functions[-1]}(...)"
+        return (
+            f"run_recipe({name!r}, inputs={{...}}, call={example!r}) — a library of functions "
+            f"({', '.join(functions[:6])}); bind their arguments as inputs and name the call"
+        )
+    return (
+        f"run_recipe({name!r}, inputs={{...}}) runs the source above verbatim on the session's data"
+    )
 
 
 _INPUT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

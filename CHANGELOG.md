@@ -212,6 +212,20 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   cannot be adjudicated later is not a measurement. Nothing here corrects the model. An
   unknown backend is refused where the API key is checked and by `helioai doctor`, which
   gains a `judgment` line. No site asks yet; this is the seam the next entries plug into.
+- **A shipped recipe is offered at the moment a hand-written copy of it runs, not after
+  the answer.** The recipe check (`recipe_bypassed`) reads the run's exports at the end of
+  the turn and annotates the reply — for the reader, once the model has stopped acting. On
+  the fourth live run of the quickstart the analyst loaded `theta_bn`, rewrote the formula
+  inline, exported `theta_bn` and reported 54.85° from a window the recipe would not have
+  chosen; nothing told it before it answered. The same signals now ride on the `run_python`
+  result itself, in both loops: `recipe_available` names the recipe, the reason
+  (`not_called`, `not_loaded`) and the exact `run_recipe(...)` line — read off the recipe's
+  own source, with the input names it binds through `globals().get`, or its public functions
+  when it is a library. `load_recipe` carries the same `run_with` line, so a model that has
+  just read a recipe sees the call, not only the code to paste. Both annotate and neither
+  blocks: the code ran, its exports stand, and the model may still argue. The lead's prompt
+  still does not name `run_recipe` — analysis is what the lead delegates (decided
+  2026-09-22, recorded in `tools/setup.py`).
 - **Tool results say what the system already knew, in fields, not in prose.** Five
   payload changes, each additive, from the same finding: HelioAI held facts in typed fields
   three calls before it asked a model to guess them from truncated English.

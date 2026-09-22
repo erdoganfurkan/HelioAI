@@ -147,6 +147,9 @@ def test_walk_meta_in_output() -> None:
     meta = docs[0]["meta"]
     assert meta["provider"] == "amda"
     assert meta["xmlid"] == "ace_np"
+    assert meta["region"] == "Heliosphere.NearEarth" and meta["region_source"] == "table", (
+        "no dataset published a target: the region is the table's guess and says so"
+    )
 
 
 def test_time_axes_are_not_indexed_as_products():
@@ -407,15 +410,21 @@ def test_open_collections_is_a_plain_open_when_nothing_is_legacy(tmp_path):
     assert second.configuration_json["hnsw"]["sync_threshold"] == HNSW_SYNC_THRESHOLD
 
 
-# ─────────────────────────── classify_measurement_types ────────────────────────
+# ─────────────────────────────── classify_products ───────────────────────────────
 
 
-def _answers(label, confidence):
+def _answers(label, confidence, region=None, region_confidence=0.0):
     from helioai.core.judgment import Answers
 
     return Answers(
-        values={"mtype": label if confidence >= 0.9 else None},
-        raw={"mtype": {"choice": label, "confidence": confidence, "probabilities": {}}},
+        values={
+            "mtype": label if confidence >= 0.9 else None,
+            "region": region if region_confidence >= 0.9 else None,
+        },
+        raw={
+            "mtype": {"choice": label, "confidence": confidence, "probabilities": {}},
+            "region": {"choice": region, "confidence": region_confidence, "probabilities": {}},
+        },
         model="jev-test",
         latency_ms=1.0,
     )
@@ -431,7 +440,7 @@ def test_classification_fills_the_empty_flags_the_contradicted_and_never_overwri
 
     from helioai.config import settings
     from helioai.core import judgment
-    from helioai.indexer import MEASUREMENT_TYPE_FLOOR, classify_measurement_types
+    from helioai.indexer import MEASUREMENT_TYPE_FLOOR, REGION_FLOOR, classify_products
 
     monkeypatch.setattr(settings.judgment, "backend", "jev")
     docs = [
@@ -452,7 +461,9 @@ def test_classification_fills_the_empty_flags_the_contradicted_and_never_overwri
 
     async def fake_batch(site, states, questions, *, concurrency=8, record_to=None):
         seen["site"], seen["states"], seen["record_to"] = site, states, record_to
-        assert set(questions) == {"mtype"} and questions["mtype"].floor == MEASUREMENT_TYPE_FLOOR
+        assert set(questions) == {"mtype", "region"}
+        assert questions["mtype"].floor == MEASUREMENT_TYPE_FLOOR
+        assert questions["region"].floor == REGION_FLOOR
         return [
             _answers("Ephemeris", 0.97),
             _answers("InstrumentStatus", 0.6),
@@ -461,11 +472,10 @@ def test_classification_fills_the_empty_flags_the_contradicted_and_never_overwri
         ]
 
     monkeypatch.setattr(judgment, "batch", fake_batch)
-    out = asyncio.run(classify_measurement_types(docs, tmp_path))
+    out = asyncio.run(classify_products(docs, tmp_path))
 
     assert (
-        seen["site"] == "index_measurement_type"
-        and seen["record_to"] == tmp_path / "judgment_index.jsonl"
+        seen["site"] == "index_classify" and seen["record_to"] == tmp_path / "judgment_index.jsonl"
     )
     assert "Measurement:" not in seen["states"][2]["product"], "the label is stripped before asking"
     filled = out[0]["meta"]
@@ -479,16 +489,118 @@ def test_classification_fills_the_empty_flags_the_contradicted_and_never_overwri
     assert out[2]["meta"]["measurement_type_jev"] == "ThermalPlasma"
     assert out[2]["meta"]["measurement_type_jev_confidence"] == 0.99
     assert "measurement_type_jev" not in out[3]["meta"], "Magnetic_Field agrees with MagneticField"
+    assert all("region" not in d["meta"] for d in out), "the judge abstained on every region"
+
+
+def test_classification_replaces_the_tables_region_and_keeps_the_archives(tmp_path, monkeypatch):
+    """Against 8 435 published AMDA targets the substring table agrees on 26.9 %; the judge is
+    on the right body 97.1 % of the time at confidence ≥ 0.9 and beats the table 75:1 where
+    they differ (2026-09-22). A guess is replaced or a silence filled; a publication stands."""
+    import asyncio
+
+    from helioai.config import settings
+    from helioai.core import judgment
+    from helioai.indexer import classify_products
+
+    monkeypatch.setattr(settings.judgment, "backend", "jev")
+    docs = [
+        {
+            "id": "amda/cce_mepa_ion_act",
+            "text": "ion counts. Mission: AMPTE CCE. Region: Heliosphere.NearEarth. Coverage: 1984-08-21 to 1989-01-12.",
+            "meta": {"name": "act", "region": "Heliosphere.NearEarth", "region_source": "table"},
+        },
+        {
+            "id": "cda/SILENT/x",
+            "text": "Some new mission. Units: nT. Coverage: 2020-01-01 to 2021-01-01.",
+            "meta": {"name": "x"},
+        },
+        {
+            "id": "amda/c1_b_gsm",
+            "text": "bx. Region: Earth.Magnetosheath. Coverage: 2000-12-02 to 2024-09-08.",
+            "meta": {"name": "bx", "region": "Earth.Magnetosheath", "region_source": "archive"},
+        },
+        {
+            "id": "ssc/mms1",
+            "text": "MMS1 spacecraft position. Units: km. Region: Earth.Magnetosphere.",
+            "meta": {"name": "mms1", "region": "Earth.Magnetosphere", "region_source": "table"},
+        },
+        {
+            "id": "cda/LOW/y",
+            "text": "Unsure product. Region: Mars.",
+            "meta": {"name": "y", "region": "Mars", "region_source": "table"},
+        },
+    ]
+    seen: dict = {}
+
+    async def fake_batch(site, states, questions, *, concurrency=8, record_to=None):
+        seen["states"] = states
+        return [
+            _answers("EnergeticParticles", 0.95, "Earth.Magnetosheath", 0.98),
+            _answers("MagneticField", 0.99, "Heliosphere.Inner", 0.93),
+            _answers("MagneticField", 0.99, "Earth.Magnetosphere", 0.99),
+            _answers("Ephemeris", 0.99, "Earth.Magnetosphere", 0.97),
+            _answers("Waves", 0.2, "Venus", 0.55),
+        ]
+
+    monkeypatch.setattr(judgment, "batch", fake_batch)
+    out = asyncio.run(classify_products(docs, tmp_path, verbose=True))
+
+    assert all("Region:" not in st["product"] for st in seen["states"]), (
+        "the table's guess is stripped before asking, like the archive's label"
+    )
+    replaced = out[0]
+    assert replaced["meta"]["region"] == "Earth.Magnetosheath"
+    assert (
+        replaced["meta"]["region_source"] == "jev" and replaced["meta"]["region_confidence"] == 0.98
+    )
+    assert replaced["text"] == (
+        "ion counts. Mission: AMPTE CCE. Measurement: EnergeticParticles. "
+        "Region: Earth.Magnetosheath. Coverage: 1984-08-21 to 1989-01-12."
+    ), "one region sentence, before the coverage, where the guess used to be"
+    filled = out[1]
+    assert (
+        filled["meta"]["region"] == "Heliosphere.Inner" and filled["meta"]["region_source"] == "jev"
+    )
+    assert filled["text"].endswith(
+        "Measurement: MagneticField. Region: Heliosphere.Inner. Coverage: 2020-01-01 to 2021-01-01."
+    )
+    archive = out[2]
+    assert (
+        archive["meta"]["region"] == "Earth.Magnetosheath"
+        and archive["meta"]["region_source"] == "archive"
+    )
+    assert (
+        "region_confidence" not in archive["meta"]
+        and "Region: Earth.Magnetosheath." in archive["text"]
+    )
+    confirmed = out[3]
+    assert confirmed["meta"]["region_source"] == "jev" and confirmed["text"].count("Region:") == 1
+    low = out[4]
+    assert low["meta"] == {"name": "y", "region": "Mars", "region_source": "table"}, (
+        "below the floor the guess stays, marked as the guess it is"
+    )
+    assert low["text"] == "Unsure product. Region: Mars."
 
 
 def test_classification_is_skipped_without_a_judging_backend(tmp_path, monkeypatch, capsys):
     import asyncio
 
     from helioai.config import settings
-    from helioai.indexer import classify_measurement_types
+    from helioai.indexer import classify_products
 
     monkeypatch.setattr(settings.judgment, "backend", "null")
     docs = [{"id": "cda/A/x", "text": "t", "meta": {"name": "x"}}]
-    assert asyncio.run(classify_measurement_types(docs, tmp_path, verbose=True)) == docs
+    assert asyncio.run(classify_products(docs, tmp_path, verbose=True)) == docs
     assert "skipping classification" in capsys.readouterr().out
     assert "measurement_type" not in docs[0]["meta"]
+
+
+def test_the_walk_says_where_a_region_came_from():
+    from helioai.indexer import _ssc_trajectory_doc
+
+    doc = _ssc_trajectory_doc(
+        {"__spz_uid__": "mms1", "__spz_name__": "MMS1", "Resolution": 60}, set()
+    )
+    assert (
+        doc["meta"]["region"] == "Earth.Magnetosphere" and doc["meta"]["region_source"] == "table"
+    )

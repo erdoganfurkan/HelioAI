@@ -226,10 +226,22 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   person to adjudicate, never replaced. A filled type carries `measurement_type_source:
   "jev"` and its confidence, and enters the text (`Measurement: X.`) where both search
   channels read it; every call is recorded to `judgment_index.jsonl` beside the index. On 50
-  live products: 20 filled, 2 flagged, 22 abstained. Without a judging backend the flag is a
-  no-op that says so. Separately, every product's text now ends with `Coverage: … to …`, as
-  the catalogue index has always said `Survey: … to …`: a year in a query used to match
-  nothing and only dilute the rest. Both change the index; a rebuild applies them.
+  live products: 20 filled, 2 flagged, 22 abstained. The same request asks the SPASE
+  *region*, because the one the indexer had was a guess: a 40-entry table matched as a
+  substring, which against AMDA's 8 435 published dataset targets agrees on 26.9 %, is
+  silent on 41 % and wrong on 32 % ("ac" inside "cce_mepa_ion_act" filed AMPTE/CCE
+  magnetosheath counts near L1). Measured on 200 of those products, target stripped: the
+  judge agrees exactly on 70 %, on the body — Earth, Jupiter, the heliosphere — on 97.1 %
+  at confidence ≥ 0.9, and where judge and table differ the judge is right 75 times to the
+  table's one; its confident disagreements with the archive are granularity in both
+  directions (Helios filed as Heliosphere, a Galileo Io flyby read as Jupiter). So a
+  published target is never touched, the table's guess is replaced or the silence filled
+  at or above 0.9 (`region_source: "jev"` and the confidence; below it the guess stays,
+  marked `table`), and every product now says where its region came from. Without a
+  judging backend the flag is a no-op that says so. Separately, every product's text now
+  ends with `Coverage: … to …`, as the catalogue index has always said `Survey: … to …`: a
+  year in a query used to match nothing and only dilute the rest. All of it changes the
+  index; a rebuild applies it.
 - **A shipped recipe is offered at the moment a hand-written copy of it runs, not after
   the answer.** The recipe check (`recipe_bypassed`) reads the run's exports at the end of
   the turn and annotates the reply — for the reader, once the model has stopped acting. On

@@ -221,9 +221,10 @@ def build_index(
         rebuild: Drop and re-create the collection instead of appending.
         batch_size: Documents per ChromaDB insert.
         verbose: Print per-provider progress to stdout.
-        classify: Ask the judgment backend for the SPASE measurement type of every
-            product the archive leaves untyped, before embedding (`--classify`; needs
-            `HELIOAI_JUDGMENT_BACKEND=jev`). See `classify_measurement_types`.
+        classify: Ask the judgment backend, before embedding, for the SPASE measurement
+            type of every product the archive leaves untyped and for the SPASE region of
+            every product whose region is the table's guess (`--classify`; needs
+            `HELIOAI_JUDGMENT_BACKEND=jev`). See `classify_products`.
 
     Returns:
         Number of parameters indexed (0 when speasy or chromadb is missing).
@@ -298,7 +299,7 @@ def build_index(
     if classify:
         import asyncio
 
-        docs = asyncio.run(classify_measurement_types(docs, chroma_dir, verbose=verbose))
+        docs = asyncio.run(classify_products(docs, chroma_dir, verbose=verbose))
 
     t0 = time.perf_counter()
     total = 0
@@ -368,34 +369,114 @@ MEASUREMENT_TYPE_INSTRUCTIONS = (
 )
 MEASUREMENT_TYPE_FLOOR = 0.9
 _LABEL_SENTENCE = re.compile(r"\s*Measurement:\s*[^.]*\.\s*")
+_REGION_SENTENCE = re.compile(r"\s*Region:\s*[A-Za-z0-9.]+\.(?=\s|$)")
+
+REGIONS: tuple[str, ...] = (
+    "Sun",
+    "Sun.Corona",
+    "Heliosphere",
+    "Heliosphere.Inner",
+    "Heliosphere.NearEarth",
+    "Heliosphere.Remote1AU",
+    "Heliosphere.Outer",
+    "Earth",
+    "Earth.Magnetosphere",
+    "Earth.Magnetosheath",
+    "Earth.Magnetosphere.Polar",
+    "Earth.Magnetosphere.Magnetotail",
+    "Earth.Magnetosphere.RadiationBelt",
+    "Earth.NearSurface",
+    "Earth.NearSurface.Ionosphere",
+    "Earth.NearSurface.AuroralRegion",
+    "Earth.NearSurface.EquatorialRegion",
+    "Earth.NearSurface.PolarCap",
+    "Mercury",
+    "Venus",
+    "Mars",
+    "Jupiter",
+    "Jupiter.Io",
+    "Jupiter.Europa",
+    "Jupiter.Ganymede",
+    "Jupiter.Callisto",
+    "Saturn",
+    "Saturn.Enceladus",
+    "Uranus",
+    "Neptune",
+    "Pluto",
+    "Comet",
+)
+"""The SPASE Region vocabulary AMDA publishes as dataset targets (30 values on 8 435
+products) plus the two the indexer's table uses and AMDA does not — the closed set a
+classifier chooses from."""
+
+REGION_INSTRUCTIONS = (
+    "In which SPASE Region was this archived data product observed? The region is the body "
+    "and domain the archive files the dataset under, decided by the mission and its orbit, "
+    "not by the physical quantity. Spacecraft at L1 or upstream of Earth (Wind, ACE, DSCOVR, "
+    "OMNI, SOHO) are Heliosphere.NearEarth; STEREO is Heliosphere.Remote1AU; Solar Orbiter, "
+    "Parker Solar Probe, Helios, MESSENGER cruise and BepiColombo cruise are "
+    "Heliosphere.Inner; Voyager and New Horizons beyond Saturn are Heliosphere.Outer; a "
+    "cruise phase or an interplanetary monitor with no nearer body is Heliosphere. "
+    "Earth-orbiting magnetospheric missions (Cluster, MMS, THEMIS, Geotail, Double Star, "
+    "GOES) are Earth.Magnetosphere unless the dataset is explicitly a magnetosheath, "
+    "magnetotail, polar or radiation-belt product; ground-based instruments (EISCAT, "
+    "magnetometer stations, indices such as Kp, AE, Dst) are Earth or Earth.NearSurface.*. "
+    "An orbiter of a planet is that planet (Juno, Galileo → Jupiter; Cassini → Saturn; "
+    "MAVEN, Mars Express → Mars; Venus Express → Venus; MESSENGER in orbit → Mercury); a "
+    "moon flyby product is Planet.Moon."
+)
+REGION_FLOOR = 0.9
 
 
 def _normalised_type(label: str | None) -> str:
     return "".join(ch for ch in str(label or "").split(",")[0].lower() if ch.isalnum())
 
 
-async def classify_measurement_types(
-    docs: list[dict], record_dir, *, verbose: bool = False
-) -> list[dict]:
-    """Fill `measurement_type` where the archive left it empty; flag it where the judge
-    disagrees with the archive. Never overwrites a published label.
+def _before_coverage(text: str, sentence: str) -> str:
+    """The text with one more sentence, placed before the coverage sentence — the dates
+    close every indexed text, as `_build_text` writes it."""
+    head, sep, tail = text.strip().partition(" Coverage: ")
+    return f"{head} {sentence}{sep}{tail}" if sep else f"{head} {sentence}"
 
-    The field is indexed on 15.6 % of the products — AMDA and CSA — and on none of CDA's
-    68 000, so every ranking signal built on it (`_rerank_penalty`) and every filter reaches
-    a sixth of the catalogue. Measured on 2026-09-22 against 200 products the archive had
-    labelled, label stripped from the text before asking: 76.5 % agreement, **89 % where the
-    judge's confidence is at least 0.9** (72 % of the items) — and the remaining confident
-    disagreements were the archive's errors (MMS FPI plasma moments labelled MagneticField,
-    a JADE density labelled EnergeticParticles, a Langmuir-probe density labelled
-    ElectricField). So the judge is better than its ground truth, and the floor is 0.9:
-    below it the field stays empty — abstention is a type — and a published label the judge
-    contradicts at or above it is kept and flagged as `measurement_type_jev`, for a person
-    to adjudicate, never replaced.
 
-    A filled type is written into the metadata (with `measurement_type_source: "jev"` and
-    the confidence) and into the text (`Measurement: X.`), where the dense and sparse
-    channels read it. Every call is recorded to `judgment_index.jsonl` in the index
-    directory. 37 ms per product at eight in flight: the whole catalogue in ~45 minutes.
+def _with_region_sentence(text: str, region: str) -> str:
+    """The text with `Region: X.` said once, where the table's guess used to be."""
+    return _before_coverage(_REGION_SENTENCE.sub("", text), f"Region: {region}.")
+
+
+async def classify_products(docs: list[dict], record_dir, *, verbose: bool = False) -> list[dict]:
+    """One judge call per product, two closed questions: the SPASE measurement type where
+    the archive left it empty, and the SPASE region where the indexer had only guessed.
+    Never overwrites anything the archive published.
+
+    **Measurement type.** The field is indexed on 15.6 % of the products — AMDA and CSA —
+    and on none of CDA's 68 000, so every ranking signal built on it (`_rerank_penalty`)
+    and every filter reaches a sixth of the catalogue. Measured on 2026-09-22 against 200
+    products the archive had labelled, label stripped from the text before asking: 76.5 %
+    agreement, **89 % where the judge's confidence is at least 0.9** (72 % of the items) —
+    and the remaining confident disagreements were the archive's errors (MMS FPI plasma
+    moments labelled MagneticField, a JADE density labelled EnergeticParticles, a
+    Langmuir-probe density labelled ElectricField). So the judge is better than its ground
+    truth, and the floor is 0.9: below it the field stays empty — abstention is a type —
+    and a published label the judge contradicts at or above it is kept and flagged as
+    `measurement_type_jev`, for a person to adjudicate, never replaced.
+
+    **Region.** `_get_region` guesses from a 40-entry table matched as a substring; against
+    AMDA's 8 435 published targets it agrees on 26.9 %, is silent on 41 % and wrong on 32 %
+    ("ac" inside "cce_mepa_ion_act" made AMPTE/CCE a near-Earth heliospheric product).
+    Measured the same day on 200 of those products, target stripped: the judge agrees
+    exactly on 70 %, **on the body (Earth, Jupiter, Heliosphere…) on 97.1 % at confidence
+    ≥ 0.9**, and where judge and table differ the judge is right 75 times to the table's
+    one. Its confident disagreements with the archive are granularity, in both directions
+    (Helios filed as Heliosphere, a Galileo Io flyby read as Jupiter), so a published target
+    is never flagged — it stands. The table's guess is not a publication: at or above the
+    floor the judge's region replaces it, or fills the silence, with `region_source: "jev"`
+    and the confidence; below it the guess stays, marked as the guess it is.
+
+    Both answers come from one request per product; both sentences the text carried are
+    stripped before asking, so the judge reads the product, not the labels. Every call is
+    recorded to `judgment_index.jsonl` in the index directory. ~70 ms per product at eight
+    in flight: the whole catalogue in about an hour and a half.
 
     Args:
         docs: `{id, text, meta}` as `_walk` collects them.
@@ -415,41 +496,70 @@ async def classify_measurement_types(
                 "skipping classification"
             )
         return docs
-    question = {
+    questions = {
         "mtype": judgment.Choice(
             MEASUREMENT_TYPE_INSTRUCTIONS, MEASUREMENT_TYPES, floor=MEASUREMENT_TYPE_FLOOR
-        )
+        ),
+        "region": judgment.Choice(REGION_INSTRUCTIONS, REGIONS, floor=REGION_FLOOR),
     }
-    states = [{"product": _LABEL_SENTENCE.sub(" ", d["text"]).strip()} for d in docs]
+    states = [
+        {"product": _REGION_SENTENCE.sub("", _LABEL_SENTENCE.sub(" ", d["text"])).strip()}
+        for d in docs
+    ]
     answers = await judgment.batch(
-        "index_measurement_type",
+        "index_classify",
         states,
-        question,
+        questions,
         record_to=Path(record_dir) / "judgment_index.jsonl",
     )
     filled = flagged = abstained = 0
+    r_filled = r_replaced = r_confirmed = r_abstained = 0
     for doc, answer in zip(docs, answers, strict=True):
+        meta = doc["meta"]
         label = answer["mtype"] if answer is not None else None
         if label is None:
             abstained += 1
+        else:
+            published = meta.get("measurement_type")
+            confidence = float((answer.raw.get("mtype") or {}).get("confidence") or 0.0)
+            if not published:
+                meta["measurement_type"] = label
+                meta["measurement_type_source"] = "jev"
+                meta["measurement_type_confidence"] = round(confidence, 3)
+                doc["text"] = _before_coverage(doc["text"], f"Measurement: {label}.")
+                filled += 1
+            elif _normalised_type(published) != _normalised_type(label):
+                meta["measurement_type_jev"] = label
+                meta["measurement_type_jev_confidence"] = round(confidence, 3)
+                flagged += 1
+
+        if meta.get("region_source") == "archive":
             continue
-        meta = doc["meta"]
-        published = meta.get("measurement_type")
-        confidence = float((answer.raw.get("mtype") or {}).get("confidence") or 0.0)
-        if not published:
-            meta["measurement_type"] = label
-            meta["measurement_type_source"] = "jev"
-            meta["measurement_type_confidence"] = round(confidence, 3)
-            doc["text"] = f"{doc['text'].rstrip()} Measurement: {label}."
-            filled += 1
-        elif _normalised_type(published) != _normalised_type(label):
-            meta["measurement_type_jev"] = label
-            meta["measurement_type_jev_confidence"] = round(confidence, 3)
-            flagged += 1
+        region = answer["region"] if answer is not None else None
+        if region is None:
+            r_abstained += 1
+            continue
+        guess = meta.get("region")
+        confidence = float((answer.raw.get("region") or {}).get("confidence") or 0.0)
+        if guess == region:
+            r_confirmed += 1
+        elif guess:
+            r_replaced += 1
+        else:
+            r_filled += 1
+        meta["region"] = region
+        meta["region_source"] = "jev"
+        meta["region_confidence"] = round(confidence, 3)
+        doc["text"] = _with_region_sentence(doc["text"], region)
     if verbose:
         print(
             f"[indexer] measurement types: {filled} filled, {flagged} published labels flagged, "
             f"{abstained} abstained (floor {MEASUREMENT_TYPE_FLOOR}), of {len(docs)}"
+        )
+        print(
+            f"[indexer] regions: {r_filled} filled, {r_replaced} table guesses replaced, "
+            f"{r_confirmed} confirmed, {r_abstained} abstained (floor {REGION_FLOOR}); "
+            f"published targets untouched"
         )
     return docs
 
@@ -625,6 +735,9 @@ def _walk(
                         meta_entry["measurement_type"] = mtype
                     if region:
                         meta_entry["region"] = region
+                        meta_entry["region_source"] = (
+                            "archive" if (parent_meta or {}).get("region") else "table"
+                        )
                     if cov_start:
                         meta_entry["start_time"] = cov_start
                     if cov_stop:
@@ -671,6 +784,7 @@ def _ssc_trajectory_doc(child_vars: dict, skip_ids: set[str]) -> dict | None:
     meta: dict = {"name": name, "units": "km", "xmlid": uid, "provider": "ssc"}
     if region:
         meta["region"] = region
+        meta["region_source"] = "table"
     if cov_start:
         meta["start_time"] = cov_start
     if cov_stop:

@@ -30,6 +30,23 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   dense top-50 and is rank 1 now, for 0.7 → 1.2 ms per query; on the 30 HelioBench n1
   queries recall@1 moves from 53.3 % to 56.7 %. A `helioai index` run applies both to an
   existing index.
+- **The parameter ranking uses what the index already knew.** Three signals of
+  `_rerank_penalty` were dead or missing, each measured on the 30 HelioBench n1 queries
+  replayed in five processes with `HelioBench/scripts/retrieval_replay.py` (zero tokens,
+  ranks identical across processes throughout). The mission penalty matched `\bmms\b` and
+  therefore never "mms1", "c1", "sta" or "vg1" — silent on every multi-spacecraft mission
+  exactly when the user named the spacecraft: each mission now has a query pattern with its
+  numbered forms (THEMIS-E's "the" left out), and the one MMS task moved from rank 13 to 3,
+  `amda/c1_b_gsm` no longer heading an "MMS1 FGM" search (recall@3 86.7 → 90.0 %, MRR 0.727
+  → 0.736). `measurement_type`, indexed on 12 850 products and consulted by nothing, now
+  demotes a typed product that measures another quantity than the query names and leaves
+  the 84 % without a type untouched; and a product whose coverage cannot overlap the
+  download window is demoted before the cut, where it used to be merely flagged inside the
+  top-k after it — `search` takes the window, the tool passes the one it had. Widening the
+  candidate pool (`hybrid_fetch_k` 50 → 100 / 200, or the BM25 cap alone) was measured and
+  rejected: MRR fell, two accepted products left the top-k. With the wider dense beam,
+  "MMS1 spacecraft position GSE 2019" ranks `amda/mms1_xyz_gse` and `ssc/mms1` first and
+  second, where a 2026 IMAP position led before.
 - **`superposed_epoch` no longer refuses `nT (1min)` against `nT`.** CDAWeb labels some
   products with their cadence in parentheses after the unit; a live composite of Wind
   `BF1` events was refused three times as "incompatible units" until the caller dropped

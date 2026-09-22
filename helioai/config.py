@@ -252,6 +252,14 @@ class RAGConfig:
     discards the dense+sparse consensus that makes exact-code matching work. The
     plumbing sat disabled for a year and was removed; only a domain-tuned reranker
     would be worth adding back.
+
+    `hybrid_fetch_k` stays at 50 for the same kind of reason. Raising it to 100 or 200,
+    or the BM25 cap alone to 100, was measured on 2026-09-22 against the 30 HelioBench
+    n1 queries: MRR fell from 0.736 to 0.724, 0.712 and 0.729, because a wider pool lets
+    an unpenalised candidate from deep in both lists climb over a relevant one that
+    carries a small penalty, and two accepted products dropped out of the top-k
+    altogether. The product the raise was meant to rescue (`ssc/mms1`, rank 54 in BM25)
+    is reached through the dense channel instead, once `ef_search` looks wide enough.
     """
 
     chroma_dir: Path = field(default_factory=lambda: _DATA / "chroma")

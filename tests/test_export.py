@@ -470,6 +470,16 @@ def test_exported_helpers_accept_what_the_sandbox_helpers_accept() -> None:
     assert ns["mid"][0] == pytest.approx(20.0)
 
 
+def test_the_exported_magnitude_refuses_what_the_sandbox_one_refuses() -> None:
+    """Two copies of one function: a shape the sandbox refuses must be refused by the
+    notebook too, or the exported notebook diverges from the run it reproduces."""
+    from helioai.export import to_standalone
+
+    out = to_standalone("mag = magnitude(np.zeros((5, 32)))\n", {"datasets": {}})
+    with pytest.raises(ValueError, match=r"got shape \(5, 32\)"):
+        exec(out, {})  # noqa: S102
+
+
 def test_strip_known_imports_keeps_names_the_header_does_not_provide() -> None:
     """Audit probe: `from numpy import mean` was stripped because its root is numpy,
     but the header only binds `np` — the cell then died on NameError.

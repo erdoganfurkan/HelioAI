@@ -59,6 +59,12 @@ _MAGNITUDE_DEF = '''\
 def magnitude(vectors):
     """|V| of an N×3 array where a data gap stays NaN (nansum would read it as 0)."""
     arr = clean(vectors)
+    if arr.ndim not in (1, 2) or arr.shape[-1] != 3:
+        raise ValueError(
+            f"magnitude expects an (N, 3) array of vector components, got shape {arr.shape}: "
+            "pass the three components (for instance b[:, :3]); a spectrogram or a scalar "
+            "series has no vector magnitude"
+        )
     return np.sqrt(np.sum(arr**2, axis=-1))'''
 
 _INTERP_TO_DEF = '''\

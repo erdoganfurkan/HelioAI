@@ -83,11 +83,21 @@ def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     apart. The store is redirected too: its database path was fixed at import from the
     same singleton, so patching `data_dir` alone still wrote `sessions.db` in place.
     A test that needs another layout patches over this; the default is now hermetic.
+
+    The *default* data directory — `<repo>/data` from a clone — is redirected too, and
+    the reason is written in a moved index: `helioai migrate-storage` moves `chroma/`
+    from the default directory to the configured one whenever the two differ, so with
+    only `settings` redirected its test moved the checkout's real `data/chroma` into
+    `tmp_path` — a 348 MB index under construction, twice in one evening (2026-09-22).
+    Anything that resolves "where the data was" must land in the sandbox with the rest.
     """
+    from helioai import config
     from helioai.config import settings
     from helioai.core import session
     from helioai.tools import sandbox
 
+    legacy = tmp_path / "legacy-data"
+    monkeypatch.setattr(config, "_default_data_dir", lambda: legacy)
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(settings.rag, "chroma_dir", tmp_path / "chroma")
     monkeypatch.setattr(settings.catalogs, "catalogs_dir", tmp_path / "catalogs")

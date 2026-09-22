@@ -72,7 +72,16 @@ def test_cleanup_old_runs_spares_user_homes(_data_dir):
 
 
 def test_migrate_storage_idempotent(_data_dir, monkeypatch):
+    from helioai import config
     from helioai.interfaces.cli import _run_migrate_storage
+
+    # The split-directory step moves `chroma/` from the *default* data directory to the
+    # configured one. Both live under tmp_path here (the autouse fixture redirects the
+    # default too); the assertion below is what makes that redirection load-bearing.
+    legacy_root = config._default_data_dir()
+    assert str(legacy_root).startswith(str(_data_dir.parent)), legacy_root
+    (legacy_root / "chroma").mkdir(parents=True)
+    (legacy_root / "chroma" / "marker").write_text("index")
 
     # legacy flat catalog + profile
     legacy_cat = _data_dir / "catalogs"
@@ -88,6 +97,10 @@ def test_migrate_storage_idempotent(_data_dir, monkeypatch):
     _run_migrate_storage()
     assert (_data_dir / "users" / "web" / "catalogs" / "icmes.json").exists()
     assert (_data_dir / "users" / "vincent" / "profile.md").read_text() == "vincent profile"
+    assert (settings.rag.chroma_dir / "marker").exists(), (
+        "the legacy index moved to the configured dir"
+    )
+    assert not (legacy_root / "chroma").exists()
 
     # rerun: no crash, no duplication
     _run_migrate_storage()

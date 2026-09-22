@@ -37,7 +37,8 @@ def test_the_code_assembles_the_date_and_none_means_not_decided():
     """The judge names components over closed sets; ordering dates is arithmetic."""
     full = contract_fields(
         _answers(
-            deliverable="value",
+            wants_value=True,
+            wants_figure=False,
             quantity="MagneticField",
             frame="GSM",
             year="2015",
@@ -48,6 +49,7 @@ def test_the_code_assembles_the_date_and_none_means_not_decided():
         )
     )
     assert full["date"] == "2015-03-17" and full["date_precision"] == "day"
+    assert full["deliverable"] == "value" and full["wants_value"] is True
     assert full["quantity"] == "MagneticField" and full["frame"] == "GSM"
     assert full["event_named"] is True and full["uncertainty_required"] is False
     assert full["method_named"] is None, "abstained is None, not False"
@@ -57,6 +59,16 @@ def test_the_code_assembles_the_date_and_none_means_not_decided():
     assert month_only["date"] == "2004-11" and month_only["date_precision"] == "month"
     year_only = contract_fields(_answers(year="2004"))
     assert year_only["date"] == "2004" and year_only["date_precision"] == "year"
+    mixed = contract_fields(_answers(wants_value=True, wants_figure=True, wants_catalogue=False))
+    assert mixed["deliverable"] == "value+figure", "a plot and a number are two deliverables"
+    none_wanted = contract_fields(
+        _answers(
+            wants_value=False, wants_figure=False, wants_catalogue=False, wants_procedure=False
+        )
+    )
+    assert none_wanted["deliverable"] == "explanation"
+    undecided = contract_fields(_answers(wants_value=False, wants_figure=None))
+    assert undecided["deliverable"] is None, "one kind undecided and none wanted: not a contract"
     nothing = contract_fields(_answers(quantity=judgment.NONE))
     assert nothing["date"] is None and nothing["quantity"] is None
 
@@ -67,13 +79,13 @@ async def test_intent_contract_asks_the_question_alone_and_abstains_on_blank(mon
 
     async def fake_ask(site, state, questions, *, decided=None):
         seen.update(site=site, state=state, questions=questions)
-        return _answers(deliverable="figure")
+        return _answers(wants_figure=True)
 
     monkeypatch.setattr(judgment, "ask", fake_ask)
     assert (await judgment.intent_contract("   ")) is None and not seen
     answers = await judgment.intent_contract("plot Bz")
     assert seen["site"] == "intent" and seen["state"] == {"question": "plot Bz"}
-    assert seen["questions"] is INTENT_QUESTIONS and answers["deliverable"] == "figure"
+    assert seen["questions"] is INTENT_QUESTIONS and answers["wants_figure"] is True
 
 
 async def _collect(gen):
@@ -95,7 +107,7 @@ async def test_a_turn_with_the_judge_on_emits_one_intent_event_and_writes_no_mes
     async def fake_ask(site, state, questions, *, decided=None):
         await asyncio.sleep(0.01)
         return _answers(
-            deliverable="value", quantity="MagneticField", year="2015", month="03", day="17"
+            wants_value=True, quantity="MagneticField", year="2015", month="03", day="17"
         )
 
     monkeypatch.setattr(judgment, "ask", fake_ask)
@@ -111,12 +123,9 @@ async def test_a_turn_with_the_judge_on_emits_one_intent_event_and_writes_no_mes
     assert intent["checks"]["frame"] is None and intent["checks"]["quantity"] is None, (
         "a prose turn loaded nothing: the joins had nothing to compare and say so"
     )
-    assert intent["checks"]["responsiveness"]["deliverable"] == {
-        "asked": "value",
-        "claims": 0,
-        "exports": 0,
-        "match": False,
-    }
+    assert intent["checks"]["responsiveness"]["deliverable"]["missing"] == ["value"], (
+        "a value was asked and the prose answer named none"
+    )
     history_on = agent_loop.store.get_or_create("u", "s-on")
     assert [m.role for m in history_on] == ["user", "assistant"], "the contract enters no message"
 

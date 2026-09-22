@@ -34,6 +34,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
+from helioai.core.judgment import DELIVERABLES
 from helioai.tools import rag
 
 UNCERTAINTY_WORDS = re.compile(
@@ -41,10 +42,6 @@ UNCERTAINTY_WORDS = re.compile(
     r"(?:[_\s-]|$)|±",
     re.I,
 )
-
-_FIGURE_DELIVERABLES = frozenset({"figure"})
-_VALUE_DELIVERABLES = frozenset({"value"})
-_CATALOGUE_DELIVERABLES = frozenset({"catalogue"})
 
 
 def checks(contract: dict, artifacts: list[dict], claims: list[dict]) -> dict[str, Any]:
@@ -164,25 +161,24 @@ def _responsiveness(
         claimed = any(UNCERTAINTY_WORDS.search(n) for n in named)
         out["uncertainty"] = {"required": required, "claimed": claimed}
 
-    deliverable = contract.get("deliverable")
-    if deliverable in _FIGURE_DELIVERABLES:
-        out["deliverable"] = {"asked": deliverable, "figures": figures, "match": figures > 0}
-    elif deliverable in _VALUE_DELIVERABLES:
-        n = len(claims) + len(exports)
+    wanted = [kind for kind in DELIVERABLES if contract.get(f"wants_{kind}") is True]
+    if wanted:
+        # A procedure is delivered in the reply's prose, which the joins do not read; it
+        # is asked, recorded, and never counted as missing.
+        produced = {"value": len(claims) + len(exports), "figure": figures, "catalogue": catalogues}
+        checkable = [kind for kind in wanted if kind in produced]
+        missing = [kind for kind in checkable if produced[kind] == 0]
         out["deliverable"] = {
-            "asked": deliverable,
+            "asked": wanted,
+            "figures": figures,
             "claims": len(claims),
             "exports": len(exports),
-            "match": n > 0,
-        }
-    elif deliverable in _CATALOGUE_DELIVERABLES:
-        out["deliverable"] = {
-            "asked": deliverable,
             "catalogues": catalogues,
-            "match": catalogues > 0,
+            "missing": missing,
+            "match": (not missing) if checkable else None,
         }
-    elif deliverable:
-        out["deliverable"] = {"asked": deliverable, "match": None}
+    elif contract.get("deliverable"):
+        out["deliverable"] = {"asked": [contract["deliverable"]], "missing": [], "match": None}
 
     return out or None
 
@@ -211,6 +207,6 @@ def summary(check: dict[str, Any] | None) -> list[str]:
     if unc and unc.get("required") and not unc.get("claimed"):
         out.append("uncertainty asked, none claimed")
     deliv = resp.get("deliverable")
-    if deliv and deliv.get("match") is False:
-        out.append(f"{deliv['asked']} asked, none produced")
+    for kind in (deliv or {}).get("missing") or []:
+        out.append(f"{kind} asked, none produced")
     return out

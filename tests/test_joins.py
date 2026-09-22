@@ -15,6 +15,10 @@ def _card(param_id, **fields):
 def _contract(**fields):
     base = {
         "deliverable": None,
+        "wants_value": None,
+        "wants_figure": None,
+        "wants_catalogue": None,
+        "wants_procedure": None,
         "quantity": None,
         "frame": None,
         "event_named": None,
@@ -145,22 +149,41 @@ def test_responsiveness_reads_claims_exports_and_figures():
     ]
     claims = [{"name": "theta_bn_deg", "value": 54.3, "units": "deg", "source": "recipe"}]
 
-    asked = _contract(deliverable="value", uncertainty_required=True)
+    asked = _contract(wants_value=True, uncertainty_required=True)
     resp = joins.checks(asked, artifacts, claims)["responsiveness"]
     assert resp["uncertainty"] == {"required": True, "claimed": False}
-    assert resp["deliverable"] == {"asked": "value", "claims": 1, "exports": 1, "match": True}
+    assert resp["deliverable"] == {
+        "asked": ["value"],
+        "figures": 1,
+        "claims": 1,
+        "exports": 1,
+        "catalogues": 0,
+        "missing": [],
+        "match": True,
+    }
 
     with_spread = artifacts + [
         {"kind": "exports", "tool": "run_python", "values": {"theta_bn_window_spread_deg": 4.3}}
     ]
     assert joins.checks(asked, with_spread, claims)["responsiveness"]["uncertainty"]["claimed"]
 
-    figure = joins.checks(_contract(deliverable="figure"), [], [])["responsiveness"]
-    assert figure["deliverable"] == {"asked": "figure", "figures": 0, "match": False}
-    catalogue = joins.checks(_contract(deliverable="catalogue"), [], [])["responsiveness"]
-    assert catalogue["deliverable"]["match"] is False
+    both = joins.checks(_contract(wants_value=True, wants_figure=True), [], [])["responsiveness"]
+    assert both["deliverable"]["asked"] == ["value", "figure"]
+    assert (
+        both["deliverable"]["missing"] == ["value", "figure"]
+        and both["deliverable"]["match"] is False
+    )
+    figure_only = joins.checks(_contract(wants_value=True, wants_figure=True), artifacts, [])
+    assert figure_only["responsiveness"]["deliverable"]["missing"] == [], "an export is a value"
+
+    catalogue = joins.checks(_contract(wants_catalogue=True), [], [])["responsiveness"]
+    assert catalogue["deliverable"]["missing"] == ["catalogue"]
+    procedure = joins.checks(_contract(wants_procedure=True), [], [])["responsiveness"]
+    assert (
+        procedure["deliverable"]["missing"] == [] and procedure["deliverable"]["match"] is None
+    ), "a procedure lives in the prose the joins do not read: asked, never missing"
     explanation = joins.checks(_contract(deliverable="explanation"), [], [])["responsiveness"]
-    assert explanation["deliverable"] == {"asked": "explanation", "match": None}
+    assert explanation["deliverable"] == {"asked": ["explanation"], "missing": [], "match": None}
     assert joins.checks(_contract(), [], [])["responsiveness"] is None
 
 
@@ -184,7 +207,7 @@ def test_summary_names_only_the_joins_that_disagreed():
         },
         "responsiveness": {
             "uncertainty": {"required": True, "claimed": False},
-            "deliverable": {"asked": "figure", "figures": 0, "match": False},
+            "deliverable": {"asked": ["value", "figure"], "missing": ["figure"], "match": False},
         },
     }
     assert joins.summary(disagreed) == [

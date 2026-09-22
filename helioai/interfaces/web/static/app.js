@@ -406,7 +406,7 @@ function intentMismatches(checks) {
   if (w && (w.short || []).length) out.push(`${w.short.length} series short of the window asked`);
   if (q && q.match === false) out.push(`${q.asked} asked, loaded ${Object.keys(q.loaded || {}).sort().join(', ')}`);
   if (r.uncertainty && r.uncertainty.required && !r.uncertainty.claimed) out.push('uncertainty asked, none claimed');
-  if (r.deliverable && r.deliverable.match === false) out.push(`${r.deliverable.asked} asked, none produced`);
+  for (const kind of (r.deliverable && r.deliverable.missing) || []) out.push(`${kind} asked, none produced`);
   return out;
 }
 

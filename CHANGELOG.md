@@ -287,14 +287,18 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   explanation, a procedure), which SPASE measurement type the request is about — a `Choice`
   over the index's own vocabulary, so a later comparison with what was retrieved is an
   exact string match — which coordinate frame, and whether an event, an uncertainty, a
-  method or two spacecraft were named. A date is asked as three closed choices (year,
-  month, day) and assembled by the code with its precision; the judge never writes a
-  date, or any free text, into the system. Each field decides or abstains (`None`) —
-  "the judge did not say" and "the request named nothing" are kept apart — and every call
-  is recorded in `judgment.jsonl`. The event is rendered by the CLI, the web client and the
-  magic, and read by nothing yet: the six HelioBench questions with an `expects` block were
-  put through it and every decided field agreed with the key; the deliverable abstains on
-  a request that asks for a plot and a number at once, which is the field's next shape.
+  method or two spacecraft were named. What is wanted is four yes/no questions, not one
+  choice: asked as a choice, the judge abstained on every request that wanted two things
+  at once — "plot |B| and compute θ_Bn" is a figure *and* a value, the commonest shape of
+  a question — and asked one kind at a time it answers `value+figure` at 0.96–0.99 on all
+  three such bench questions, and reads a catalogue named as an *input* as not wanted
+  (0.09). A date is asked as three closed choices (year, month, day) and assembled by the
+  code with its precision; the judge never writes a date, or any free text, into the
+  system. Each field decides or abstains (`None`) — "the judge did not say" and "the
+  request named nothing" are kept apart — and every call is recorded in `judgment.jsonl`.
+  The event is rendered by the CLI, the web client and the magic, and read by nothing
+  yet: the six HelioBench questions with an `expects` block were put through it and every
+  decided field agreed with the key.
   `RunContext` carries the question (`query`) for the sites that follow. The event then
   carries, under `checks`, what the turn did about the contract — four joins with no model
   in them (`helioai.core.joins`), each an exact operation on fields the turn already had:

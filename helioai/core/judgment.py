@@ -338,13 +338,26 @@ _MONTHS = tuple(f"{m:02d}" for m in range(1, 13))
 _DAYS = tuple(f"{d:02d}" for d in range(1, 32))
 NONE = "none"
 
+DELIVERABLES: tuple[str, ...] = ("value", "figure", "catalogue", "procedure")
+"""What a request may want delivered, each asked as its own yes/no: one Choice over the
+same set abstained on every request that wanted two things at once — "plot |B| and compute
+θ_Bn" is a figure *and* a value — and abstaining on the commonest shape of a question is
+not a contract. A request that wants none of the four is an explanation."""
+
 INTENT_QUESTIONS: dict[str, Question] = {
-    "deliverable": Choice(
-        "What does the request want delivered? A measured value or number; a figure or plot; "
-        "a catalogue or list of events; an explanation with no computation; a procedure or "
-        "code to run elsewhere; or something else.",
-        ("value", "figure", "catalogue", "explanation", "procedure", "other"),
-        floor=0.6,
+    "wants_value": Noul(
+        "Does the request ask for a measured value, a number or a quantitative result to be "
+        "reported — an angle, a density, a position, a time, a count, a peak?"
+    ),
+    "wants_figure": Noul("Does the request ask for a figure, a plot or a visualisation?"),
+    "wants_catalogue": Noul(
+        "Does the request ask for a list or catalogue of events, intervals or datasets as the "
+        "thing to be delivered — not a catalogue to be used as an input?"
+    ),
+    "wants_procedure": Noul(
+        "Is the answer itself meant to be code, a script or written step-by-step instructions "
+        "for the user to run later — as opposed to a request that the result be computed and "
+        "reported now, whatever tools or recipes it tells the system to use on the way?"
     ),
     "quantity": Choice(
         "Which SPASE measurement type is the physical quantity the request is about? "
@@ -407,12 +420,21 @@ def contract_fields(answers: Answers) -> dict[str, Any]:
 
     A Choice of `none`, or an abstention, is `None` in the payload — the reader must not
     mistake "the judge did not say" for "the request named nothing". `date` is the ISO day,
-    month or year the components make, with `date_precision` saying which.
+    month or year the components make, with `date_precision` saying which; `deliverable`
+    is the kinds wanted joined with `+` ("value+figure"), `explanation` when all four were
+    decided no, `None` when any of them was left undecided and none was yes.
     """
     out: dict[str, Any] = {}
     for name in INTENT_QUESTIONS:
         value = answers.get(name)
         out[name] = None if value in (None, NONE) else value
+    wanted = [kind for kind in DELIVERABLES if out.get(f"wants_{kind}") is True]
+    if wanted:
+        out["deliverable"] = "+".join(wanted)
+    elif all(out.get(f"wants_{kind}") is False for kind in DELIVERABLES):
+        out["deliverable"] = "explanation"
+    else:
+        out["deliverable"] = None
     year, month, day = out.pop("year"), out.pop("month"), out.pop("day")
     if year and month and day:
         out["date"], out["date_precision"] = f"{year}-{month}-{day}", "day"

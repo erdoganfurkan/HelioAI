@@ -269,6 +269,44 @@ async def test_get_timeseries_downloads_a_partial_overlap(monkeypatch) -> None:
     assert result["available_stop"] == "2005-12-31T23:59:59", "bounds as keys, not only prose"
 
 
+def test_a_series_that_stops_short_of_the_window_says_so() -> None:
+    """The coverage check reads what the archive publishes; a series can still stop short
+    inside that coverage. The 2026-09-18 run had the numbers to see it and no sentence."""
+    from helioai.tools.speasy_tools import _window_note
+
+    start, stop = "2004-11-07T17:00:00", "2004-11-07T19:00:00"
+    assert (
+        _window_note(
+            np,
+            start,
+            stop,
+            np.datetime64("2004-11-07T17:00:01"),
+            np.datetime64("2004-11-07T18:59:58"),
+        )
+        is None
+    )
+    note = _window_note(
+        np, start, stop, np.datetime64("2004-11-07T17:00:01"), np.datetime64("2004-11-07T17:59:58")
+    )
+    assert (
+        note
+        == "The series ends 1.0 h before the requested stop — the window is not fully covered by data."
+    )
+    note = _window_note(
+        np, start, stop, np.datetime64("2004-11-07T17:30:00"), np.datetime64("2004-11-07T18:20:00")
+    )
+    assert "starts 30 min after the requested start" in note and "ends 40 min before" in note
+    day = _window_note(
+        np,
+        "2004-11-07T00:00:00",
+        "2004-11-08T00:00:00",
+        np.datetime64("2004-11-07T00:00:01"),
+        np.datetime64("2004-11-07T23:59:58"),
+    )
+    assert day is None, "a cadence offset at a file boundary is not a gap"
+    assert _window_note(np, "garbage", stop, 1, 2) is None
+
+
 async def test_get_timeseries_says_what_it_obtained_beside_what_was_asked(monkeypatch) -> None:
     """The series' own first and last timestamps, so a window clipped to the archive or to
     a gap is visible as two dates, not inferred from a sentence."""
@@ -282,6 +320,7 @@ async def test_get_timeseries_says_what_it_obtained_beside_what_was_asked(monkey
     assert result["obtained_stop"] == "2005-01-17T12:04:00"
     keys = list(result)
     assert keys.index("obtained_start") == keys.index("stop") + 1, "beside what was asked"
+    assert result["window_note"].startswith("The series starts 12.0 h after the requested start")
 
 
 async def test_get_timeseries_is_silent_when_fully_covered(monkeypatch) -> None:

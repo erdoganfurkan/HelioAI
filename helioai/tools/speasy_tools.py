@@ -307,7 +307,48 @@ def _get_timeseries_sync(
         result["coverage_note"] = coverage_note
         if available:
             result["available_start"], result["available_stop"] = available
+    window_note = _window_note(np, start, stop, times[0], times[-1])
+    if window_note:
+        result["window_note"] = window_note
     return result
+
+
+def _window_note(np, start: str, stop: str, first, last) -> str | None:
+    """One sentence when the series does not reach the edges of the requested window.
+
+    The coverage check compares the window with what the archive *publishes*; a series can
+    still stop short inside that coverage — a data gap at the edge, a file not yet
+    delivered — and then `start`/`stop` say one thing and the data another. The 2026-09-18
+    run asked for a window that ended at the shock and got a series with no downstream;
+    the numbers were there to see it (`obtained_stop`) and nothing said it. Tolerance is
+    the larger of one minute and 5 % of the window, so an ordinary cadence offset or a
+    daily file boundary passes in silence.
+    """
+    try:
+        req0, req1 = np.datetime64(start[:19]), np.datetime64(stop[:19])
+        got0, got1 = np.datetime64(first, "s"), np.datetime64(last, "s")
+        span = (req1 - req0) / np.timedelta64(1, "s")
+        tol = max(60.0, 0.05 * float(span))
+        late = (got0 - req0) / np.timedelta64(1, "s")
+        early = (req1 - got1) / np.timedelta64(1, "s")
+    except Exception:
+        return None
+    parts = []
+    if late > tol:
+        parts.append(f"starts {_fmt_span(late)} after the requested start")
+    if early > tol:
+        parts.append(f"ends {_fmt_span(early)} before the requested stop")
+    if not parts:
+        return None
+    return "The series " + " and ".join(parts) + " — the window is not fully covered by data."
+
+
+def _fmt_span(seconds: float) -> str:
+    if seconds >= 86400:
+        return f"{seconds / 86400:.1f} d"
+    if seconds >= 3600:
+        return f"{seconds / 3600:.1f} h"
+    return f"{seconds / 60:.0f} min"
 
 
 _PROVIDERS_WITH_RANGE = ("amda", "cda", "csa", "ssc")

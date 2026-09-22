@@ -659,6 +659,7 @@ def _fuse_query(
             "cosine": max(0.0, min(1.0, (similarity + 1.0) / 2.0)),
             "coverage": _coverage_of(meta),
             "measurement_type": (meta or {}).get("measurement_type", ""),
+            "region": (meta or {}).get("region", ""),
         }
 
     # Sparse (BM25) channel — exact token / id matching
@@ -682,6 +683,7 @@ def _fuse_query(
                     "cosine": 0.0,
                     "coverage": _coverage_of(meta),
                     "measurement_type": (meta or {}).get("measurement_type", ""),
+                    "region": (meta or {}).get("region", ""),
                 }
             if len(sparse_ranking) >= settings.rag.hybrid_fetch_k:
                 break
@@ -699,6 +701,10 @@ def _fuse_query(
     if not ordered_ids:
         return []
 
+    # `measurement_type` and `region` were indexed, filterable and shown to nobody: the
+    # model read a 280-character description and guessed what the index already knew in
+    # a typed field. Rendered when the archive states them (AMDA, CSA) and absent
+    # otherwise — an empty key would read as "measures nothing".
     candidates: list[dict] = [
         {
             "id": pid,
@@ -706,6 +712,8 @@ def _fuse_query(
             "description": _truncate(info[pid]["full_text"]),
             "coverage": info[pid].get("coverage", ""),
             "quality": _quality_of(pid, info[pid]["full_text"]),
+            **({"measurement_type": mt} if (mt := info[pid].get("measurement_type")) else {}),
+            **({"region": rg} if (rg := info[pid].get("region")) else {}),
             "_full_text": info[pid]["full_text"],
             "_measurement_type": info[pid].get("measurement_type", ""),
             "_raw": raw.get(pid, 0.0),

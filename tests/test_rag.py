@@ -81,6 +81,36 @@ def test_search_result_shape(isolated_rag) -> None:
     assert 0.0 <= r["score"] <= 1.0
 
 
+def test_a_hit_renders_the_measurement_type_and_region_the_archive_states(isolated_rag) -> None:
+    """Indexed on 16 % of the products, filterable, and shown to nobody: the model guessed
+    from a 280-character description what the index held in a typed field. Rendered when
+    present, absent otherwise — an empty key would read as "measures nothing"."""
+    rng = np.random.default_rng(1)
+    vecs = rng.random((2, 128)).astype("float32")
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    isolated_rag.add(
+        ids=["amda/mms1_xyz_gse", "cda/X_POS/xyz"],
+        embeddings=vecs.tolist(),
+        documents=["MMS1 position GSE. Measurement: Ephemeris.", "X position GSE."],
+        metadatas=[
+            {
+                "name": "xyz",
+                "provider": "amda",
+                "xmlid": "mms1_xyz_gse",
+                "measurement_type": "Ephemeris",
+                "region": "Earth.Magnetosphere",
+            },
+            {"name": "xyz", "provider": "cda", "xmlid": "X_POS/xyz"},
+        ],
+    )
+    by_id = {r["id"]: r for r in search("position GSE", top_k=2)}
+    assert by_id["amda/mms1_xyz_gse"]["measurement_type"] == "Ephemeris"
+    assert by_id["amda/mms1_xyz_gse"]["region"] == "Earth.Magnetosphere"
+    assert "measurement_type" not in by_id["cda/X_POS/xyz"]
+    assert "region" not in by_id["cda/X_POS/xyz"]
+    assert not any(k.startswith("_") for r in by_id.values() for k in r), "no private keys leak"
+
+
 def test_search_empty_query_returns_empty(isolated_rag) -> None:
     _seed(isolated_rag)
     assert search("") == []

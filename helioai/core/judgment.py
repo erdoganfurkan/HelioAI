@@ -217,6 +217,63 @@ def _record_dir() -> Path | None:
     return ctx.session_dir if ctx is not None else None
 
 
+async def batch(
+    site: str,
+    states: list[Mapping[str, Any]],
+    questions: Mapping[str, Question],
+    *,
+    concurrency: int = 8,
+    record_to: Path | None = None,
+) -> list[Answers | None]:
+    """Ask the same questions of many states, off the agent loop — for a job, not a turn.
+
+    The runtime's `ask` is gated by a site's experiment name because it runs inside a
+    conversation nobody asked to be judged. A job such as `helioai index --classify` is an
+    explicit request: it needs only a judging backend, and it records every call to a file
+    of its own (`record_to`) rather than to a session that does not exist. The same
+    thresholds decide the answers, so what a job writes and what a turn would read agree.
+
+    Args:
+        site: The job's name, in the records.
+        states: One state per item, JSON-serialisable.
+        questions: The questions, asked of every state.
+        concurrency: How many calls in flight at once (37 ms per item at eight, measured).
+        record_to: The JSON-lines file every call is appended to; None records nothing.
+
+    Returns:
+        One `Answers` or `None` (abstained, failed, timed out) per state, in order.
+    """
+    if settings.judgment.backend == "null" or not states:
+        return [None] * len(states)
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def one(state: Mapping[str, Any]) -> Answers | None:
+        async with sem:
+            t0 = time.perf_counter()
+            try:
+                response = await asyncio.wait_for(
+                    _backend().ask(dict(state), dict(questions)),
+                    timeout=settings.judgment.timeout_s,
+                )
+            except Exception as e:
+                latency = (time.perf_counter() - t0) * 1000
+                _warn_once(site, e)
+                _record(site, state, questions, None, None, latency, error=str(e), path=record_to)
+                return None
+            latency = (time.perf_counter() - t0) * 1000
+            answers = Answers(
+                values=_decide(questions, response.answers),
+                raw=_raw(questions, response.answers),
+                model=response.model,
+                latency_ms=latency,
+                request_id=response.request_id,
+            )
+            _record(site, state, questions, answers, None, latency, path=record_to)
+            return answers
+
+    return list(await asyncio.gather(*(one(st) for st in states)))
+
+
 def _record(
     site: str,
     state: Mapping[str, Any],
@@ -226,6 +283,7 @@ def _record(
     latency_ms: float,
     *,
     error: str | None = None,
+    path: Path | None = None,
 ) -> None:
     line = {
         "ts": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -242,12 +300,14 @@ def _record(
         "error": error,
     }
     try:
-        directory = _record_dir()
-        if directory is None:
-            log.debug("judgment_unrecorded_no_session", site=site)
-            return
-        directory.mkdir(parents=True, exist_ok=True)
-        with (directory / RECORD_FILE).open("a", encoding="utf-8") as f:
+        if path is None:
+            directory = _record_dir()
+            if directory is None:
+                log.debug("judgment_unrecorded_no_session", site=site)
+                return
+            path = directory / RECORD_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
     except Exception as e:
         log.warning("judgment_record_failed", site=site, error=str(e))

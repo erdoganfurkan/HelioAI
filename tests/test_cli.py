@@ -384,10 +384,15 @@ def test_index_rebuild_flag(monkeypatch):
 
     seen = {}
     monkeypatch.setattr(ws, "set_user", lambda u: None)
-    monkeypatch.setattr(cli, "_run_index", lambda rebuild: seen.update(rebuild=rebuild))
+    monkeypatch.setattr(
+        cli, "_run_index", lambda rebuild, classify: seen.update(rebuild=rebuild, classify=classify)
+    )
     monkeypatch.setattr(sys, "argv", ["helioai", "index", "--rebuild"])
     cli.main()
-    assert seen == {"rebuild": True}
+    assert seen == {"rebuild": True, "classify": False}
+    monkeypatch.setattr(sys, "argv", ["helioai", "index", "--classify"])
+    cli.main()
+    assert seen == {"rebuild": False, "classify": True}
 
 
 def test_global_options_may_follow_the_question(monkeypatch):

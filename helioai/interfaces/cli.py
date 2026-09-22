@@ -6,7 +6,7 @@ Usage:
     helioai --resume              # pick a past session and continue it
     helioai history               # list sessions
     helioai history delete <id>   # delete a session and its workspace
-    helioai index [--rebuild]     # (re)index the speasy catalog
+    helioai index [--rebuild] [--classify]   # (re)index the speasy catalog; --classify fills measurement types
     helioai export [id]           # export a session as a reproducible .ipynb
     helioai profile               # edit the user profile
     helioai mcp-install [--write] # MCP client config pointing at this install
@@ -349,10 +349,10 @@ async def _run_query(query: str, *, restricted: bool = True) -> None:
         await llm.aclose()
 
 
-def _run_index(rebuild: bool = False) -> None:
+def _run_index(rebuild: bool = False, classify: bool = False) -> None:
     from helioai.indexer import build_index  # helioai/indexer.py
 
-    build_index(rebuild=rebuild)
+    build_index(rebuild=rebuild, classify=classify)
 
 
 def _run_export(prefix: str | None = None) -> None:
@@ -688,7 +688,9 @@ def _run_command(command: str, argv: list[str]) -> None:
             _show_history()
     elif command == "index":
         p.add_argument("--rebuild", action="store_true")
-        _run_index(rebuild=p.parse_args(argv).rebuild)
+        p.add_argument("--classify", action="store_true")
+        ns = p.parse_args(argv)
+        _run_index(rebuild=ns.rebuild, classify=ns.classify)
     elif command == "profile":
         p.parse_args(argv)
         _run_profile()

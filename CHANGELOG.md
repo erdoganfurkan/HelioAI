@@ -212,6 +212,24 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   cannot be adjudicated later is not a measurement. Nothing here corrects the model. An
   unknown backend is refused where the API key is checked and by `helioai doctor`, which
   gains a `judgment` line. No site asks yet; this is the seam the next entries plug into.
+- **`helioai index --classify` fills the measurement type the archive left empty, and
+  the indexed text says the dates a product covers.** `measurement_type` is indexed on
+  15.6 % of the products (AMDA, CSA) and on none of CDA's 68 000, so every signal built on it
+  reached a sixth of the catalogue. With `HELIOAI_JUDGMENT_BACKEND=jev`, the indexer asks the
+  judge for the SPASE type of every untyped product before embedding — a `Choice` over the
+  twelve types the index already uses, so a filled field is an exact filter. Measured on 200
+  products the archive had labelled, label stripped before asking: 89 % agreement where the
+  judge's confidence is at least 0.9, and the confident disagreements were the archive's
+  own errors (MMS FPI plasma moments labelled MagneticField, a JADE density labelled
+  EnergeticParticles). So the floor is 0.9 — below it the field stays empty — and a
+  published label the judge contradicts is kept and flagged as `measurement_type_jev`, for a
+  person to adjudicate, never replaced. A filled type carries `measurement_type_source:
+  "jev"` and its confidence, and enters the text (`Measurement: X.`) where both search
+  channels read it; every call is recorded to `judgment_index.jsonl` beside the index. On 50
+  live products: 20 filled, 2 flagged, 22 abstained. Without a judging backend the flag is a
+  no-op that says so. Separately, every product's text now ends with `Coverage: … to …`, as
+  the catalogue index has always said `Survey: … to …`: a year in a query used to match
+  nothing and only dilute the rest. Both change the index; a rebuild applies them.
 - **A shipped recipe is offered at the moment a hand-written copy of it runs, not after
   the answer.** The recipe check (`recipe_bypassed`) reads the run's exports at the end of
   the turn and annotates the reply — for the reader, once the model has stopped acting. On

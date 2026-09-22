@@ -179,6 +179,31 @@ def test_coverage_is_read_from_the_inventory():
     assert _coverage({}) == ("", "")
 
 
+def test_the_dates_a_product_covers_are_in_its_text() -> None:
+    """Nearly every question names a year and the text never did: "2019" matched nothing and
+    diluted the rest. The catalogue index has written `Survey: … to …` since it was built;
+    the products now say `Coverage: … to …` too, including the SSC trajectories."""
+    from helioai.indexer import _coverage_sentence
+
+    text = _build_text("Bx", "X", "nT", "ace_b_x", coverage=("1997-08-25 17:48:00", "2026-10-05"))
+    assert "Coverage: 1997-08-25 to 2026-10-05." in text
+    assert "Coverage" not in _build_text("Bx", "X", "nT", "ace_b_x")
+    assert _coverage_sentence(("", "2026-10-05")) == "" and _coverage_sentence(None) == ""
+
+    node = _make_param("DS/p", "a field", "nT")
+    node.start_date = "2004-11-07 00:00:00"
+    node.stop_date = "2026-01-01 00:00:00"
+    docs: list[dict] = []
+    _walk(_make_tree(ds=_make_tree(p=node)), "cda", docs, set(), _FakeSpeasyIndex)
+    assert "Coverage: 2004-11-07 to 2026-01-01." in docs[0]["text"]
+    assert docs[0]["meta"]["start_time"] == "2004-11-07 00:00:00"
+
+    tree = _make_tree(Trajectories=_make_tree(mms1=_make_ssc_trajectory("mms1", "MMS 1")))
+    ssc: list[dict] = []
+    _walk(tree, "ssc", ssc, set(), _FakeSpeasyIndex)
+    assert "Coverage: 2015-03-13 to " in ssc[0]["text"]
+
+
 # ────────────────────── identity carried into the document ──────────────────────
 
 
@@ -380,3 +405,90 @@ def test_open_collections_is_a_plain_open_when_nothing_is_legacy(tmp_path):
     _, (second,) = open_collections(chroma_dir, ["products"])
     assert second.count() == 1
     assert second.configuration_json["hnsw"]["sync_threshold"] == HNSW_SYNC_THRESHOLD
+
+
+# ─────────────────────────── classify_measurement_types ────────────────────────
+
+
+def _answers(label, confidence):
+    from helioai.core.judgment import Answers
+
+    return Answers(
+        values={"mtype": label if confidence >= 0.9 else None},
+        raw={"mtype": {"choice": label, "confidence": confidence, "probabilities": {}}},
+        model="jev-test",
+        latency_ms=1.0,
+    )
+
+
+def test_classification_fills_the_empty_flags_the_contradicted_and_never_overwrites(
+    tmp_path, monkeypatch
+):
+    """Measured on 200 labelled products (2026-09-22): 89 % agreement at confidence ≥ 0.9,
+    and the confident disagreements were the archive's own errors. So: fill where empty,
+    flag where the archive disagrees, keep the published label, abstain below the floor."""
+    import asyncio
+
+    from helioai.config import settings
+    from helioai.core import judgment
+    from helioai.indexer import MEASUREMENT_TYPE_FLOOR, classify_measurement_types
+
+    monkeypatch.setattr(settings.judgment, "backend", "jev")
+    docs = [
+        {"id": "cda/A/x", "text": "MMS1 position GSE. Units: km.", "meta": {"name": "x"}},
+        {"id": "cda/B/y", "text": "Some housekeeping. Units: V.", "meta": {"name": "y"}},
+        {
+            "id": "amda/mms1_dis_ni",
+            "text": "density. Measurement: MagneticField. Dataset: mms1-fpi-dismoms.",
+            "meta": {"name": "ni", "measurement_type": "MagneticField"},
+        },
+        {
+            "id": "amda/imf",
+            "text": "IMF vector. Measurement: MagneticField.",
+            "meta": {"name": "imf", "measurement_type": "MagneticField"},
+        },
+    ]
+    seen: dict = {}
+
+    async def fake_batch(site, states, questions, *, concurrency=8, record_to=None):
+        seen["site"], seen["states"], seen["record_to"] = site, states, record_to
+        assert set(questions) == {"mtype"} and questions["mtype"].floor == MEASUREMENT_TYPE_FLOOR
+        return [
+            _answers("Ephemeris", 0.97),
+            _answers("InstrumentStatus", 0.6),
+            _answers("ThermalPlasma", 0.99),
+            _answers("Magnetic_Field", 0.95),
+        ]
+
+    monkeypatch.setattr(judgment, "batch", fake_batch)
+    out = asyncio.run(classify_measurement_types(docs, tmp_path))
+
+    assert (
+        seen["site"] == "index_measurement_type"
+        and seen["record_to"] == tmp_path / "judgment_index.jsonl"
+    )
+    assert "Measurement:" not in seen["states"][2]["product"], "the label is stripped before asking"
+    filled = out[0]["meta"]
+    assert filled["measurement_type"] == "Ephemeris" and filled["measurement_type_source"] == "jev"
+    assert filled["measurement_type_confidence"] == 0.97
+    assert out[0]["text"].endswith("Measurement: Ephemeris.")
+    assert "measurement_type" not in out[1]["meta"], "below the floor: the field stays empty"
+    assert out[2]["meta"]["measurement_type"] == "MagneticField", (
+        "a published label is never overwritten"
+    )
+    assert out[2]["meta"]["measurement_type_jev"] == "ThermalPlasma"
+    assert out[2]["meta"]["measurement_type_jev_confidence"] == 0.99
+    assert "measurement_type_jev" not in out[3]["meta"], "Magnetic_Field agrees with MagneticField"
+
+
+def test_classification_is_skipped_without_a_judging_backend(tmp_path, monkeypatch, capsys):
+    import asyncio
+
+    from helioai.config import settings
+    from helioai.indexer import classify_measurement_types
+
+    monkeypatch.setattr(settings.judgment, "backend", "null")
+    docs = [{"id": "cda/A/x", "text": "t", "meta": {"name": "x"}}]
+    assert asyncio.run(classify_measurement_types(docs, tmp_path, verbose=True)) == docs
+    assert "skipping classification" in capsys.readouterr().out
+    assert "measurement_type" not in docs[0]["meta"]

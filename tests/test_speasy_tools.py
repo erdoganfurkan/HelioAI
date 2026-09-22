@@ -256,6 +256,23 @@ async def test_get_timeseries_downloads_a_partial_overlap(monkeypatch) -> None:
     assert len(fake_spz.get_data_calls) == 1
     assert "coverage_note" in result
     assert "clipped" in result["coverage_note"]
+    assert result["available_start"] == "2005-01-01T00:00:00"
+    assert result["available_stop"] == "2005-12-31T23:59:59", "bounds as keys, not only prose"
+
+
+async def test_get_timeseries_says_what_it_obtained_beside_what_was_asked(monkeypatch) -> None:
+    """The series' own first and last timestamps, so a window clipped to the archive or to
+    a gap is visible as two dates, not inferred from a sentence."""
+    fake_spz = FakeSpeasy(get_data=_make_fake_var(5))
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
+
+    result = await get_timeseries("amda/imf", "2005-01-17T00:00:00", "2005-01-18T00:00:00")
+
+    assert result["start"] == "2005-01-17T00:00:00" and result["stop"] == "2005-01-18T00:00:00"
+    assert result["obtained_start"] == "2005-01-17T12:00:00"
+    assert result["obtained_stop"] == "2005-01-17T12:04:00"
+    keys = list(result)
+    assert keys.index("obtained_start") == keys.index("stop") + 1, "beside what was asked"
 
 
 async def test_get_timeseries_is_silent_when_fully_covered(monkeypatch) -> None:
@@ -505,7 +522,9 @@ async def test_a_slow_download_does_not_freeze_the_event_loop(monkeypatch):
 
     fake_spz = FakeSpeasy(get_data=slow_get_data)
     monkeypatch.setitem(sys.modules, "speasy", fake_spz)
-    monkeypatch.setattr("helioai.tools.speasy_tools._coverage_check", lambda *a, **k: (None, None))
+    monkeypatch.setattr(
+        "helioai.tools.speasy_tools._coverage_check", lambda *a, **k: (None, None, None)
+    )
 
     gaps: list[float] = []
 

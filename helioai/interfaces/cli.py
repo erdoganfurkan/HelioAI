@@ -186,14 +186,19 @@ def _same_words(a: str, b: str) -> bool:
 
 
 def _intent_line(data: dict) -> str:
-    """One dim line for the contract the judge read: only what it decided, nothing else."""
+    """One dim line for the contract the judge read: what it decided, then the joins
+    that disagreed with what the turn produced — nothing else."""
+    from helioai.core.joins import summary
+
     parts = [f"{k}: {data[k]}" for k in ("deliverable", "quantity", "frame", "date") if data.get(k)]
     parts += [
         k.replace("_", " ")
         for k in ("event_named", "uncertainty_required", "method_named", "two_spacecraft")
         if data.get(k) is True
     ]
-    return " · ".join(parts) or "nothing decided"
+    line = " · ".join(parts) or "nothing decided"
+    mismatches = summary(data.get("checks"))
+    return f"{line} ⚠ {'; '.join(mismatches)}" if mismatches else line
 
 
 def _render_event(ev: dict) -> None:

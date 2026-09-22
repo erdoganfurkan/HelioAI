@@ -283,7 +283,18 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   magic, and read by nothing yet: the six HelioBench questions with an `expects` block were
   put through it and every decided field agreed with the key; the deliverable abstains on
   a request that asks for a plot and a number at once, which is the field's next shape.
-  `RunContext` carries the question (`query`) for the sites that follow.
+  `RunContext` carries the question (`query`) for the sites that follow. The event then
+  carries, under `checks`, what the turn did about the contract — four joins with no model
+  in them (`helioai.core.joins`), each an exact operation on fields the turn already had:
+  the frame named against the `coord_sys` of every product the sandbox loaded ("GSM asked,
+  `BGSE` plotted" was caught by nothing); the date named against the bounds the downloads
+  obtained, plus the series that stopped short of their window; the measurement type named
+  against the indexed type of the products loaded — a key lookup, exact once `--classify`
+  has filled the field; and what was required against what was delivered: an uncertainty
+  asked and no claim or export about a spread, a figure asked and none produced. A join
+  with nothing to compare reports `None`, not a verdict. The CLI, the web client and the
+  magic print only the joins that disagreed, after the contract, so a turn that got it
+  right reads exactly as before.
 - **Spacecraft positions are searchable: the 314 SSCWeb trajectories are indexed.** An
   SSC inventory node has neither `xmlid` nor `description`, so the indexer skipped every
   one of them and the index held no spacecraft position at all — "where was MMS1" could

@@ -107,6 +107,16 @@ async def test_a_turn_with_the_judge_on_emits_one_intent_event_and_writes_no_mes
     intent = next(e for e in events if e["event"] == "intent")["data"]
     assert intent["deliverable"] == "value" and intent["date"] == "2015-03-17"
     assert intent["quantity"] == "MagneticField"
+    assert set(intent["checks"]) == {"frame", "window", "quantity", "responsiveness"}
+    assert intent["checks"]["frame"] is None and intent["checks"]["quantity"] is None, (
+        "a prose turn loaded nothing: the joins had nothing to compare and say so"
+    )
+    assert intent["checks"]["responsiveness"]["deliverable"] == {
+        "asked": "value",
+        "claims": 0,
+        "exports": 0,
+        "match": False,
+    }
     history_on = agent_loop.store.get_or_create("u", "s-on")
     assert [m.role for m in history_on] == ["user", "assistant"], "the contract enters no message"
 

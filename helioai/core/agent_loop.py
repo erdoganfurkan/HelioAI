@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from helioai.config import settings
-from helioai.core import judgment
+from helioai.core import joins, judgment
 from helioai.core.event_display import finished_at_cap
 from helioai.core.events import NOT_JOURNALED, make
 from helioai.core.llm.base import LLMClient, Message, ToolCall, ToolDef
@@ -553,6 +553,7 @@ async def _stream_turn(
         if intent_task is not None:
             contract = await judgment.collect(intent_task)
             if contract is not None:
+                contract["checks"] = joins.checks(contract, end.artifacts, end.claims)
                 yield make("intent", **contract)
         yield make("done", n_iterations=end.turns)
 

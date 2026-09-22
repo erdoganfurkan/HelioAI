@@ -51,9 +51,10 @@ KINDS: dict[str, tuple[str, ...]] = {
     "figure_review": ("turn", "text"),
     # What the question asked for, as the judge read it — the deliverable, the physical
     # quantity in the index's own vocabulary, the date it names, whether an uncertainty,
-    # a method or two spacecraft were asked for. Emitted once per turn, after the answer,
-    # only when the `judgment_intent` experiment is on and the judge answered; nothing
-    # in the loop reads it yet. Observation.
+    # a method or two spacecraft were asked for — and, under `checks`, what the turn did
+    # about it (`core/joins.py`: frame, window, quantity, responsiveness). Emitted once
+    # per turn, after the answer, only when the `judgment_intent` experiment is on and
+    # the judge answered; nothing in the loop reads it yet. Observation.
     "intent": ("deliverable", "quantity"),
     "provenance": ("matched", "contradicted", "derived", "unsourced", "details"),
     # The one judgement on an answer that named its numbers (`final_answer`): each claim

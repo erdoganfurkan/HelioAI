@@ -429,45 +429,62 @@ _MODEL_DERIVED_TEXT = re.compile(
 )
 
 
+# The SPASE measurement types as families, in the normalised spelling `_types_of` yields.
+# A family names every class a product answering for that quantity may carry: the bulk
+# plasma is `ThermalPlasma` at AMDA and `IonComposition` at CSA for the same moments, and
+# a wave instrument is filed under any of five names. The query patterns below and the
+# intent join (`core/joins.py`) compare against the same sets — by import, not by copy.
+_WAVES_FAMILY = frozenset(
+    {
+        "waves",
+        "wavespassive",
+        "radioandplasmawaves",
+        "spectrum",
+        "electricfield",
+        "magneticfield",
+    }
+)
+TYPE_FAMILIES: dict[str, frozenset[str]] = {
+    "Ephemeris": frozenset({"ephemeris"}),
+    "MagneticField": frozenset({"magneticfield"}),
+    "ThermalPlasma": frozenset({"thermalplasma", "ioncomposition"}),
+    "IonComposition": frozenset({"ioncomposition", "thermalplasma", "energeticparticles"}),
+    "EnergeticParticles": frozenset({"energeticparticles", "ioncomposition"}),
+    "ElectricField": frozenset({"electricfield", "radioandplasmawaves"}),
+    "Waves": _WAVES_FAMILY,
+    "Spectrum": _WAVES_FAMILY,
+}
+
 # The quantity a query names → the SPASE measurement-type family that answers it. Only
 # the unambiguous words: an index ("Dst", "AE") has no class in the index, and "proton"
 # alone is thermal or energetic depending on the instrument, so neither is mapped.
 _WANTED_TYPE: tuple[tuple[re.Pattern, frozenset[str]], ...] = (
     (
         re.compile(r"\b(?:position|ephemeris|orbit|trajectory|location|xyz)\b", re.I),
-        frozenset({"ephemeris"}),
+        TYPE_FAMILIES["Ephemeris"],
     ),
     (
         re.compile(r"\b(?:magnetic field|imf|b[- ]?field|bgs[em]|brtn|fgm|mfi|mag)\b", re.I),
-        frozenset({"magneticfield"}),
+        TYPE_FAMILIES["MagneticField"],
     ),
     (
         re.compile(
             r"\b(?:density|temperature|bulk (?:speed|velocity)|thermal plasma|plasma moments?)\b",
             re.I,
         ),
-        frozenset({"thermalplasma", "ioncomposition"}),
+        TYPE_FAMILIES["ThermalPlasma"],
     ),
     (
         re.compile(r"\b(?:energetic|\d+\s*[km]ev|cosmic rays?|particle flux|sep)\b", re.I),
-        frozenset({"energeticparticles", "ioncomposition"}),
+        TYPE_FAMILIES["EnergeticParticles"],
     ),
     (
         re.compile(r"\b(?:electric field|e[- ]?field|edp)\b", re.I),
-        frozenset({"electricfield", "radioandplasmawaves"}),
+        TYPE_FAMILIES["ElectricField"],
     ),
     (
         re.compile(r"\b(?:waves?|spectrogram|spectral density|power spectrum)\b", re.I),
-        frozenset(
-            {
-                "waves",
-                "wavespassive",
-                "radioandplasmawaves",
-                "spectrum",
-                "electricfield",
-                "magneticfield",
-            }
-        ),
+        TYPE_FAMILIES["Waves"],
     ),
 )
 
@@ -1050,6 +1067,30 @@ def _known_dataset_prefixes() -> set[str]:
         ids = _collection_only().get(include=[]).get("ids") or []
         _dataset_prefixes = {i.rsplit("/", 1)[0] for i in ids if i.count("/") >= 2}
     return _dataset_prefixes
+
+
+def measurement_types_of(ids: list[str]) -> dict[str, str | None]:
+    """The indexed `measurement_type` of each id — a key lookup, no embedding.
+
+    Read by the intent join at the end of a turn to say whether the products an answer
+    loaded measure the quantity the question named. An id the index does not know, or a
+    product without the field, maps to `None`; an unreachable index maps every id to
+    `None`, because a verification outage must not read as "nothing measures this".
+
+    Args:
+        ids: Parameter ids, as the parameter cards carry them.
+    """
+    if not ids:
+        return {}
+    out: dict[str, str | None] = dict.fromkeys(ids)
+    try:
+        got = _collection_only().get(ids=list(ids), include=["metadatas"])
+    except Exception as e:
+        log.warning("measurement_type_lookup_unavailable: %s", e)
+        return out
+    for pid, meta in zip(got.get("ids") or [], got.get("metadatas") or [], strict=False):
+        out[pid] = (meta or {}).get("measurement_type") or None
+    return out
 
 
 def unknown_ids(ids: list[str]) -> list[str]:

@@ -198,8 +198,9 @@ be switched on alone and compared on the same questions, N runs each
 - `judgment_intent`: with a judging backend (`HELIOAI_JUDGMENT_BACKEND=jev`), the user's
   question is read once by the judge, concurrently with the first model call, into an
   intent contract — deliverable, quantity, date, whether an uncertainty, a method or two
-  spacecraft were asked for — emitted as an `intent` event after the answer. Observation:
-  nothing in the loop reads it yet.
+  spacecraft were asked for — placed against what the turn loaded and delivered
+  (`core/joins.py`: frame, window, quantity, responsiveness) and emitted as an `intent`
+  event after the answer. Observation: nothing in the loop acts on it.
 
 `final_answer` was one of them and is now the default: on the third bench (34 clean runs,
 four configurations) it cost nothing on any question, re-enabled the claim verdict — zero

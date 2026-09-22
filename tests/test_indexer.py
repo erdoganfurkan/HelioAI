@@ -604,3 +604,253 @@ def test_the_walk_says_where_a_region_came_from():
     assert (
         doc["meta"]["region"] == "Earth.Magnetosphere" and doc["meta"]["region_source"] == "table"
     )
+
+
+# ───────────────── a rebuild keeps what a classification pass paid for ─────────────────
+
+
+def test_judged_snapshot_reads_only_the_judges_fields_and_survives_the_wipe(tmp_path):
+    """82 266 requests, US$ 2.4 (2026-09-22) — and `--rebuild` wiped the directory they were
+    written into. The answers are read by id before the wipe and re-applied after the walk;
+    a published label and the table's guess are not the judge's and are recomputed."""
+    import chromadb
+    from chromadb.api.client import SharedSystemClient
+
+    from helioai.indexer import JUDGMENT_RECORDS, apply_judged, judged_snapshot
+
+    chroma_dir = tmp_path / "chroma"
+    col = chromadb.PersistentClient(path=str(chroma_dir)).get_or_create_collection("products")
+    col.upsert(
+        ids=["cda/A/x", "amda/pub", "cda/B/y", "cda/guess"],
+        embeddings=[[0.0] * 4] * 4,
+        metadatas=[
+            {
+                "name": "x",
+                "measurement_type": "Ephemeris",
+                "measurement_type_source": "jev",
+                "measurement_type_confidence": 0.97,
+                "region": "Earth.Magnetosphere",
+                "region_source": "table",
+            },
+            {
+                "name": "pub",
+                "measurement_type": "MagneticField",
+                "measurement_type_jev": "ThermalPlasma",
+                "measurement_type_jev_confidence": 0.99,
+                "region": "Earth.Magnetosheath",
+                "region_source": "archive",
+            },
+            {"name": "y", "region": "Mars", "region_source": "table"},
+            {"name": "g", "region": "Venus", "region_source": "jev", "region_confidence": 0.95},
+        ],
+    )
+    SharedSystemClient.clear_system_cache()
+    (chroma_dir / JUDGMENT_RECORDS).write_text('{"site": "index_classify"}\n')
+
+    judged = judged_snapshot(chroma_dir, "products")
+    assert set(judged) == {"cda/A/x", "amda/pub", "cda/guess"}, "cda/B/y carries nothing judged"
+    assert judged["cda/A/x"] == {
+        "measurement_type": "Ephemeris",
+        "measurement_type_source": "jev",
+        "measurement_type_confidence": 0.97,
+        "region": "Earth.Magnetosphere",
+        "region_source": "table",
+    }
+    assert "name" not in judged["amda/pub"]
+    assert judged_snapshot(tmp_path / "nowhere", "products") == {}
+
+    docs = [
+        {
+            "id": "cda/A/x",
+            "text": "x. Units: km. Coverage: 2019-01-01 to 2020-01-01.",
+            "meta": {"name": "x"},
+        },
+        {
+            "id": "amda/pub",
+            "text": "pub. Measurement: MagneticField. Region: Earth.Magnetosheath.",
+            "meta": {
+                "name": "pub",
+                "measurement_type": "MagneticField",
+                "region": "Earth.Magnetosheath",
+                "region_source": "archive",
+            },
+        },
+        {"id": "cda/B/y", "text": "y.", "meta": {"name": "y"}},
+        {
+            "id": "cda/guess",
+            "text": "g. Region: Mars.",
+            "meta": {"name": "g", "region": "Mars", "region_source": "table"},
+        },
+        {"id": "cda/new", "text": "n.", "meta": {"name": "n"}},
+    ]
+    assert apply_judged(docs, judged) == 3
+    x = docs[0]
+    assert (
+        x["meta"]["measurement_type"] == "Ephemeris"
+        and x["meta"]["measurement_type_source"] == "jev"
+    )
+    assert x["text"] == "x. Units: km. Measurement: Ephemeris. Coverage: 2019-01-01 to 2020-01-01."
+    assert "region_source" not in x["meta"], "the table's guess of the old index is not carried"
+    pub = docs[1]
+    assert pub["meta"]["measurement_type"] == "MagneticField"
+    assert pub["meta"]["measurement_type_jev"] == "ThermalPlasma"
+    assert (
+        pub["meta"]["region_source"] == "archive" and pub["meta"]["region"] == "Earth.Magnetosheath"
+    )
+    assert docs[2]["meta"] == {"name": "y"}
+    guess = docs[3]
+    assert guess["meta"]["region"] == "Venus" and guess["meta"]["region_source"] == "jev"
+    assert guess["text"] == "g. Region: Venus."
+    assert docs[4]["meta"] == {"name": "n"}
+
+
+def test_classification_skips_what_a_previous_pass_judged(tmp_path, monkeypatch):
+    import asyncio
+
+    from helioai.config import settings
+    from helioai.core import judgment
+    from helioai.indexer import classify_products
+
+    monkeypatch.setattr(settings.judgment, "backend", "jev")
+    docs = [
+        {
+            "id": "cda/old",
+            "text": "old.",
+            "meta": {
+                "name": "old",
+                "measurement_type": "Ephemeris",
+                "measurement_type_source": "jev",
+            },
+        },
+        {"id": "cda/new", "text": "new.", "meta": {"name": "new"}},
+    ]
+    seen: dict = {}
+
+    async def fake_batch(site, states, questions, *, concurrency=8, record_to=None):
+        seen["states"] = states
+        return [_answers("MagneticField", 0.95, "Mars", 0.96)]
+
+    monkeypatch.setattr(judgment, "batch", fake_batch)
+    out = asyncio.run(classify_products(docs, tmp_path, skip=frozenset({"cda/old"}), verbose=True))
+    assert seen["states"] == [{"product": "new."}], "one request, for the product nobody judged"
+    assert out[0]["meta"]["measurement_type"] == "Ephemeris"
+    assert (
+        out[1]["meta"]["measurement_type"] == "MagneticField" and out[1]["meta"]["region"] == "Mars"
+    )
+
+
+# ──────────────── a CDA product's text says whose it is (2026-09-22) ────────────────
+
+
+def test_cda_spase_words_and_cadence():
+    from helioai.indexer import _cda_spase
+
+    assert _cda_spase("spase://NASA/NumericalData/RBSP/A/EMFISIS/MAGNETOMETER/L3/GSM/PT4S") == (
+        "RBSP A EMFISIS MAGNETOMETER L3 GSM",
+        "4 s",
+    )
+    assert _cda_spase("spase://ESA/NumericalData/Equator-S/EDI/PP/PT60s") == (
+        "Equator-S EDI PP",
+        "1 min",
+    )
+    assert (
+        _cda_spase("spase://NASA/NumericalData/THEMIS/Ground/PENGUIn.5/Magnetometer/PT1S")[1]
+        == "1 s"
+    )
+    assert _cda_spase("spase://NASA/NumericalData/BARREL/1K/Magnetometer/L2/PT0.25S")[1] == "250 ms"
+    assert _cda_spase("spase://NASA/NumericalData/OMNI/PT1H") == ("OMNI", "1 h")
+    assert _cda_spase("spase://NASA/NumericalData/IBEX/H3") == ("IBEX H3", ""), (
+        "no duration: no cadence"
+    )
+    assert _cda_spase(" ") == ("", "") and _cda_spase("spase://NASA/DisplayData/X/PT1S") == ("", "")
+
+
+def test_cda_components_are_the_vector_labels_only():
+    from helioai.indexer import _cda_components
+
+    assert _cda_components({"LABL_PTR_1": ["Bx_GSM  ", "By_GSM  ", "Bz_GSM  "]}) == [
+        "Bx_GSM",
+        "By_GSM",
+        "Bz_GSM",
+    ]
+    assert _cda_components({"LABL_PTR_1": ["Np"]}) == [], "a scalar's label repeats its name"
+    assert _cda_components({"LABL_PTR_1": "Np"}) == [] and _cda_components({}) == []
+
+
+def test_cda_dataset_meta_carries_the_identity_the_text_lacked():
+    """`cda/RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3/Mag` read "Mag. Magnetometer vector.
+    Fluxgate magnetometer data - Craig Kletzing (University of Iowa)." — no RBSP, no EMFISIS,
+    no GSM, no 4 s; the dense channel could not tell it from any other magnetometer, and
+    for "Van Allen Probe A EMFISIS 4-second magnetic field GSM" ACE, ISEE and IMP-8
+    outranked it. The same defect that once hid 780 AMDA products from their mission name."""
+    from helioai.indexer import _build_text, _extract_dataset_meta
+
+    node = {
+        "__spz_type__": "DatasetIndex",
+        "__spz_uid__": "RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3",
+        "description": "Fluxgate magnetometer data - Craig Kletzing (University of Iowa)",
+        "serviceprovider_ID": "RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3",
+        "spase_DatasetResourceID": "spase://NASA/NumericalData/RBSP/A/EMFISIS/MAGNETOMETER/L3/GSM/PT4S",
+    }
+    meta = _extract_dataset_meta(node, "cda")
+    assert meta == {
+        "dataset_description": "Fluxgate magnetometer data - Craig Kletzing (University of Iowa)",
+        "dataset_id": "RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3",
+        "spase": "RBSP A EMFISIS MAGNETOMETER L3 GSM",
+        "cadence": "4 s",
+    }
+    text = _build_text(
+        "Mag",
+        "Magnetometer vector",
+        "nT",
+        "RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3/Mag",
+        parent_meta=meta,
+        region="Earth.Magnetosphere.RadiationBelt",
+        coverage=("2012-08-30", "2019-10-14"),
+        components=["Bx_GSM", "By_GSM", "Bz_GSM"],
+    )
+    assert text == (
+        "Mag. Magnetometer vector. Dataset: RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3. "
+        "SPASE: RBSP A EMFISIS MAGNETOMETER L3 GSM. Cadence: 4 s. "
+        "Fluxgate magnetometer data - Craig Kletzing (University of Iowa). "
+        "Components: Bx_GSM, By_GSM, Bz_GSM. Units: nT. Region: Earth.Magnetosphere.RadiationBelt. "
+        "Coverage: 2012-08-30 to 2019-10-14."
+    )
+    blank = _extract_dataset_meta(
+        {"description": "d", "serviceprovider_ID": "SOLO_L2_MAG", "spase_DatasetResourceID": " "},
+        "cda",
+    )
+    assert blank == {"dataset_description": "d", "dataset_id": "SOLO_L2_MAG"}, (
+        "a blank SPASE id adds nothing"
+    )
+
+
+def test_walk_writes_cda_components_into_the_text():
+    from helioai.indexer import _walk
+
+    param = _make_tree(
+        __spz_type__="ParameterIndex",
+        __spz_uid__="RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3/Mag",
+        FIELDNAM="Mag",
+        CATDESC="Magnetometer vector",
+        UNITS="nT",
+        LABL_PTR_1=["Bx_GSM  ", "By_GSM  ", "Bz_GSM  "],
+        start_date="2012-08-30 22:54:52",
+        stop_date="2019-10-14 12:30:28",
+    )
+    dataset = _make_tree(
+        __spz_type__="DatasetIndex",
+        __spz_uid__="RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3",
+        description="Fluxgate magnetometer data",
+        serviceprovider_ID="RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3",
+        spase_DatasetResourceID="spase://NASA/NumericalData/RBSP/A/EMFISIS/MAGNETOMETER/L3/GSM/PT4S",
+        Mag=param,
+    )
+    docs: list[dict] = []
+    _walk(_make_tree(ds=dataset), "cda", docs, set(), _FakeSpeasyIndex)
+    assert len(docs) == 1 and docs[0]["id"] == "cda/RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3/Mag"
+    text = docs[0]["text"]
+    assert "Dataset: RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3." in text
+    assert "SPASE: RBSP A EMFISIS MAGNETOMETER L3 GSM. Cadence: 4 s." in text
+    assert "Components: Bx_GSM, By_GSM, Bz_GSM." in text
+    assert docs[0]["meta"]["region_source"] == "table"

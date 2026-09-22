@@ -37,7 +37,7 @@ registry.register(
         "`quality: browse` marks key-parameter products — fine for a quick look, not for "
         "analysis. `flags` on a hit names why the ranking pushed it down (`other_mission`, "
         "`browse_quality`, `outside_window`, `other_quantity`, `housekeeping`, `auxiliary`, "
-        "`model_derived`); a hit without `flags` was not demoted. `measurement_type` and "
+        "`model_derived`, `model_input`, `other_cadence`); a hit without `flags` was not demoted. `measurement_type` and "
         "`region` appear when the archive states them. "
         "**Cadence is stated in `description`**, not in a field of its own: "
         "'(3 sec)', '(1 min)', 'High-resolution', 'hourly'. Read it there and choose; "

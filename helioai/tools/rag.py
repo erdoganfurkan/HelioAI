@@ -329,6 +329,7 @@ _MISSION_PATTERNS: dict[str, tuple[str, ...]] = {
     "solar orbiter": ("solo_",),
     "parker": ("psp_",),
     "maven": ("mvn_",),
+    "rbsp": ("rbsp",),
 }
 
 # How a query names each mission, including the spacecraft-numbered short forms people
@@ -352,6 +353,7 @@ _MISSION_QUERY: dict[str, str] = {
     "solar orbiter": r"solar\s+orbiter|solo",
     "parker": r"parker(?:\s+solar\s+probe)?|psp",
     "maven": r"maven|mvn",
+    "rbsp": r"van\s+allen(?:\s+probes?)?(?:[\s-]?[ab])?|rbsp(?:[\s-]?[ab])?",
 }
 
 
@@ -427,6 +429,79 @@ _MODEL_DERIVED_TEXT = re.compile(
     r"conjugate|l-?shell|l\*|mlt\b|magnetic local time|invariant latitude|model field",
     re.I,
 )
+
+# A copy of a geomagnetic index carried inside an ephemeris dataset as the driver of its
+# field model: MMS MEC ships Dst and Kp "from QinDenton files (used as input to magnetic
+# field models)", at the spacecraft's cadence and only while it flies. For "hourly Dst
+# geomagnetic index" the MEC copies took ranks 1, 2, 4 and 5 above the index itself once
+# the CDA texts said their dataset's name (2026-09-22). The description says what it is;
+# 48 products in the index say it, every one of them MEC. A query that asks about a model
+# keeps them where they are.
+_MODEL_INPUT_TEXT = re.compile(
+    r"\binputs? (?:to|for) (?:\w+[ -]){0,3}models?\b|\bmodel inputs?\b", re.I
+)
+_MODEL_WANTED = re.compile(r"\bmodel", re.I)
+
+# The cadence a query names and the cadence a product states, as seconds. OMNI ships the
+# same pressure at 1 min, 5 min and 1 h under three dataset names and one variable name;
+# for "OMNI 1-minute solar wind flow pressure" the hourly and 5-min copies took ranks 1–3
+# above the 1-min product (2026-09-22). The catalogue is full of such cadence twins —
+# Wind MFI 3 s / 1 min, ACE MFI 1 s / 16 s / 4 min, EMFISIS 1 s / 4 s / hires — and the
+# text states the cadence for most of them: CDA's SPASE duration (`Cadence: 1 min.`),
+# AMDA's `Sampling: 4S`, CDAWeb's own "(16 sec)" and "64-Second" in the descriptions.
+# Only a stated cadence is compared, and only a clear mismatch (a factor of two) counts.
+_UNIT_SECONDS = {
+    "ms": 0.001,
+    "millisecond": 0.001,
+    "s": 1.0,
+    "sec": 1.0,
+    "second": 1.0,
+    "min": 60.0,
+    "minute": 60.0,
+    "h": 3600.0,
+    "hr": 3600.0,
+    "hour": 3600.0,
+    "day": 86400.0,
+}
+_CADENCE_RE = re.compile(
+    r"(?<![\w/.])(\d+(?:\.\d+)?)\s*-?\s*(ms|milliseconds?|s|secs?|seconds?|min|minutes?|h|hrs?|hours?|days?)\b(?![\w/])",
+    re.I,
+)
+_CADENCE_WORD_RE = re.compile(r"\b(hourly|daily)\b", re.I)
+_AMDA_SAMPLING_RE = re.compile(r"\bSampling:\s*(\d+(?:\.\d+)?)\s*(S|M|H)\b")
+_HZ_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*Hz\b")
+
+
+def _cadence_seconds(text: str) -> float | None:
+    """The first cadence a text states, in seconds, or None when it states none."""
+    if not text:
+        return None
+    m = _AMDA_SAMPLING_RE.search(text)
+    if m:
+        return float(m.group(1)) * {"S": 1.0, "M": 60.0, "H": 3600.0}[m.group(2)]
+    m = _HZ_RE.search(text)
+    if m and float(m.group(1)) > 0:
+        return 1.0 / float(m.group(1))
+    m = _CADENCE_RE.search(text)
+    if m:
+        unit = m.group(2).lower().rstrip("s") if len(m.group(2)) > 2 else m.group(2).lower()
+        unit = {"secs": "sec", "hrs": "hr", "mins": "min"}.get(unit, unit)
+        seconds = float(m.group(1)) * _UNIT_SECONDS.get(
+            unit, _UNIT_SECONDS.get(unit.rstrip("s"), 0)
+        )
+        return seconds or None
+    m = _CADENCE_WORD_RE.search(text)
+    if m:
+        return {"hourly": 3600.0, "daily": 86400.0}[m.group(1).lower()]
+    return None
+
+
+def _cadence_mismatch(query: str, description: str) -> bool:
+    asked, stated = _cadence_seconds(query), _cadence_seconds(description)
+    if asked is None or stated is None:
+        return False
+    ratio = asked / stated if asked >= stated else stated / asked
+    return ratio >= 2.0
 
 
 # The SPASE measurement types as families, in the normalised spelling `_types_of` yields.
@@ -572,6 +647,12 @@ def _demotions(
         and _MODEL_DERIVED_TEXT.search(candidate.get("description", ""))
     ):
         out.append((2, "model_derived"))
+    if not _MODEL_WANTED.search(query) and _MODEL_INPUT_TEXT.search(
+        candidate.get("description", "")
+    ):
+        out.append((2, "model_input"))
+    if _cadence_mismatch(query, candidate.get("description", "")):
+        out.append((1, "other_cadence"))
     return out
 
 

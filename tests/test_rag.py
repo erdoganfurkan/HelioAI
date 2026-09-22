@@ -482,6 +482,8 @@ def test_a_numbered_spacecraft_names_its_mission():
     assert _query_mission("solo mag rtn normal mode") == "solar orbiter"
     assert _query_mission("the magnetic field of the solar wind") is None, "THEMIS-E is 'the'"
     assert _query_mission("hourly Dst geomagnetic index") is None
+    assert _query_mission("Van Allen Probe A EMFISIS 4-second magnetic field GSM") == "rbsp"
+    assert _query_mission("RBSP-B MagEIS electron flux") == "rbsp"
     assert set(_MISSION_QUERY) == set(_MISSION_PATTERNS), "one query pattern per mission"
 
 
@@ -491,7 +493,82 @@ def test_candidate_mission_from_the_dataset_prefix():
     assert _candidate_mission("cda/WI_H0_MFI/B3GSM") == "wind"
     assert _candidate_mission("cda/AC_H0_MFI/BGSM") == "ace"
     assert _candidate_mission("cda/MMS1_FGM_SRVY_L2/mms1_fgm_b_gsm") == "mms"
+    assert _candidate_mission("cda/RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3/Mag") == "rbsp"
+    assert _candidate_mission("cda/RBSPA_L2_PSBR-RPS/B_Calc_TS04D") == "rbsp", "both id spellings"
     assert _candidate_mission("amda/imf_gsm") is None, "unknown is not a mismatch"
+
+
+def test_a_models_copy_of_an_index_ranks_below_the_index_itself():
+    """MMS MEC carries Dst and Kp "from QinDenton files (used as input to magnetic field
+    models)"; for "hourly Dst geomagnetic index" the four copies took ranks 1, 2, 4 and 5
+    above the index (2026-09-22). The description says what it is."""
+    from helioai.tools.rag import _apply_domain_rerank, _demotions
+
+    mec = {
+        "id": "cda/MMS1_MEC_BRST_L2_EPHT89D/mms1_mec_dst",
+        "quality": "",
+        "description": "mms1_mec_dst. Dst index from QinDenton files. Used as input to magnetic "
+        "field models. Dataset: MMS1_MEC_BRST_L2_EPHT89D.",
+    }
+    omni = {
+        "id": "cda/OMNI2_H0_MRG1HR/DST1800",
+        "quality": "",
+        "description": "Dst Index (1-h). Dst - 1-hour Dst index from WDC Kyoto.",
+    }
+    assert _demotions("hourly Dst geomagnetic index", mec) == [(2, "model_input")]
+    assert _demotions("hourly Dst geomagnetic index", omni) == []
+    assert _demotions("Dst used as input to the T89 field model", mec) == [], (
+        "a query about the model keeps the model's input where it is"
+    )
+    out = [c["id"] for c in _apply_domain_rerank("hourly Dst geomagnetic index", [mec, omni])]
+    assert out == [omni["id"], mec["id"]]
+    assert _apply_domain_rerank("hourly Dst geomagnetic index", [mec, omni])[1]["_flags"] == [
+        "model_input"
+    ]
+
+
+def test_a_stated_cadence_that_contradicts_the_asked_one_is_pushed_down():
+    """OMNI ships the same pressure at 1 min, 5 min and 1 h under three dataset names; for
+    "OMNI 1-minute solar wind flow pressure" the hourly and 5-min copies took ranks 1–3
+    (2026-09-22). Only a stated cadence is compared, only a factor of two counts."""
+    from helioai.tools.rag import _cadence_seconds, _demotions
+
+    assert _cadence_seconds("OMNI 1-minute solar wind flow pressure") == 60
+    assert _cadence_seconds("Van Allen Probe A EMFISIS 4-second magnetic field GSM") == 4
+    assert _cadence_seconds("hourly Dst geomagnetic index") == 3600
+    assert _cadence_seconds("Cadence: 976.562 ms.") == 0.976562
+    assert _cadence_seconds("Sampling: 4S  Provider: CSA") == 4, "AMDA's own spelling"
+    assert _cadence_seconds("Magnetic field vector in GSM coordinates (16 sec)") == 16
+    assert _cadence_seconds("Solar Wind 64-Second Level 2 Data") == 64
+    assert _cadence_seconds("128 Hz burst waveform") == 1 / 128
+    assert _cadence_seconds("MMS1 FGM burst magnetic field") is None
+    assert _cadence_seconds("download 03:30–04:30 UT on 2015-03-17") is None
+    assert _cadence_seconds("Provisional Dst (2021/001-2026/120)") is None
+    assert _cadence_seconds("Coverage: 2012-08-30 to 2019-10-14.") is None
+
+    query = "OMNI 1-minute solar wind flow pressure"
+    hourly = {
+        "id": "cda/OMNI2_H0_MRG1HR/Pressure1800",
+        "quality": "",
+        "description": "Flow pressure. Cadence: 1 h.",
+    }
+    five = {
+        "id": "cda/OMNI_HRO_5MIN/Pressure",
+        "quality": "",
+        "description": "Flow pressure. Cadence: 5 min.",
+    }
+    one = {
+        "id": "cda/OMNI_HRO_1MIN/Pressure",
+        "quality": "",
+        "description": "Flow pressure. Cadence: 1 min.",
+    }
+    silent = {"id": "cda/OMNI_HRO2_1MIN/Pressure", "quality": "", "description": "Flow pressure."}
+    assert _demotions(query, hourly) == [(1, "other_cadence")]
+    assert _demotions(query, five) == [(1, "other_cadence")]
+    assert _demotions(query, one) == [] and _demotions(query, silent) == []
+    assert _demotions("OMNI flow pressure", hourly) == [], "no cadence asked: nothing to contradict"
+    close = {"id": "cda/WI_H0_MFI/B3GSM", "quality": "", "description": "B. Cadence: 3 s."}
+    assert _demotions("Wind 4-second magnetic field", close) == [], "3 s for 4 s is not a mismatch"
 
 
 def test_wrong_mission_and_housekeeping_are_pushed_down():

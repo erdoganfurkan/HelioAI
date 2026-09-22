@@ -46,7 +46,19 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   candidate pool (`hybrid_fetch_k` 50 → 100 / 200, or the BM25 cap alone) was measured and
   rejected: MRR fell, two accepted products left the top-k. With the wider dense beam,
   "MMS1 spacecraft position GSE 2019" ranks `amda/mms1_xyz_gse` and `ssc/mms1` first and
-  second, where a 2026 IMAP position led before.
+  second, where a 2026 IMAP position led before. Three more signals followed the same
+  instrument, once the CDA texts named their datasets (below): the mission patterns learn
+  the Van Allen Probes (`rbsp`, "Van Allen Probe A"); a product whose description says of
+  itself that it is "used as input to magnetic field models" — MMS MEC's copies of Dst and
+  Kp, 48 in the index, all of them MEC — is flagged `model_input` and ranks below the index
+  it copies, unless the query is about a model; and a product that *states* a cadence the
+  query contradicts by a factor of two or more (`Cadence: 5 min.` for "1-minute", `(16
+  sec)` for "4-second") is flagged `other_cadence` — the catalogue is full of cadence twins
+  under one variable name, and for "OMNI 1-minute solar wind flow pressure" the hourly and
+  5-min copies took ranks 1–3. Only a stated cadence is compared; a product that states
+  none is never demoted for it. On the 30 replayed n1 queries, five processes each: recall@1
+  56.7 → 73.3 %, recall@3 90.0 → 96.7 %, recall@5 90.0 → 100 %, MRR 0.736 → 0.847 — read
+  with the caveat that those 30 queries are where the failures these rules name were found.
 - **`superposed_epoch` no longer refuses `nT (1min)` against `nT`.** CDAWeb labels some
   products with their cadence in parentheses after the unit; a live composite of Wind
   `BF1` events was refused three times as "incompatible units" until the caller dropped
@@ -238,10 +250,29 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   published target is never touched, the table's guess is replaced or the silence filled
   at or above 0.9 (`region_source: "jev"` and the confidence; below it the guess stays,
   marked `table`), and every product now says where its region came from. Without a
-  judging backend the flag is a no-op that says so. Separately, every product's text now
-  ends with `Coverage: … to …`, as the catalogue index has always said `Survey: … to …`: a
-  year in a query used to match nothing and only dilute the rest. All of it changes the
-  index; a rebuild applies it.
+  judging backend the flag is a no-op that says so. A pass costs money — 82 266 requests,
+  US$ 2.4 on 2026-09-22, three times what had been guessed — and `--rebuild` wiped the
+  directory it had written into; a rebuild now reads every judge-decided field by id
+  before the wipe, keeps `judgment_index.jsonl`, writes the answers back onto the freshly
+  walked products, and `--classify` asks only about products no pass has judged. The
+  rebuild that followed reused 37 677 answers and made no request.
+  Separately, every product's text now ends with `Coverage: … to …`, as the catalogue
+  index has always said `Survey: … to …`: a year in a query used to match nothing and only
+  dilute the rest. And a CDAWeb product's text now says whose it is.
+  `cda/RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3/Mag` read "Mag. Magnetometer vector.
+  Fluxgate magnetometer data - Craig Kletzing (University of Iowa)." — no RBSP, no Van
+  Allen, no EMFISIS, no GSM, no 4 s; those words lived only in the id, which the sparse
+  channel tokenises and the dense channel never sees, so for "Van Allen Probe A EMFISIS
+  4-second magnetic field GSM" every ACE, ISEE and IMP-8 vector outranked it. The same
+  defect that once hid 780 AMDA products from their mission name, fixed for AMDA by the
+  `Dataset:` and `Mission:` sentences and never for the 68 000 CDA products. CDAWeb
+  publishes the words: the dataset id, on all of them; a SPASE resource id
+  (`spase://NASA/NumericalData/RBSP/A/EMFISIS/MAGNETOMETER/L3/GSM/PT4S`) on 64 % of the
+  datasets, whose segments are the mission, spacecraft, instrument, level and frame and
+  whose last one is the cadence as an ISO 8601 duration; and the component labels of
+  every vector (`Bx_GSM, By_GSM, Bz_GSM`). All three enter the text — `Dataset:`, `SPASE:`,
+  `Cadence: 4 s.`, `Components:` — and the RBSP vector went from absent to rank 4 for the
+  agent's own queries. All of it changes the index; a rebuild applies it.
 - **A shipped recipe is offered at the moment a hand-written copy of it runs, not after
   the answer.** The recipe check (`recipe_bypassed`) reads the run's exports at the end of
   the turn and annotates the reply — for the reader, once the model has stopped acting. On

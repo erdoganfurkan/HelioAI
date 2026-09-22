@@ -137,6 +137,26 @@ def test_extract_get_timeseries_preview() -> None:
     assert art["cadence"] == "64 s"
     assert art["mission"] == "cda"
     assert "quality" not in art  # no quality block in payload
+    assert "obtained_start" not in art and "coverage_note" not in art
+
+
+def test_extract_get_timeseries_card_says_what_came_back_when_it_differs() -> None:
+    """A series clipped to the archive's coverage or to a gap is the one fact the reader
+    most needs on the card; it used to show only the window that was asked for."""
+    payload = {
+        "param_id": "cda/WI_H0_MFI/B3GSE",
+        "n_points": 600,
+        "start": "2004-11-07T17:00:00",
+        "stop": "2004-11-07T19:00:00",
+        "obtained_start": "2004-11-07T17:30:01",
+        "obtained_stop": "2004-11-07T17:59:58",
+        "coverage_note": "Requested [..] extends past the coverage — the series is clipped.",
+        "preview": "row",
+    }
+    (art,) = _extract_artifact("get_timeseries", payload)
+    assert art["obtained_start"] == "2004-11-07T17:30:01"
+    assert art["obtained_stop"] == "2004-11-07T17:59:58"
+    assert art["coverage_note"].startswith("Requested")
 
 
 def test_extract_get_timeseries_notable_quality_folded_into_card() -> None:

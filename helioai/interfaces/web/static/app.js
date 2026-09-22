@@ -520,8 +520,14 @@ function renderArtifact(view, data) {
     if (chips.children.length) card.append(chips);
 
     if (data.start && data.stop) {
-      const period = el('div', 'pc-period', `${data.start}  →  ${data.stop}`);
+      const got = data.obtained_start && data.obtained_stop
+        && (data.obtained_start.slice(0, 19) !== data.start.slice(0, 19)
+            || data.obtained_stop.slice(0, 19) !== data.stop.slice(0, 19));
+      const period = el('div', 'pc-period', got
+        ? `obtained ${data.obtained_start}  →  ${data.obtained_stop}   (asked ${data.start}  →  ${data.stop})`
+        : `${data.start}  →  ${data.stop}`);
       card.append(period);
+      if (data.coverage_note) card.append(el('div', 'pc-period pc-note', data.coverage_note));
     }
 
     view.chat.append(card);

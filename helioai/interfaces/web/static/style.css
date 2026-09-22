@@ -205,6 +205,7 @@ select:focus { border-color: var(--accent); }
   color: var(--text-muted);
   font-family: "SF Mono", "Fira Code", monospace;
 }
+.parameter-card .pc-note { color: var(--warn, #b45309); }
 
 /* Catalog card */
 .catalog-card {

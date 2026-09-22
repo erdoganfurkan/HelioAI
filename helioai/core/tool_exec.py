@@ -363,6 +363,11 @@ def _extract_artifact(tool_name: str, payload: object) -> list[dict]:
         )
         if (data.get("quality") or {}).get("notable"):
             card["quality"] = data["quality"]
+        # What came back, when it is not what was asked: a series clipped to the archive's
+        # coverage or to a gap is the one fact the reader most needs on the card.
+        for key in ("obtained_start", "obtained_stop", "coverage_note"):
+            if data.get(key):
+                card[key] = data[key]
         artifacts.append(card)
 
     return artifacts

@@ -94,6 +94,21 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   flagged for never loading `pressure_balance`, whose signature contains "magnetopause".
   Choosing another published model is not a hand-written copy of the recipe; a formula
   typed by hand for the same export still is.
+- **An exported notebook carries each recipe once, collapsed; a `run_recipe` step is its
+  own dozen lines.** `run_recipe` inserts the recipe's source verbatim into the code it runs
+  — that is the point of it — and the export reproduced that code cell by cell, so a session
+  that ran `superposed_epoch` five times exported the same 385 lines five times: 8 924
+  lines of notebook for an analysis whose own steps were 23 lines each (median, measured on
+  the saved runs). The notebook now takes a `run_recipe` script apart along the markers it
+  was written with: the recipe's source goes once into a collapsed cell
+  (`jupyter.source_hidden`, tag `recipe-source`) before its first use, under a line that
+  says whether it is identical to the recipe shipped with the helioai installed now — the
+  sha256 of the text as it ran against the shipped file's — and each run keeps the lines
+  that were its own, the bindings and the call, handed to a `run_recipe` helper in the setup
+  cell that does what the sandbox did: execute the source on a copy of the namespace with
+  the inputs bound and `__name__` not `__main__`. The same session exports at 1 879 lines,
+  the recipe runs at 7–12 lines each, and the notebook still runs without HelioAI. A script
+  not laid out as `run_recipe` lays it out is exported as it is.
 - **The CLI no longer prints an answer twice when the model streams it, then delivers it
   through `final_answer` without its markdown.** The final `reply` was not a prefix of
   the streamed text (the bold was gone), so the whole answer was printed again; two

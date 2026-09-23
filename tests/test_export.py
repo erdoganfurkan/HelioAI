@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 
@@ -650,3 +651,150 @@ def test_narrative_does_not_credit_the_reader_with_an_automated_correction(wired
     assert "**You:** ⚠️ AUTOMATED CORRECTION" not in narrative
     assert "_Automated note (correction):_ ⚠️ AUTOMATED CORRECTION" in narrative
     assert "**You:** Plot IMF Bz from ACE on 2005-01-17" in narrative
+
+
+# ── a recipe is exported once, collapsed; each run keeps its own lines ──────────────
+
+_FAKE_RECIPE = '''"""Fake recipe — doubles an input.
+
+Reference: none.
+"""
+import numpy as np
+
+x = globals().get("x")
+if x is None:
+    raise ValueError("bind x")
+result = np.asarray(x, dtype=float) * 2
+export("double", result, "nT")
+
+
+def describe():
+    return f"double of {x!r}"
+
+
+if __name__ == "__main__":
+    print("demo — must not run")
+'''
+
+
+def test_a_saved_run_recipe_script_splits_along_its_markers():
+    from helioai.export import _split_recipe_run
+    from helioai.tools.recipes import recipe_script
+
+    src = recipe_script("fake", _FAKE_RECIPE, {"x": "load_data('b')[:3]", "k": 2}, "describe()")
+    run = _split_recipe_run(src)
+    assert run is not None and run.name == "fake"
+    assert run.bindings == "x = (load_data('b')[:3])\nk = (2)"
+    assert run.source == _FAKE_RECIPE.rstrip("\n")
+    assert run.call == "describe()"
+    assert _split_recipe_run(recipe_script("fake", _FAKE_RECIPE, {"x": "1"}, None)).call is None
+    noted = _split_recipe_run(
+        "# some datasets kept as load_data() — see data/manifest.json\n" + src
+    )
+    assert noted is not None and noted.preamble.startswith("# some datasets kept"), (
+        "to_standalone's note above the script is kept, and does not hide the header"
+    )
+    assert _split_recipe_run("x = 1\n" + src) is None, "code above the header: not a recipe run"
+    assert _split_recipe_run("import numpy as np\nprint(np.pi)\n") is None, "a plain run"
+    assert _split_recipe_run("# run_recipe: fake — inputs\nx = (1)\nprint(x)\n") is None, (
+        "no recipe marker: not laid out as recipe_script lays it out"
+    )
+
+
+def test_the_notebook_carries_each_recipe_once_and_every_run_stays_short(
+    monkeypatch, tmp_path
+) -> None:
+    """A session that ran superposed_epoch five times exported the same 385 lines five
+    times. The recipe now sits once, in a collapsed cell before its first use, and each
+    run is its bindings and one call."""
+    from helioai.export import build_notebook
+    from helioai.tools.recipes import recipe_script
+
+    store = SessionStore(tmp_path / "sessions.db")
+    workspace = tmp_path / "users" / _USER / "workspace" / _LABEL
+    workspace.mkdir(parents=True)
+    (workspace / "code_1.py").write_text("import numpy as np\nprint(np.pi)\n")
+    (workspace / "code_2.py").write_text(recipe_script("fake", _FAKE_RECIPE, {"x": "[1, 2]"}, None))
+    (workspace / "code_3.py").write_text(
+        recipe_script("fake", _FAKE_RECIPE, {"x": "[3]", "k": 2}, "describe()")
+    )
+    store.save(_USER, _SESSION, [Message(role="user", content="double it")])
+    store.set_workspace_dir(_USER, _SESSION, _LABEL)
+    monkeypatch.setattr(export_module, "store", store)
+    monkeypatch.setattr(export_module.settings, "data_dir", tmp_path)
+
+    nb = build_notebook(_USER, _SESSION)
+    code = [c for c in nb.cells if c.cell_type == "code"]
+    sources = [c for c in code if c.metadata.get("tags") == ["recipe-source"]]
+    assert len(sources) == 1, "one recipe, one source cell"
+    assert sources[0].metadata["jupyter"] == {"source_hidden": True}
+    assert sources[0].source.startswith("RECIPE_SOURCES['fake'] = r'''\n")
+    assert 'if __name__ == "__main__":' in sources[0].source, "the source is whole"
+    assert "def run_recipe(name, inputs=None, call=None)" in code[0].source, "the helper, in setup"
+
+    runs = [c.source for c in code[1:] if c not in sources]
+    assert runs[0] == "print(np.pi)", "a plain run is untouched"
+    assert runs[1] == (
+        "# run_recipe: fake — the inputs, then the recipe as shipped (collapsed cell above)\n"
+        "x = ([1, 2])\n"
+        "run_recipe('fake', inputs={'x': x})\n"
+    )
+    assert runs[2] == (
+        "# run_recipe: fake — the inputs, then the recipe as shipped (collapsed cell above)\n"
+        "x = ([3])\nk = (2)\n"
+        "run_recipe('fake', inputs={'x': x, 'k': k}, call='describe()')\n"
+    )
+    run_lines = sum(src.count("\n") + 1 for src in runs[1:])
+    assert run_lines <= 10, f"two recipe runs are a few lines, not two recipes: {run_lines}"
+    assert sum(c.source == sources[0].source for c in code) == 1, "the source appears once"
+
+    md = "\n".join(c.source for c in nb.cells if c.cell_type == "markdown")
+    assert "#### Recipe `fake` — as it ran, once for every use below" in md
+    assert "no `fake.py` is shipped" in md and "sha256 of the text as it ran" in md
+    # The source cell sits before the first run that needs it, after the plain run.
+    order = [c.metadata.get("tags") == ["recipe-source"] for c in code]
+    assert order.index(True) == 2
+
+
+def test_the_exported_recipe_cells_run_standalone(monkeypatch, tmp_path, capsys) -> None:
+    """Setup cell, source cell, run cell — executed in one fresh namespace, as a reader
+    would: the recipe runs on the bound input, exports, and its demo stays off."""
+    from helioai.export import build_notebook
+    from helioai.tools.recipes import recipe_script
+
+    store = SessionStore(tmp_path / "sessions.db")
+    workspace = tmp_path / "users" / _USER / "workspace" / _LABEL
+    workspace.mkdir(parents=True)
+    (workspace / "code_1.py").write_text(
+        recipe_script("fake", _FAKE_RECIPE, {"x": "[1.5, 2.5]"}, "describe()")
+    )
+    store.save(_USER, _SESSION, [Message(role="user", content="double it")])
+    store.set_workspace_dir(_USER, _SESSION, _LABEL)
+    monkeypatch.setattr(export_module, "store", store)
+    monkeypatch.setattr(export_module.settings, "data_dir", tmp_path)
+
+    nb = build_notebook(_USER, _SESSION)
+    ns: dict = {}
+    for cell in nb.cells:
+        if cell.cell_type == "code":
+            exec(cell.source, ns)
+    out = capsys.readouterr().out
+    assert "double: shape=(2,) min=3 nT max=5 nT mean=4 nT" in out, out
+    assert "'double of [1.5, 2.5]'" in out, "the session's call, evaluated after the recipe"
+    assert "demo — must not run" not in out
+    assert "result" not in ns, "the recipe ran on a copy of the namespace, as in the sandbox"
+    assert ns["x"] == [1.5, 2.5]
+
+
+def test_a_shipped_recipe_is_reported_identical_when_it_ran_unchanged(monkeypatch, tmp_path):
+    from helioai.export import _recipe_source_cells, _split_recipe_run
+    from helioai.tools.recipes import load_recipe, recipe_script
+
+    source = asyncio.run(load_recipe("theta_bn"))["code"]
+    run = _split_recipe_run(recipe_script("theta_bn", source, {"B": "b"}, None))
+    md, cell = _recipe_source_cells(run, run.source)
+    assert "identical to the `theta_bn` shipped with helioai" in md.source
+    assert cell.source.startswith("RECIPE_SOURCES['theta_bn'] = r'''\n")
+    edited = run._replace(source=run.source + "\n# edited")
+    md2, _ = _recipe_source_cells(edited, edited.source)
+    assert "**different from** the `theta_bn` shipped" in md2.source

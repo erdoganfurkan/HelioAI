@@ -16,6 +16,7 @@ runs in a plain Jupyter kernel with no HelioAI sandbox around it.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import re
 from datetime import UTC, datetime
@@ -171,6 +172,31 @@ except ImportError:
     + _HELPER_DEFS
     + "\n"
 )
+
+# Appended to the setup cell when a saved run was `run_recipe`. The recipe's source sits
+# once in the notebook, in a collapsed cell before its first use; each run keeps only the
+# lines that were its own — the bindings and the call — and hands them to this helper,
+# which does what the sandbox did: run the source on a namespace where the inputs are
+# bound and `__name__` is not `__main__`.
+_RUN_RECIPE_DEF = '''
+
+RECIPE_SOURCES = {}
+
+
+def run_recipe(name, inputs=None, call=None):
+    """Run a shipped recipe as the session ran it: its source, kept verbatim in the
+    collapsed cell above its first use, executed on a copy of this namespace with the
+    inputs bound and __name__ set so a demo behind `if __name__ == "__main__":` stays off.
+    `call` is the expression the session evaluated after the recipe, if any."""
+    ns = dict(globals())
+    ns.update(inputs or {})
+    ns["__name__"] = "recipe"
+    exec(compile(RECIPE_SOURCES[name], f"<recipe {name}>", "exec"), ns)
+    if call:
+        result = eval(call, ns)
+        print(repr(result))
+        return result
+    return ns'''
 
 # Appended to the setup cell only when some dataset could not be rewritten to a
 # direct spz.get_data() call (the {data_dir} line is built separately, never
@@ -684,6 +710,129 @@ def _code_files(workspace_dir: Path) -> list[Path]:
     return sorted(files, key=_idx)
 
 
+_RECIPE_RUN_HEADER = re.compile(r"^# run_recipe: (?P<name>[A-Za-z_]\w*) — ")
+_RECIPE_MARK = "# ── recipe {name} ──"
+_CALL_MARK = "# ── call ──"
+_BINDING_RE = re.compile(r"^(?P<name>[A-Za-z_]\w*) = \(", re.M)
+
+
+class _RecipeRun(NamedTuple):
+    name: str
+    bindings: str
+    source: str
+    call: str | None
+    preamble: str = ""
+
+
+def _split_recipe_run(src: str) -> _RecipeRun | None:
+    """Take a saved `run_recipe` script apart along the markers `recipe_script` wrote.
+
+    A `run_recipe` run is five lines of the model's own — the input bindings and an
+    optional call — around a recipe of two to six hundred lines inserted verbatim; a
+    session that ran `superposed_epoch` five times exported the same 385 lines five
+    times, and a notebook whose analysis was 30 lines a cell became 1 900 lines of
+    repeated recipe. The exported notebook keeps each recipe once (see `build_notebook`)
+    and each run keeps its own lines. Anything not laid out exactly as `recipe_script`
+    lays it out — a hand-edited file, an older format — returns None and is exported as
+    it is.
+
+    Args:
+        src: The run's code, raw or after `to_standalone`; the markers survive both, and
+            the note `to_standalone` may put above the script is kept as a preamble.
+
+    Returns:
+        The recipe name, the binding lines, the recipe source, the call expression
+        (None when the run had none) and the preamble, or None when this is not a
+        `run_recipe` run.
+    """
+    lines = src.split("\n")
+    start = next((i for i, ln in enumerate(lines) if _RECIPE_RUN_HEADER.match(ln)), None)
+    if start is None or any(not ln.startswith("#") for ln in lines[:start] if ln.strip()):
+        return None
+    m = _RECIPE_RUN_HEADER.match(lines[start])
+    assert m is not None
+    name = m.group("name")
+    preamble = "\n".join(ln for ln in lines[:start] if ln.strip())
+    src = "\n".join(lines[start:])
+    head, sep, rest = src.partition(f"\n{_RECIPE_MARK.format(name=name)}\n")
+    if not sep:
+        return None
+    source, sep, tail = rest.partition(f"\n{_CALL_MARK}\n")
+    call = None
+    if sep:
+        lines = [ln for ln in tail.splitlines() if ln.strip()]
+        opener = "_recipe_result = ("
+        if not lines or not lines[0].startswith(opener) or not lines[0].endswith(")"):
+            return None
+        call = lines[0][len(opener) : -1]
+    bindings = [
+        ln
+        for ln in head.splitlines()[1:]
+        if ln.strip() and not ln.startswith("#") and ln != '__name__ = "recipe"'
+    ]
+    return _RecipeRun(name, "\n".join(bindings), source.strip("\n"), call, preamble)
+
+
+def _recipe_source_cells(run: _RecipeRun, raw_source: str | None):
+    """The two cells that carry a recipe once: a line of provenance, then the source in a
+    collapsed cell (`jupyter.source_hidden`, tag `recipe-source`) assigned into
+    `RECIPE_SOURCES` for `run_recipe` to execute.
+
+    The provenance line says whether what ran is the recipe shipped with the helioai
+    installed at export time: the digest of the recipe text as it ran (the raw run file,
+    before the notebook's standalone rewrites) against the digest of the shipped file.
+    """
+    import nbformat as nbf
+
+    shipped = settings.recipes.recipes_dir / f"{run.name}.py"
+    ran = hashlib.sha256((raw_source or run.source).rstrip("\n").encode()).hexdigest()
+    if shipped.exists():
+        now = hashlib.sha256(shipped.read_text(encoding="utf-8").rstrip("\n").encode()).hexdigest()
+        same = "identical to" if now == ran else "**different from**"
+        provenance = (
+            f"{same} the `{run.name}` shipped with helioai {_helioai_version()} "
+            f"(sha256 of the text as it ran: `{ran[:16]}…`)"
+        )
+    else:
+        provenance = (
+            f"sha256 of the text as it ran: `{ran[:16]}…`; no `{run.name}.py` is shipped "
+            f"with helioai {_helioai_version()}"
+        )
+    n_lines = run.source.count("\n") + 1
+    md = (
+        f"#### Recipe `{run.name}` — as it ran, once for every use below\n\n"
+        f"The source is in the collapsed cell that follows ({n_lines} lines), {provenance}. "
+        "Imports the setup cell already makes and sandbox-only calls are removed, as in every "
+        "cell of this notebook; nothing else is changed. Expand the cell to read it."
+    )
+    quote = "'" * 3
+    body = run.source
+    if quote not in body and not body.endswith("\\"):
+        literal = f"r{quote}\n{body}\n{quote}"
+    else:
+        literal = json.dumps(body)
+    code = f"RECIPE_SOURCES[{run.name!r}] = {literal}\n"
+    metadata = {"jupyter": {"source_hidden": True}, "tags": ["recipe-source"]}
+    return [nbf.v4.new_markdown_cell(md), nbf.v4.new_code_cell(code, metadata=metadata)]
+
+
+def _recipe_call_cell(run: _RecipeRun) -> str:
+    """A `run_recipe` run as a cell of its own lines: the bindings as they ran, then the
+    call to the helper with those names and the session's call expression."""
+    names = _BINDING_RE.findall(run.bindings)
+    inputs = "{" + ", ".join(f"{n!r}: {n}" for n in names) + "}"
+    call = f", call={run.call!r}" if run.call else ""
+    lines = [
+        f"# run_recipe: {run.name} — the inputs, then the recipe as shipped (collapsed cell above)"
+    ]
+    if run.preamble:
+        lines.insert(0, run.preamble)
+    if run.bindings:
+        lines.append(run.bindings)
+    lines.append(f"run_recipe({run.name!r}, inputs={inputs}{call})")
+    return "\n".join(lines) + "\n"
+
+
 def build_notebook(user_id: str, session_id: str):
     """Build an nbformat notebook object for a session, without touching disk.
 
@@ -758,11 +907,15 @@ def build_notebook(user_id: str, session_id: str):
     failed_names = _failed_code_names(history)
     runs: list[tuple[str, str]] = []
     failed_runs: list[tuple[str, str]] = []
+    raw_sources: dict[str, str] = {}
     if workspace_dir and workspace_dir.exists():
         for p in _code_files(workspace_dir):
-            src = to_standalone(p.read_text(encoding="utf-8"), manifest, with_header=False)
+            raw = p.read_text(encoding="utf-8")
+            raw_sources[p.name] = raw
+            src = to_standalone(raw, manifest, with_header=False)
             (failed_runs if p.name in failed_names else runs).append((p.name, src))
     shim_needed = any("load_data(" in src for _, src in runs)
+    recipe_runs = {name: _split_recipe_run(src) for name, src in runs}
 
     data_dir = (workspace_dir / "data") if workspace_dir else Path("data")
     setup_cell = _SETUP_CELL_BASE
@@ -771,6 +924,8 @@ def build_notebook(user_id: str, session_id: str):
             f"\n\nimport json, re\nfrom pathlib import Path\n"
             f"_HELIOAI_DATA_DIR = Path({str(data_dir)!r})\n" + _LOAD_DATA_SHIM
         )
+    if any(recipe_runs.values()):
+        setup_cell += _RUN_RECIPE_DEF
     cells.append(nbf.v4.new_code_cell(setup_cell))
 
     # Conversation narrative
@@ -791,9 +946,18 @@ def build_notebook(user_id: str, session_id: str):
     # Reproducible analysis: every saved run, in execution order
     if runs:
         cells.append(nbf.v4.new_markdown_cell("## Reproducible analysis"))
+        recipes_placed: set[str] = set()
         for name, src in runs:
             cells.append(nbf.v4.new_markdown_cell(f"### {name}"))
-            cells.append(nbf.v4.new_code_cell(src))
+            run = recipe_runs.get(name)
+            if run is None:
+                cells.append(nbf.v4.new_code_cell(src))
+                continue
+            if run.name not in recipes_placed:
+                recipes_placed.add(run.name)
+                raw = _split_recipe_run(raw_sources.get(name, ""))
+                cells.extend(_recipe_source_cells(run, raw.source if raw else None))
+            cells.append(nbf.v4.new_code_cell(_recipe_call_cell(run)))
 
     if failed_runs:
         cells.append(

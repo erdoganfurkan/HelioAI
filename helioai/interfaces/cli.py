@@ -6,7 +6,7 @@ Usage:
     helioai --resume              # pick a past session and continue it
     helioai history               # list sessions
     helioai history delete <id>   # delete a session and its workspace
-    helioai index [--rebuild] [--classify]   # (re)index the speasy catalog; --classify fills measurement types and regions
+    helioai index [--rebuild --classify]   # (re)index the speasy catalog; --classify fills measurement types and regions
     helioai export [id]           # export a session as a reproducible .ipynb
     helioai profile               # edit the user profile
     helioai mcp-install [--write] # MCP client config pointing at this install

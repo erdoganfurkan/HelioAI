@@ -20,6 +20,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 import helioai.workspace as _ws
 
@@ -55,7 +56,7 @@ class RunContext:
 
     @classmethod
     def for_session(
-        cls, user_id: str, session_id: str, *, label: str | None = None, **extra
+        cls, user_id: str, session_id: str, *, label: str | None = None, **extra: Any
     ) -> RunContext:
         """Build a context from ids, deriving the session directory the way
         `workspace.get_session_dir` does: by label when there is one, else by id.

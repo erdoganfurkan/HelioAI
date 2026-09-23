@@ -12,6 +12,7 @@ import re
 import shutil
 import time
 from pathlib import Path
+from typing import Any
 
 # SPASE Region vocabulary — maps mission/spacecraft name fragments to SPASE Region values.
 # Covers both AMDA-style names and CDA/CSA-style spacecraft codes.
@@ -678,7 +679,7 @@ def _with_region_sentence(text: str, region: str) -> str:
 
 async def classify_products(
     docs: list[dict],
-    record_dir,
+    record_dir: Path | str,
     *,
     judged: dict[str, dict] | None = None,
     judged_meta: dict | None = None,
@@ -818,7 +819,9 @@ HNSW_SYNC_THRESHOLD = 1
 HNSW_EF_SEARCH = 400
 
 
-def open_collections(chroma_dir, names: list[str], *, verbose: bool = False):
+def open_collections(
+    chroma_dir: Path | str, names: list[str], *, verbose: bool = False
+) -> tuple[Any, list[Any]]:
     """Open or create the index's collections so that every write is persisted at once,
     and so that the dense search looks wide enough to find a near-twin.
 

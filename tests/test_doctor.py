@@ -174,3 +174,21 @@ def test_help_lists_doctor():
     import helioai.interfaces.cli as cli
 
     assert "helioai doctor" in (cli.__doc__ or "")
+
+
+def test_the_judged_answers_report_their_count_and_date(quiet_install, tmp_path):
+    """The one part of the index code cannot rebuild carries its date into the report."""
+    from helioai.doctor import check_judged
+    from helioai.indexer import local_judged_path, save_judged
+
+    check = check_judged()
+    assert check.status == "ok" and check.name == "judged products"
+    assert "snapshot 2026-09-22 (jev-1.13.0)" in check.detail and "82" in check.detail
+    assert "local file" not in check.detail
+
+    save_judged(
+        local_judged_path(),
+        {"date": "2026-10-01", "models": ["jev-1.13.0"]},
+        {"cda/NEW/x": {"name": "x", "mtype": {"choice": "Waves", "confidence": 0.95}}},
+    )
+    assert "local file adds 1 products (2026-10-01)" in check_judged().detail

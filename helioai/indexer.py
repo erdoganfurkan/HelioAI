@@ -331,9 +331,7 @@ def build_index(
     collection_name = settings.rag.collection_name
     embed_model = settings.rag.embed_model
 
-    judged: dict[str, dict] = {}
     if rebuild and chroma_dir.exists():
-        judged = judged_snapshot(chroma_dir, collection_name, verbose=verbose)
         records = chroma_dir / JUDGMENT_RECORDS
         kept = records.read_bytes() if records.exists() else None
         if verbose:
@@ -344,6 +342,12 @@ def build_index(
             records.write_bytes(kept)
 
     chroma_dir.mkdir(parents=True, exist_ok=True)
+    judged_meta, judged = load_judged(SHIPPED_JUDGED, local_judged_path())
+    if verbose and judged:
+        print(
+            f"[indexer] {len(judged)} products already put to the judge "
+            f"(snapshot {judged_meta.get('date', '?')}, {', '.join(judged_meta.get('models') or [])})"
+        )
 
     if verbose:
         print(f"[indexer] loading embedding model {embed_model}…")
@@ -388,12 +392,16 @@ def build_index(
     if judged:
         applied = apply_judged(docs, judged)
         if verbose:
-            print(f"[indexer] reused the judge's answers for {applied} products from the old index")
+            print(
+                f"[indexer] the judge's recorded answers typed {applied} products, no request made"
+            )
     if classify:
         import asyncio
 
         docs = asyncio.run(
-            classify_products(docs, chroma_dir, skip=frozenset(judged), verbose=verbose)
+            classify_products(
+                docs, chroma_dir, judged=judged, judged_meta=judged_meta, verbose=verbose
+            )
         )
 
     t0 = time.perf_counter()
@@ -524,111 +532,131 @@ REGION_FLOOR = 0.9
 
 
 JUDGMENT_RECORDS = "judgment_index.jsonl"
-JUDGED_FIELDS: tuple[str, ...] = (
-    "measurement_type",
-    "measurement_type_source",
-    "measurement_type_confidence",
-    "measurement_type_jev",
-    "measurement_type_jev_confidence",
-    "region",
-    "region_source",
-    "region_confidence",
-)
-"""The metadata a classification pass writes — what a rebuild carries over by id."""
+JUDGED_FILE = "judged_products.jsonl.gz"
+SHIPPED_JUDGED = Path(__file__).parent / "data" / JUDGED_FILE
+"""Every question the judge has been asked about a product, with its answer, shipped with
+the package: one gzipped JSON line per product (`id`, `name`, then one `{choice,
+confidence}` per question asked — `mtype`, `region`), after a first line of provenance
+(`meta`: date, models, floors, count). It is the part of the index that cannot be rebuilt
+from code — 82 266 requests, US$ 2.4 on 2026-09-22 — kept as the judge's raw answers, not
+as decided fields, so the policy (floors, never overwriting a published label) lives in
+code and can change without asking again. Abstentions are in it too: a question already
+asked is not paid for twice. `helioai index` applies it to every product the archive left
+untyped; `--classify` asks only what no record answers and appends to the local copy."""
 
 
-def judged_snapshot(chroma_dir, collection_name: str, *, verbose: bool = False) -> dict[str, dict]:
-    """Every product's judge-decided fields in an existing index, by id.
+def local_judged_path() -> Path:
+    """Where `--classify` writes the answers it obtains: beside the data, not the index.
 
-    A classification pass costs money — 82 266 requests, US$ 2.4 on 2026-09-22 — and
-    `--rebuild` wiped the directory it had written into, so the next rebuild for any other
-    reason (a new sentence in the text, a new provider) would have paid it again. Read
-    before the wipe and re-applied after the walk (`apply_judged`), the answers survive
-    every rebuild; `--classify` then asks only about products no pass has judged. Only
-    fields the judge decided are kept — a published label or the table's guess are
-    recomputed by the walk as they always were.
+    The Chroma directory is wiped by `--rebuild`; the data root is not. A user with a key
+    who classifies a new provider keeps those answers across every rebuild, and they take
+    precedence over the shipped file for the same id.
+    """
+    from helioai.config import settings
 
-    Args:
-        chroma_dir: The directory about to be rebuilt.
-        collection_name: The products collection.
-        verbose: Print how many products carry an answer.
+    return Path(settings.data_dir) / JUDGED_FILE
+
+
+def load_judged(*paths: Path) -> tuple[dict, dict[str, dict]]:
+    """Read the judge's recorded answers from each file in turn, later files overriding
+    earlier ones id by id; a missing or unreadable file contributes nothing.
 
     Returns:
-        `{id: {field: value}}` over `JUDGED_FIELDS`; empty when there is no index to read.
+        `(meta, records)` — the provenance of the last file read that had any, and
+        `{id: {"name": …, "mtype": {"choice", "confidence"}, "region": {…}}}`.
     """
-    try:
-        import chromadb
-        from chromadb.api.client import SharedSystemClient
+    import gzip
+    import json
 
-        collection = chromadb.PersistentClient(path=str(chroma_dir)).get_collection(collection_name)
-    except Exception:
-        return {}
-    out: dict[str, dict] = {}
-    offset = 0
-    try:
-        while True:
-            got = collection.get(limit=5000, offset=offset, include=["metadatas"])
-            ids = got.get("ids") or []
-            if not ids:
-                break
-            for pid, meta in zip(ids, got.get("metadatas") or [], strict=False):
-                meta = meta or {}
-                if (
-                    meta.get("measurement_type_source") == "jev"
-                    or "measurement_type_jev" in meta
-                    or meta.get("region_source") == "jev"
-                ):
-                    out[pid] = {k: meta[k] for k in JUDGED_FIELDS if k in meta}
-            offset += len(ids)
-    finally:
-        SharedSystemClient.clear_system_cache()
-    if verbose:
-        print(f"[indexer] {len(out)} products carry a judge's answer in the old index")
-    return out
+    meta: dict = {}
+    records: dict[str, dict] = {}
+    for path in paths:
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    if "meta" in row:
+                        meta = dict(row["meta"])
+                        continue
+                    pid = row.get("id")
+                    if pid:
+                        records[pid] = {k: v for k, v in row.items() if k != "id"}
+        except (OSError, ValueError):
+            continue
+    return meta, records
+
+
+def save_judged(path: Path, meta: dict, records: dict[str, dict]) -> None:
+    """Write the answers as `load_judged` reads them, sorted by id, provenance first."""
+    import gzip
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    meta = {**meta, "asked": len(records)}
+    with gzip.open(path, "wt", encoding="utf-8", compresslevel=9) as f:
+        f.write(json.dumps({"meta": meta}, ensure_ascii=False) + "\n")
+        for pid in sorted(records):
+            f.write(json.dumps({"id": pid, **records[pid]}, ensure_ascii=False) + "\n")
+
+
+def _answer(record: dict, question: str, floor: float) -> tuple[str | None, float]:
+    """The recorded choice for a question when the judge was confident enough, else None."""
+    raw = record.get(question)
+    if not isinstance(raw, dict) or not raw.get("choice"):
+        return None, 0.0
+    confidence = float(raw.get("confidence") or 0.0)
+    return (raw["choice"], confidence) if confidence >= floor else (None, confidence)
+
+
+def _apply_record(doc: dict, record: dict) -> bool:
+    """Write one product's recorded answers onto its freshly walked doc: fill the empty
+    type, flag the contradicted label, replace the table's region — never touch what the
+    archive publishes today. Returns whether anything was written."""
+    meta, touched = doc["meta"], False
+    label, confidence = _answer(record, "mtype", MEASUREMENT_TYPE_FLOOR)
+    if label:
+        published = meta.get("measurement_type")
+        if not published:
+            meta["measurement_type"] = label
+            meta["measurement_type_source"] = "jev"
+            meta["measurement_type_confidence"] = round(confidence, 3)
+            doc["text"] = _before_coverage(doc["text"], f"Measurement: {label}.")
+            touched = True
+        elif _normalised_type(published) != _normalised_type(label):
+            meta["measurement_type_jev"] = label
+            meta["measurement_type_jev_confidence"] = round(confidence, 3)
+            touched = True
+    region, confidence = _answer(record, "region", REGION_FLOOR)
+    if region and meta.get("region_source") != "archive":
+        meta["region"] = region
+        meta["region_source"] = "jev"
+        meta["region_confidence"] = round(confidence, 3)
+        doc["text"] = _with_region_sentence(doc["text"], region)
+        touched = True
+    return touched
 
 
 def apply_judged(docs: list[dict], judged: dict[str, dict]) -> int:
-    """Write a previous pass's answers onto freshly walked docs, id by id, exactly as
-    `classify_products` would have: fill the empty type, flag the contradicted label,
-    replace the table's region — never touch what the archive publishes today.
+    """Apply the recorded answers to every walked doc they name.
 
-    Args:
-        docs: `{id, text, meta}` as `_walk` collects them.
-        judged: `judged_snapshot` output.
+    A record whose `name` no longer matches the product's is skipped: the id was reused
+    for something else, and a type decided about the old content is not evidence about
+    the new. A record without a name (none of the first pass had one) is applied.
 
     Returns:
         How many docs received at least one field.
     """
     applied = 0
     for doc in docs:
-        fields = judged.get(doc["id"])
-        if not fields:
+        record = judged.get(doc["id"])
+        if not record:
             continue
-        meta, touched = doc["meta"], False
-        label = (
-            fields.get("measurement_type")
-            if fields.get("measurement_type_source") == "jev"
-            else None
-        )
-        if label and not meta.get("measurement_type"):
-            meta["measurement_type"] = label
-            meta["measurement_type_source"] = "jev"
-            meta["measurement_type_confidence"] = fields.get("measurement_type_confidence")
-            doc["text"] = _before_coverage(doc["text"], f"Measurement: {label}.")
-            touched = True
-        flagged = fields.get("measurement_type_jev")
-        if flagged and meta.get("measurement_type") and not meta.get("measurement_type_source"):
-            meta["measurement_type_jev"] = flagged
-            meta["measurement_type_jev_confidence"] = fields.get("measurement_type_jev_confidence")
-            touched = True
-        region = fields.get("region") if fields.get("region_source") == "jev" else None
-        if region and meta.get("region_source") != "archive":
-            meta["region"] = region
-            meta["region_source"] = "jev"
-            meta["region_confidence"] = fields.get("region_confidence")
-            doc["text"] = _with_region_sentence(doc["text"], region)
-            touched = True
-        applied += touched
+        name = record.get("name")
+        if name and doc["meta"].get("name") and name != doc["meta"]["name"]:
+            continue
+        applied += _apply_record(doc, record)
     return applied
 
 
@@ -649,11 +677,18 @@ def _with_region_sentence(text: str, region: str) -> str:
 
 
 async def classify_products(
-    docs: list[dict], record_dir, *, skip: frozenset[str] = frozenset(), verbose: bool = False
+    docs: list[dict],
+    record_dir,
+    *,
+    judged: dict[str, dict] | None = None,
+    judged_meta: dict | None = None,
+    verbose: bool = False,
 ) -> list[dict]:
-    """One judge call per product, two closed questions: the SPASE measurement type where
-    the archive left it empty, and the SPASE region where the indexer had only guessed.
-    Never overwrites anything the archive published.
+    """Ask the judge what no record has answered yet, apply it, and keep the answers.
+
+    Two closed questions per product: the SPASE measurement type where the archive left it
+    empty, and the SPASE region where the indexer had only guessed. Neither answer ever
+    overwrites anything the archive published.
 
     **Measurement type.** The field is indexed on 15.6 % of the products — AMDA and CSA —
     and on none of CDA's 68 000, so every ranking signal built on it (`_rerank_penalty`)
@@ -679,15 +714,21 @@ async def classify_products(
     floor the judge's region replaces it, or fills the silence, with `region_source: "jev"`
     and the confidence; below it the guess stays, marked as the guess it is.
 
-    Both answers come from one request per product; both sentences the text carried are
-    stripped before asking, so the judge reads the product, not the labels. Every call is
-    recorded to `judgment_index.jsonl` in the index directory. ~70 ms per product at eight
-    in flight: the whole catalogue in about an hour and a half.
+    **What is asked.** A product is asked only the questions no record in `judged` answers
+    for it — the shipped file plus the local one — so a second pass over the same
+    catalogue costs nothing, a new provider costs its own products, and adding a question
+    costs one request per product for that question alone. Both sentences the text carried
+    are stripped before asking, so the judge reads the product, not the labels. Every call
+    is recorded to `judgment_index.jsonl` in the index directory with the product id as its
+    key, and every answer — abstentions included — is appended to the local
+    `judged_products.jsonl.gz` for the next rebuild. ~2.9 ¢ per 1 000 requests (metered
+    2026-09-22: 838 tokens a request, the instruction being most of it).
 
     Args:
         docs: `{id, text, meta}` as `_walk` collects them.
         record_dir: Where the calls are recorded (the Chroma directory).
-        skip: Ids a previous pass already judged (`judged_snapshot`); not asked again.
+        judged: The answers already on record, updated in place.
+        judged_meta: Their provenance, carried into the saved file.
         verbose: Print the counts.
 
     Returns:
@@ -696,6 +737,7 @@ async def classify_products(
     from helioai.config import settings
     from helioai.core import judgment
 
+    judged = {} if judged is None else judged
     if settings.judgment.backend == "null":
         if verbose:
             print(
@@ -703,75 +745,71 @@ async def classify_products(
                 "skipping classification"
             )
         return docs
-    asked = [d for d in docs if d["id"] not in skip]
-    if verbose and len(asked) < len(docs):
-        print(
-            f"[indexer] {len(docs) - len(asked)} products already judged — asking about {len(asked)}"
-        )
     questions = {
         "mtype": judgment.Choice(
             MEASUREMENT_TYPE_INSTRUCTIONS, MEASUREMENT_TYPES, floor=MEASUREMENT_TYPE_FLOOR
         ),
         "region": judgment.Choice(REGION_INSTRUCTIONS, REGIONS, floor=REGION_FLOOR),
     }
-    states = [
-        {"product": _REGION_SENTENCE.sub("", _LABEL_SENTENCE.sub(" ", d["text"])).strip()}
-        for d in asked
-    ]
-    answers = await judgment.batch(
-        "index_classify",
-        states,
-        questions,
-        record_to=Path(record_dir) / JUDGMENT_RECORDS,
-    )
-    filled = flagged = abstained = 0
-    r_filled = r_replaced = r_confirmed = r_abstained = 0
-    for doc, answer in zip(asked, answers, strict=True):
-        meta = doc["meta"]
-        label = answer["mtype"] if answer is not None else None
-        if label is None:
-            abstained += 1
-        else:
-            published = meta.get("measurement_type")
-            confidence = float((answer.raw.get("mtype") or {}).get("confidence") or 0.0)
-            if not published:
-                meta["measurement_type"] = label
-                meta["measurement_type_source"] = "jev"
-                meta["measurement_type_confidence"] = round(confidence, 3)
-                doc["text"] = _before_coverage(doc["text"], f"Measurement: {label}.")
-                filled += 1
-            elif _normalised_type(published) != _normalised_type(label):
-                meta["measurement_type_jev"] = label
-                meta["measurement_type_jev_confidence"] = round(confidence, 3)
-                flagged += 1
-
-        if meta.get("region_source") == "archive":
-            continue
-        region = answer["region"] if answer is not None else None
-        if region is None:
-            r_abstained += 1
-            continue
-        guess = meta.get("region")
-        confidence = float((answer.raw.get("region") or {}).get("confidence") or 0.0)
-        if guess == region:
-            r_confirmed += 1
-        elif guess:
-            r_replaced += 1
-        else:
-            r_filled += 1
-        meta["region"] = region
-        meta["region_source"] = "jev"
-        meta["region_confidence"] = round(confidence, 3)
-        doc["text"] = _with_region_sentence(doc["text"], region)
+    groups: dict[tuple[str, ...], list[dict]] = {}
+    for doc in docs:
+        record = judged.get(doc["id"]) or {}
+        missing = tuple(q for q in questions if q not in record)
+        if missing:
+            groups.setdefault(missing, []).append(doc)
+    n_requests = sum(len(g) for g in groups.values())
     if verbose:
         print(
-            f"[indexer] measurement types: {filled} filled, {flagged} published labels flagged, "
-            f"{abstained} abstained (floor {MEASUREMENT_TYPE_FLOOR}), of {len(asked)}"
+            f"[indexer] {len(docs) - n_requests} products fully on record; "
+            f"asking {n_requests} requests: "
+            + ", ".join(f"{len(g)} × {'+'.join(k)}" for k, g in groups.items())
         )
+    models: set[str] = set(judged_meta.get("models") or []) if judged_meta else set()
+    filled = flagged = 0
+    for missing, group in groups.items():
+        asked = {q: questions[q] for q in missing}
+        states = [
+            {"product": _REGION_SENTENCE.sub("", _LABEL_SENTENCE.sub(" ", d["text"])).strip()}
+            for d in group
+        ]
+        answers = await judgment.batch(
+            "index_classify",
+            states,
+            asked,
+            record_to=Path(record_dir) / JUDGMENT_RECORDS,
+            keys=[d["id"] for d in group],
+        )
+        for doc, answer in zip(group, answers, strict=True):
+            if answer is None:
+                continue
+            record = judged.setdefault(doc["id"], {})
+            record["name"] = doc["meta"].get("name") or record.get("name")
+            for q in missing:
+                raw = answer.raw.get(q) or {}
+                if raw.get("choice") is not None:
+                    record[q] = {
+                        "choice": raw["choice"],
+                        "confidence": round(float(raw.get("confidence") or 0.0), 3),
+                    }
+            models.add(answer.model)
+            before = doc["meta"].get("measurement_type")
+            if _apply_record(doc, record):
+                if doc["meta"].get("measurement_type_source") == "jev" and not before:
+                    filled += 1
+                if "measurement_type_jev" in doc["meta"]:
+                    flagged += 1
+    if n_requests:
+        meta = {
+            **(judged_meta or {}),
+            "date": time.strftime("%Y-%m-%d"),
+            "models": sorted(models),
+            "floors": {"mtype": MEASUREMENT_TYPE_FLOOR, "region": REGION_FLOOR},
+        }
+        save_judged(local_judged_path(), meta, judged)
+    if verbose:
         print(
-            f"[indexer] regions: {r_filled} filled, {r_replaced} table guesses replaced, "
-            f"{r_confirmed} confirmed, {r_abstained} abstained (floor {REGION_FLOOR}); "
-            f"published targets untouched"
+            f"[indexer] this pass: {filled} types filled, {flagged} published labels flagged, "
+            f"{n_requests} requests, answers saved to {local_judged_path()}"
         )
     return docs
 

@@ -250,12 +250,25 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   published target is never touched, the table's guess is replaced or the silence filled
   at or above 0.9 (`region_source: "jev"` and the confidence; below it the guess stays,
   marked `table`), and every product now says where its region came from. Without a
-  judging backend the flag is a no-op that says so. A pass costs money — 82 266 requests,
-  US$ 2.4 on 2026-09-22, three times what had been guessed — and `--rebuild` wiped the
-  directory it had written into; a rebuild now reads every judge-decided field by id
-  before the wipe, keeps `judgment_index.jsonl`, writes the answers back onto the freshly
-  walked products, and `--classify` asks only about products no pass has judged. The
-  rebuild that followed reused 37 677 answers and made no request.
+  judging backend the flag is a no-op that says so.
+  **The judge's answers ship with the package, so `helioai index` types the catalogue
+  without a key.** A pass costs money — 82 266 requests, US$ 2.4 on 2026-09-22 (metered:
+  2.9 ¢ per 1 000 requests, 838 tokens each, the instruction being most of it), three
+  times what had been guessed — and it is the one part of the index code cannot rebuild.
+  `helioai/data/judged_products.jsonl.gz` (0.66 MB) holds every question the judge has been
+  asked about a product with its raw answer — choice and confidence, abstentions included
+  — after a first line of provenance (date, model, floors, count), and `helioai doctor`
+  prints that line. It is the judge's *answers*, not decided fields: the floors and the
+  never-overwrite rule live in code and can change without a request. `helioai index`
+  applies it to every product the archive left untyped — a rebuild from the file
+  reproduced the paid index to the byte, 82 266 texts and 37 677 types, and the same
+  ranking on every replayed query — and `--classify` asks only what no record answers:
+  a second pass over the same catalogue costs nothing, a new provider costs its own
+  products, a new question costs one request per product for that question alone. What
+  a user with a key obtains is appended to a local copy beside the data, which survives
+  `--rebuild` and takes precedence over the shipped file. A record whose product name no
+  longer matches is not applied: an id reused for other content is not the product that
+  was judged. Every call is now recorded with the product id as its key.
   Separately, every product's text now ends with `Coverage: … to …`, as the catalogue
   index has always said `Survey: … to …`: a year in a query used to match nothing and only
   dilute the rest. And a CDAWeb product's text now says whose it is.

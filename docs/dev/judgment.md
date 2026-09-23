@@ -87,6 +87,20 @@ and not the labels:
   at ≥ 0.9 (`region_source: "jev"`); a published dataset target is never touched; below the
   floor the guess stays, marked `table`.
 
+The answers ship with the package. A pass costs money (82 266 requests, US$ 2.4 on
+2026-09-22 — metered at 2.9 ¢ per 1 000 requests) and is the one part of the index code
+cannot rebuild, so `helioai/data/judged_products.jsonl.gz` (0.66 MB) carries every question
+asked so far with its raw answer, abstentions included, behind a line of provenance that
+`helioai doctor` prints. `helioai index` applies it without a key; a rebuild from the file
+reproduces the paid index to the byte. `--classify` asks only what no record answers and
+appends the new answers to a local copy beside the data (`data/judged_products.jsonl.gz`),
+which survives `--rebuild` and overrides the shipped file. The loop for a new provider is
+therefore: anyone rebuilds and gets the new products untyped, exactly as the whole of CDA
+was until 0.4.0; a maintainer with a key runs `--classify`, pays for those products alone,
+and the next release ships the extended file. Because the file keeps answers rather than
+decisions, the floor can be changed without asking again — and a record whose product
+name no longer matches the id is not applied.
+
 ## What was measured before each site shipped
 
 Every site had a stop rule, measured before it was built, offline where possible.

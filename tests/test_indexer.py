@@ -459,8 +459,13 @@ def test_classification_fills_the_empty_flags_the_contradicted_and_never_overwri
     ]
     seen: dict = {}
 
-    async def fake_batch(site, states, questions, *, concurrency=8, record_to=None):
-        seen["site"], seen["states"], seen["record_to"] = site, states, record_to
+    async def fake_batch(site, states, questions, *, concurrency=8, record_to=None, keys=None):
+        seen["site"], seen["states"], seen["record_to"], seen["keys"] = (
+            site,
+            states,
+            record_to,
+            keys,
+        )
         assert set(questions) == {"mtype", "region"}
         assert questions["mtype"].floor == MEASUREMENT_TYPE_FLOOR
         assert questions["region"].floor == REGION_FLOOR
@@ -532,7 +537,7 @@ def test_classification_replaces_the_tables_region_and_keeps_the_archives(tmp_pa
     ]
     seen: dict = {}
 
-    async def fake_batch(site, states, questions, *, concurrency=8, record_to=None):
+    async def fake_batch(site, states, questions, *, concurrency=8, record_to=None, keys=None):
         seen["states"] = states
         return [
             _answers("EnergeticParticles", 0.95, "Earth.Magnetosheath", 0.98),
@@ -606,137 +611,231 @@ def test_the_walk_says_where_a_region_came_from():
     )
 
 
-# ───────────────── a rebuild keeps what a classification pass paid for ─────────────────
+# ───────────── the judge's answers ship with the package and survive rebuilds ─────────────
 
 
-def test_judged_snapshot_reads_only_the_judges_fields_and_survives_the_wipe(tmp_path):
-    """82 266 requests, US$ 2.4 (2026-09-22) — and `--rebuild` wiped the directory they were
-    written into. The answers are read by id before the wipe and re-applied after the walk;
-    a published label and the table's guess are not the judge's and are recomputed."""
-    import chromadb
-    from chromadb.api.client import SharedSystemClient
+def test_judged_answers_round_trip_and_later_files_override_earlier(tmp_path):
+    from helioai.indexer import load_judged, save_judged
 
-    from helioai.indexer import JUDGMENT_RECORDS, apply_judged, judged_snapshot
-
-    chroma_dir = tmp_path / "chroma"
-    col = chromadb.PersistentClient(path=str(chroma_dir)).get_or_create_collection("products")
-    col.upsert(
-        ids=["cda/A/x", "amda/pub", "cda/B/y", "cda/guess"],
-        embeddings=[[0.0] * 4] * 4,
-        metadatas=[
-            {
-                "name": "x",
-                "measurement_type": "Ephemeris",
-                "measurement_type_source": "jev",
-                "measurement_type_confidence": 0.97,
-                "region": "Earth.Magnetosphere",
-                "region_source": "table",
-            },
-            {
-                "name": "pub",
-                "measurement_type": "MagneticField",
-                "measurement_type_jev": "ThermalPlasma",
-                "measurement_type_jev_confidence": 0.99,
-                "region": "Earth.Magnetosheath",
-                "region_source": "archive",
-            },
-            {"name": "y", "region": "Mars", "region_source": "table"},
-            {"name": "g", "region": "Venus", "region_source": "jev", "region_confidence": 0.95},
-        ],
+    shipped = tmp_path / "shipped.jsonl.gz"
+    local = tmp_path / "local.jsonl.gz"
+    save_judged(
+        shipped,
+        {"date": "2026-09-22", "models": ["jev-1.13.0"]},
+        {
+            "cda/A/x": {"name": "x", "mtype": {"choice": "Ephemeris", "confidence": 0.97}},
+            "cda/B/y": {"name": "y", "mtype": {"choice": "Waves", "confidence": 0.4}},
+        },
     )
-    SharedSystemClient.clear_system_cache()
-    (chroma_dir / JUDGMENT_RECORDS).write_text('{"site": "index_classify"}\n')
+    save_judged(
+        local,
+        {"date": "2026-10-01", "models": ["jev-1.13.0", "jev-1.14.0"]},
+        {
+            "cda/B/y": {
+                "name": "y",
+                "mtype": {"choice": "Waves", "confidence": 0.4},
+                "region": {"choice": "Mars", "confidence": 0.95},
+            },
+            "cda/NEW/z": {"name": "z", "mtype": {"choice": "MagneticField", "confidence": 0.99}},
+        },
+    )
+    meta, records = load_judged(shipped, local, tmp_path / "absent.jsonl.gz")
+    assert meta == {"date": "2026-10-01", "models": ["jev-1.13.0", "jev-1.14.0"], "asked": 2}
+    assert set(records) == {"cda/A/x", "cda/B/y", "cda/NEW/z"}
+    assert records["cda/B/y"]["region"] == {"choice": "Mars", "confidence": 0.95}, "local wins"
+    assert load_judged(tmp_path / "absent.jsonl.gz") == ({}, {})
+    (tmp_path / "broken.jsonl.gz").write_bytes(b"not gzip")
+    assert load_judged(tmp_path / "broken.jsonl.gz") == ({}, {})
 
-    judged = judged_snapshot(chroma_dir, "products")
-    assert set(judged) == {"cda/A/x", "amda/pub", "cda/guess"}, "cda/B/y carries nothing judged"
-    assert judged["cda/A/x"] == {
-        "measurement_type": "Ephemeris",
-        "measurement_type_source": "jev",
-        "measurement_type_confidence": 0.97,
-        "region": "Earth.Magnetosphere",
-        "region_source": "table",
+
+def test_apply_judged_is_the_policy_over_raw_answers():
+    """The file keeps what the judge *said* — choice and confidence — not what was decided,
+    so the floors and the never-overwrite rule live here and can change without a request.
+    An abstention below the floor is on record (not paid for twice) and writes nothing."""
+    from helioai.indexer import apply_judged
+
+    judged = {
+        "cda/A/x": {"name": "x", "mtype": {"choice": "Ephemeris", "confidence": 0.97}},
+        "cda/B/y": {"name": "y", "mtype": {"choice": "InstrumentStatus", "confidence": 0.6}},
+        "amda/pub": {"name": "pub", "mtype": {"choice": "ThermalPlasma", "confidence": 0.99}},
+        "amda/imf": {"name": "imf", "mtype": {"choice": "Magnetic_Field", "confidence": 0.95}},
+        "cda/guess": {
+            "name": "g",
+            "mtype": {"choice": "MagneticField", "confidence": 0.99},
+            "region": {"choice": "Venus", "confidence": 0.95},
+        },
+        "amda/c1": {
+            "name": "bx",
+            "mtype": {"choice": "MagneticField", "confidence": 0.99},
+            "region": {"choice": "Earth.Magnetosphere", "confidence": 0.99},
+        },
+        "cda/renamed": {"name": "old name", "mtype": {"choice": "Waves", "confidence": 0.99}},
+        "cda/nameless": {"mtype": {"choice": "Radiance", "confidence": 0.99}},
     }
-    assert "name" not in judged["amda/pub"]
-    assert judged_snapshot(tmp_path / "nowhere", "products") == {}
-
     docs = [
         {
             "id": "cda/A/x",
             "text": "x. Units: km. Coverage: 2019-01-01 to 2020-01-01.",
             "meta": {"name": "x"},
         },
+        {"id": "cda/B/y", "text": "y.", "meta": {"name": "y"}},
         {
             "id": "amda/pub",
-            "text": "pub. Measurement: MagneticField. Region: Earth.Magnetosheath.",
+            "text": "pub. Measurement: MagneticField.",
+            "meta": {"name": "pub", "measurement_type": "MagneticField"},
+        },
+        {
+            "id": "amda/imf",
+            "text": "imf. Measurement: MagneticField.",
+            "meta": {"name": "imf", "measurement_type": "MagneticField"},
+        },
+        {
+            "id": "cda/guess",
+            "text": "g. Region: Mars. Coverage: 2001-01-01 to 2002-01-01.",
+            "meta": {"name": "g", "region": "Mars", "region_source": "table"},
+        },
+        {
+            "id": "amda/c1",
+            "text": "bx. Measurement: MagneticField. Region: Earth.Magnetosheath.",
             "meta": {
-                "name": "pub",
+                "name": "bx",
                 "measurement_type": "MagneticField",
                 "region": "Earth.Magnetosheath",
                 "region_source": "archive",
             },
         },
-        {"id": "cda/B/y", "text": "y.", "meta": {"name": "y"}},
-        {
-            "id": "cda/guess",
-            "text": "g. Region: Mars.",
-            "meta": {"name": "g", "region": "Mars", "region_source": "table"},
-        },
-        {"id": "cda/new", "text": "n.", "meta": {"name": "n"}},
+        {"id": "cda/renamed", "text": "r.", "meta": {"name": "new name"}},
+        {"id": "cda/nameless", "text": "n.", "meta": {"name": "n"}},
+        {"id": "cda/unknown", "text": "u.", "meta": {"name": "u"}},
     ]
-    assert apply_judged(docs, judged) == 3
+    assert apply_judged(docs, judged) == 4
+
     x = docs[0]
     assert (
         x["meta"]["measurement_type"] == "Ephemeris"
         and x["meta"]["measurement_type_source"] == "jev"
     )
+    assert x["meta"]["measurement_type_confidence"] == 0.97
     assert x["text"] == "x. Units: km. Measurement: Ephemeris. Coverage: 2019-01-01 to 2020-01-01."
-    assert "region_source" not in x["meta"], "the table's guess of the old index is not carried"
-    pub = docs[1]
-    assert pub["meta"]["measurement_type"] == "MagneticField"
-    assert pub["meta"]["measurement_type_jev"] == "ThermalPlasma"
+    assert docs[1]["meta"] == {"name": "y"}, "below the floor: on record, nothing written"
+    pub = docs[2]["meta"]
     assert (
-        pub["meta"]["region_source"] == "archive" and pub["meta"]["region"] == "Earth.Magnetosheath"
+        pub["measurement_type"] == "MagneticField"
+        and pub["measurement_type_jev"] == "ThermalPlasma"
     )
-    assert docs[2]["meta"] == {"name": "y"}
-    guess = docs[3]
+    assert "measurement_type_jev" not in docs[3]["meta"], "Magnetic_Field agrees with MagneticField"
+    guess = docs[4]
+    assert guess["meta"]["measurement_type"] == "MagneticField"
     assert guess["meta"]["region"] == "Venus" and guess["meta"]["region_source"] == "jev"
-    assert guess["text"] == "g. Region: Venus."
-    assert docs[4]["meta"] == {"name": "n"}
+    assert guess["text"] == (
+        "g. Measurement: MagneticField. Region: Venus. Coverage: 2001-01-01 to 2002-01-01."
+    )
+    c1 = docs[5]["meta"]
+    assert c1["region"] == "Earth.Magnetosheath" and c1["region_source"] == "archive", (
+        "a published target stands whatever the judge said"
+    )
+    assert docs[6]["meta"] == {"name": "new name"}, (
+        "the id was reused: the old answer is not evidence"
+    )
+    assert docs[7]["meta"]["measurement_type"] == "Radiance", "a record without a name is applied"
+    assert docs[8]["meta"] == {"name": "u"}
 
 
-def test_classification_skips_what_a_previous_pass_judged(tmp_path, monkeypatch):
+def test_classification_asks_only_the_questions_no_record_answers_and_saves_them(
+    tmp_path, monkeypatch
+):
+    """A second pass over the same catalogue costs nothing; a new provider costs its own
+    products; a new question costs one request per product for that question alone."""
     import asyncio
 
     from helioai.config import settings
     from helioai.core import judgment
-    from helioai.indexer import classify_products
+    from helioai.indexer import classify_products, load_judged, local_judged_path
 
     monkeypatch.setattr(settings.judgment, "backend", "jev")
-    docs = [
-        {
-            "id": "cda/old",
-            "text": "old.",
-            "meta": {
-                "name": "old",
-                "measurement_type": "Ephemeris",
-                "measurement_type_source": "jev",
-            },
+    judged = {
+        "cda/old": {"name": "old", "mtype": {"choice": "Ephemeris", "confidence": 0.97}},
+        "cda/done": {
+            "name": "done",
+            "mtype": {"choice": "Waves", "confidence": 0.3},
+            "region": {"choice": "Mars", "confidence": 0.2},
         },
-        {"id": "cda/new", "text": "new.", "meta": {"name": "new"}},
+    }
+    docs = [
+        {"id": "cda/old", "text": "old.", "meta": {"name": "old"}},
+        {"id": "cda/done", "text": "done.", "meta": {"name": "done"}},
+        {
+            "id": "cda/new",
+            "text": "new. Coverage: 2020-01-01 to 2021-01-01.",
+            "meta": {"name": "new"},
+        },
     ]
-    seen: dict = {}
+    calls: list[dict] = []
 
-    async def fake_batch(site, states, questions, *, concurrency=8, record_to=None):
-        seen["states"] = states
-        return [_answers("MagneticField", 0.95, "Mars", 0.96)]
+    async def fake_batch(site, states, questions, *, concurrency=8, record_to=None, keys=None):
+        calls.append({"states": states, "questions": tuple(questions), "keys": keys})
+        if tuple(questions) == ("region",):
+            return [_answers("ignored", 0.0, "Heliosphere.Inner", 0.93)]
+        return [_answers("MagneticField", 0.95, "Earth.Magnetosphere", 0.55)]
 
     monkeypatch.setattr(judgment, "batch", fake_batch)
-    out = asyncio.run(classify_products(docs, tmp_path, skip=frozenset({"cda/old"}), verbose=True))
-    assert seen["states"] == [{"product": "new."}], "one request, for the product nobody judged"
-    assert out[0]["meta"]["measurement_type"] == "Ephemeris"
-    assert (
-        out[1]["meta"]["measurement_type"] == "MagneticField" and out[1]["meta"]["region"] == "Mars"
+    out = asyncio.run(
+        classify_products(
+            docs,
+            tmp_path,
+            judged=judged,
+            judged_meta={"date": "2026-09-22", "models": ["jev-1.13.0"]},
+            verbose=True,
+        )
     )
+
+    by_questions = {c["questions"]: c for c in calls}
+    assert set(by_questions) == {("region",), ("mtype", "region")}, "one group per missing set"
+    assert by_questions[("region",)]["keys"] == ["cda/old"]
+    assert by_questions[("mtype", "region")]["keys"] == ["cda/new"]
+    assert by_questions[("mtype", "region")]["states"] == [
+        {"product": "new. Coverage: 2020-01-01 to 2021-01-01."}
+    ]
+
+    assert out[0]["meta"]["measurement_type"] == "Ephemeris", "from the record, not the request"
+    assert (
+        out[0]["meta"]["region"] == "Heliosphere.Inner" and out[0]["meta"]["region_source"] == "jev"
+    )
+    assert out[1]["meta"] == {"name": "done"}, (
+        "two abstentions on record: nothing asked, nothing written"
+    )
+    new = out[2]
+    assert new["meta"]["measurement_type"] == "MagneticField"
+    assert "region" not in new["meta"], "0.55 is below the region floor"
+    assert new["text"] == "new. Measurement: MagneticField. Coverage: 2020-01-01 to 2021-01-01."
+
+    assert judged["cda/new"] == {
+        "name": "new",
+        "mtype": {"choice": "MagneticField", "confidence": 0.95},
+        "region": {"choice": "Earth.Magnetosphere", "confidence": 0.55},
+    }, "the abstention is on record too — it will not be paid for again"
+    assert judged["cda/old"]["region"] == {"choice": "Heliosphere.Inner", "confidence": 0.93}
+
+    meta, saved = load_judged(local_judged_path())
+    assert local_judged_path().is_relative_to(tmp_path.parent.parent) or str(
+        local_judged_path()
+    ).startswith("/tmp")
+    assert saved == judged and meta["asked"] == 3 and meta["models"] == ["jev-1.13.0", "jev-test"]
+    assert meta["floors"] == {"mtype": 0.9, "region": 0.9}
+
+
+def test_the_shipped_answers_load_and_name_their_provenance():
+    from helioai.indexer import SHIPPED_JUDGED, load_judged
+
+    meta, records = load_judged(SHIPPED_JUDGED)
+    assert meta["asked"] == len(records) >= 82_000, "the first pass: 82 266 products asked"
+    assert meta["date"] == "2026-09-22" and meta["models"] == ["jev-1.13.0"]
+    assert meta["floors"] == {"mtype": 0.9, "region": 0.9}
+    sample = records["cda/RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3/Mag"]
+    assert sample["name"] == "Mag" and sample["mtype"]["choice"] == "MagneticField"
+    assert sample["mtype"]["confidence"] >= 0.9
+    assert all(r.get("mtype", {}).get("choice") for r in records.values()), "every record answers"
+    assert all("/" in pid for pid in records), "ids are provider/dataset/variable"
 
 
 # ──────────────── a CDA product's text says whose it is (2026-09-22) ────────────────

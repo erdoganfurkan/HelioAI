@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -224,6 +224,7 @@ async def batch(
     *,
     concurrency: int = 8,
     record_to: Path | None = None,
+    keys: Sequence[str] | None = None,
 ) -> list[Answers | None]:
     """Ask the same questions of many states, off the agent loop — for a job, not a turn.
 
@@ -239,15 +240,20 @@ async def batch(
         questions: The questions, asked of every state.
         concurrency: How many calls in flight at once (37 ms per item at eight, measured).
         record_to: The JSON-lines file every call is appended to; None records nothing.
+        keys: One name per state, written into its record as `key` — the product id, so
+            a record can be found again without matching its text. The 82 266 records of
+            the first indexing pass carried none and had to be joined back by text.
 
     Returns:
         One `Answers` or `None` (abstained, failed, timed out) per state, in order.
     """
     if settings.judgment.backend == "null" or not states:
         return [None] * len(states)
+    if keys is not None and len(keys) != len(states):
+        raise ValueError("one key per state")
     sem = asyncio.Semaphore(max(1, concurrency))
 
-    async def one(state: Mapping[str, Any]) -> Answers | None:
+    async def one(state: Mapping[str, Any], key: str | None) -> Answers | None:
         async with sem:
             t0 = time.perf_counter()
             try:
@@ -258,7 +264,17 @@ async def batch(
             except Exception as e:
                 latency = (time.perf_counter() - t0) * 1000
                 _warn_once(site, e)
-                _record(site, state, questions, None, None, latency, error=str(e), path=record_to)
+                _record(
+                    site,
+                    state,
+                    questions,
+                    None,
+                    None,
+                    latency,
+                    error=str(e),
+                    path=record_to,
+                    key=key,
+                )
                 return None
             latency = (time.perf_counter() - t0) * 1000
             answers = Answers(
@@ -268,10 +284,14 @@ async def batch(
                 latency_ms=latency,
                 request_id=response.request_id,
             )
-            _record(site, state, questions, answers, None, latency, path=record_to)
+            _record(site, state, questions, answers, None, latency, path=record_to, key=key)
             return answers
 
-    return list(await asyncio.gather(*(one(st) for st in states)))
+    return list(
+        await asyncio.gather(
+            *(one(st, keys[i] if keys is not None else None) for i, st in enumerate(states))
+        )
+    )
 
 
 def _record(
@@ -284,10 +304,12 @@ def _record(
     *,
     error: str | None = None,
     path: Path | None = None,
+    key: str | None = None,
 ) -> None:
     line = {
         "ts": datetime.now(UTC).isoformat(timespec="seconds"),
         "site": site,
+        "key": key,
         "backend": settings.judgment.backend,
         "model": answers.model if answers else settings.judgment.model,
         "latency_ms": round(latency_ms, 1),

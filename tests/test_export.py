@@ -713,10 +713,12 @@ def test_the_notebook_carries_each_recipe_once_and_every_run_stays_short(
     store = SessionStore(tmp_path / "sessions.db")
     workspace = tmp_path / "users" / _USER / "workspace" / _LABEL
     workspace.mkdir(parents=True)
-    (workspace / "code_1.py").write_text("import numpy as np\nprint(np.pi)\n")
-    (workspace / "code_2.py").write_text(recipe_script("fake", _FAKE_RECIPE, {"x": "[1, 2]"}, None))
+    (workspace / "code_1.py").write_text("import numpy as np\nprint(np.pi)\n", encoding="utf-8")
+    (workspace / "code_2.py").write_text(
+        recipe_script("fake", _FAKE_RECIPE, {"x": "[1, 2]"}, None), encoding="utf-8"
+    )
     (workspace / "code_3.py").write_text(
-        recipe_script("fake", _FAKE_RECIPE, {"x": "[3]", "k": 2}, "describe()")
+        recipe_script("fake", _FAKE_RECIPE, {"x": "[3]", "k": 2}, "describe()"), encoding="utf-8"
     )
     store.save(_USER, _SESSION, [Message(role="user", content="double it")])
     store.set_workspace_dir(_USER, _SESSION, _LABEL)
@@ -766,7 +768,7 @@ def test_the_exported_recipe_cells_run_standalone(monkeypatch, tmp_path, capsys)
     workspace = tmp_path / "users" / _USER / "workspace" / _LABEL
     workspace.mkdir(parents=True)
     (workspace / "code_1.py").write_text(
-        recipe_script("fake", _FAKE_RECIPE, {"x": "[1.5, 2.5]"}, "describe()")
+        recipe_script("fake", _FAKE_RECIPE, {"x": "[1.5, 2.5]"}, "describe()"), encoding="utf-8"
     )
     store.save(_USER, _SESSION, [Message(role="user", content="double it")])
     store.set_workspace_dir(_USER, _SESSION, _LABEL)

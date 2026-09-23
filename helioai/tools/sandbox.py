@@ -122,6 +122,12 @@ def _sandbox_env(home: str = "/tmp") -> dict[str, str]:
         k: v for k, v in os.environ.items() if k in _ENV_KEEP or k.startswith(_ENV_KEEP_PREFIXES)
     }
     env.setdefault("MPLBACKEND", "Agg")
+    # The server decodes the program's stdout and stderr as UTF-8, so the program must
+    # write UTF-8. It did on Linux and macOS by inheritance; on Windows the child fell
+    # back to cp1252 and a recipe that printed `→` or `λ` died in the sandbox with a
+    # UnicodeEncodeError (2026-09-23, the first Windows CI run). UTF-8 mode also makes
+    # the program's own open() default to UTF-8, the encoding every recipe is written in.
+    env["PYTHONUTF8"] = "1"
     env["HOME"] = home
     # Redirect all XDG base dirs under the writable home. Otherwise a host
     # XDG_DATA_HOME/XDG_CONFIG_HOME (kept via the XDG_ prefix) leaks through and

@@ -70,7 +70,12 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   140 000-character program failed with `E2BIG`. Found by the first Windows CI run of this
   branch. The program is now written to the interpreter's stdin (`python -`) on both spawn
   paths; the bubblewrap flags are unchanged, traceback frames are renumbered as before, and
-  the program text no longer appears in the process list.
+  the program text no longer appears in the process list. The same run showed the second
+  Windows defect: the server decodes the program's output as UTF-8, but the child wrote
+  cp1252, so a recipe that printed `→` or `λ` — `rankine_hugoniot`, `mvab` — died with a
+  `UnicodeEncodeError`. The program now runs in UTF-8 mode (`PYTHONUTF8=1`) on every
+  platform, which also makes its own `open()` default to the encoding the recipes are
+  written in.
 - **`superposed_epoch` no longer refuses `nT (1min)` against `nT`.** CDAWeb labels some
   products with their cadence in parentheses after the unit; a live composite of Wind
   `BF1` events was refused three times as "incompatible units" until the caller dropped

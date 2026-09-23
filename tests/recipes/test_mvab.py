@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -129,6 +130,8 @@ def test_mvab_standalone_demo_runs_as_a_script():
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONUTF8": "1"},
     )
 
     assert completed.returncode == 0, completed.stderr

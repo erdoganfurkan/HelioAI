@@ -47,13 +47,19 @@ def clean(values):
 
 _EXPORT_DEF = '''\
 def export(name, data, units=""):
-    """Print a numeric summary of an array; a dict of numbers is summarised key by key."""
+    """Print a numeric summary of an array; a dict of numbers is summarised key by key.
+    A value that is not numeric is printed as it is — the session's export() kept it
+    rather than raising, and the notebook must not fail where the run did not."""
     if isinstance(data, dict):
         for key, value in data.items():
             if isinstance(value, (dict, int, float)) and not isinstance(value, bool):
                 export(f"{name}.{key}", value, units)
         return
-    arr = np.asarray(data, dtype=float)
+    try:
+        arr = np.asarray(data, dtype=float)
+    except (TypeError, ValueError):
+        print(f"{name}: {data!r}")
+        return
     unit = f" {units}" if units else ""
     print(f"{name}: shape={arr.shape} min={np.nanmin(arr):.4g}{unit} "
           f"max={np.nanmax(arr):.4g}{unit} mean={np.nanmean(arr):.4g}{unit}")'''

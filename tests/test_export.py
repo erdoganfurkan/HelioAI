@@ -481,6 +481,24 @@ def test_the_exported_magnitude_refuses_what_the_sandbox_one_refuses() -> None:
         exec(out, {})  # noqa: S102
 
 
+def test_the_exported_export_keeps_a_string_as_the_sandbox_one_does(capsys) -> None:
+    """Live run of 00_quickstart (2026-09-23): the plot cell ended with
+    `export('t_shock_iso', str(t_shock))`, which the sandbox recorded as a non-numeric
+    export and the standalone notebook turned into `ValueError: could not convert string
+    to float` — the figure had already been drawn, and the cell still failed."""
+    from helioai.export import to_standalone
+
+    code = (
+        'export("t_shock_iso", "2015-03-17T04:00:01.500000000")\nexport("b", [1.5], units="nT")\n'
+    )
+    out = to_standalone(code, {"datasets": {}})
+    exec(out, {})  # noqa: S102
+
+    printed = capsys.readouterr().out
+    assert "t_shock_iso: '2015-03-17T04:00:01.500000000'" in printed
+    assert "b: shape=(1,) min=1.5 nT" in printed
+
+
 def test_the_header_reads_the_cell_not_its_comments_or_strings() -> None:
     """`"np." in code` and `\\bu\\.` saw comments and string literals, and a local variable
     named `stats` pulled scipy: a notebook imported astropy for a comment."""

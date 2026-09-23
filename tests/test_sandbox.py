@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,9 @@ async def test_timeout_hard() -> None:
     assert "timed out" in result["error"].lower()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="process groups: on Windows the kill path is proc.kill()"
+)
 async def test_a_cancelled_run_kills_its_process_tree(monkeypatch) -> None:
     """Closing the browser tab cancels the SSE generator, and with it `run_python`.
 
@@ -722,7 +726,7 @@ def test_the_seed_is_bound_after_the_data_tmpfs_and_the_workspace(tmp_path, monk
     plot_dir = str(tmp_path / "users" / "alice" / "workspace" / "s1")
     seed = str(tmp_path / "users" / "alice" / ".speasy")
 
-    cmd = sandbox._build_sandbox_cmd(plot_dir, "print(1)", speasy_seed=seed)
+    cmd = sandbox._build_sandbox_cmd(plot_dir, speasy_seed=seed)
 
     target = os.path.join(plot_dir, ".local", "share", "speasy")
     seed_idx = cmd.index(seed)
@@ -732,7 +736,7 @@ def test_the_seed_is_bound_after_the_data_tmpfs_and_the_workspace(tmp_path, monk
     assert cmd[data_tmpfs_idx - 1] == "--tmpfs"
     assert data_tmpfs_idx < cmd.index(plot_dir) < seed_idx < cmd.index("--chdir")
 
-    assert seed not in sandbox._build_sandbox_cmd(plot_dir, "print(1)")
+    assert seed not in sandbox._build_sandbox_cmd(plot_dir)
 
 
 async def test_speasy_is_not_imported_until_it_is_used() -> None:
@@ -854,7 +858,7 @@ def test_sensitive_home_paths_masked_before_workspace_bind(tmp_path, monkeypatch
     monkeypatch.setattr(sb, "_bwrap_works", lambda: True)
 
     plot_dir = str(tmp_path / "plot")
-    cmd = sb._build_sandbox_cmd(plot_dir, "print('test')")
+    cmd = sb._build_sandbox_cmd(plot_dir)
 
     assert "--tmpfs" in cmd
     ssh_idx = cmd.index(str(fake_ssh))
@@ -900,10 +904,10 @@ def test_build_sandbox_cmd_unshare_net(monkeypatch, tmp_path):
     monkeypatch.setattr(sb, "_bwrap_works", lambda: True)
     plot_dir = str(tmp_path / "plot")
 
-    cmd_net = sb._build_sandbox_cmd(plot_dir, "print(1)", no_net=False)
+    cmd_net = sb._build_sandbox_cmd(plot_dir, no_net=False)
     assert "--unshare-net" not in cmd_net
 
-    cmd_no_net = sb._build_sandbox_cmd(plot_dir, "print(1)", no_net=True)
+    cmd_no_net = sb._build_sandbox_cmd(plot_dir, no_net=True)
     assert "--unshare-net" in cmd_no_net
 
 
@@ -959,7 +963,7 @@ def test_build_sandbox_cmd_warns_when_no_net_and_no_bwrap(monkeypatch):
     monkeypatch.setattr("helioai.tools.sandbox._bwrap_works", lambda: False)
 
     with capture_logs() as cap_logs:
-        _build_sandbox_cmd("/tmp/fake", "print(1)", no_net=True)
+        _build_sandbox_cmd("/tmp/fake", no_net=True)
 
     assert any(
         log.get("event") == "sandbox_net_isolation_unavailable"
@@ -1018,3 +1022,16 @@ async def test_theta_bn_recipe_end_to_end_on_a_gapped_timeseries(tmp_path) -> No
 
     assert result.get("error") is None, result.get("stderr", "")
     assert result["exports"]["theta_bn"]["mean"] == pytest.approx(60.0, abs=0.01)
+
+
+async def test_a_program_larger_than_a_command_line_runs() -> None:
+    """The script used to travel as the argument of `-c`: 32 767 characters for the whole
+    command line on Windows — the 14 576-character preamble left ~18 000 for the user's
+    code, and `run_recipe` of `theta_bn` (28 763) failed with WinError 206 before it
+    started — and 131 072 per argument on Linux (E2BIG). It goes through stdin now."""
+    from helioai.tools.sandbox import run_python
+
+    code = "# " + "x" * 140_000 + "\nprint('ran', 6 * 7)\n"
+    result = await run_python(code)
+    assert result.get("error") is None, result.get("error")
+    assert "ran 42" in result["stdout"]

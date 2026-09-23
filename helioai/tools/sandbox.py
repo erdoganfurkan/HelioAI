@@ -249,7 +249,7 @@ def _bwrap_works() -> bool:
 
 
 def _build_sandbox_cmd(
-    plot_dir: str, full_code: str, no_net: bool = False, speasy_seed: str | None = None
+    plot_dir: str, no_net: bool = False, speasy_seed: str | None = None
 ) -> list[str]:
     """Build the sandbox execution command.
 
@@ -258,9 +258,17 @@ def _build_sandbox_cmd(
     sandbox share the same host UID. Falls back to plain python + preexec_fn
     when bwrap is not functional (local dev, restrictive seccomp profiles).
 
+    The program itself is not on the command line: both paths end in `python -` and
+    the assembled script is written to the interpreter's stdin by the caller. It used
+    to travel as the argument of `-c`, and an argument has a size: 32 767 characters for
+    the whole command line on Windows, 131 072 for one argument on Linux. The sandbox
+    preamble is 14 576 of them, so on Windows a `run_recipe` of any recipe over ~18 000
+    characters — `theta_bn` is 28 763 — failed before it started (`WinError 206`), and on
+    Linux a 140 000-character program failed with `E2BIG`. Stdin has no such limit, and
+    the program no longer shows in the process list.
+
     Args:
         plot_dir: The session workspace, the one directory the sandbox may write.
-        full_code: The assembled script (preamble, user code, postamble).
         no_net: Add `--unshare-net`; only honoured under bwrap.
         speasy_seed: The user's speasy inventory (`_user_speasy_seed`), bound at the
             path speasy reads inside the sandbox HOME. Mounted after the `data_dir`
@@ -318,7 +326,7 @@ def _build_sandbox_cmd(
         # with EROFS — the standalone-script export in examples/02 could not write
         # its file no matter how the model was prompted.
         cmd += ["--chdir", plot_dir]
-        cmd += [sys.executable, "-c", full_code]
+        cmd += [sys.executable, "-"]
         return cmd
 
     if no_net:
@@ -328,7 +336,7 @@ def _build_sandbox_cmd(
             "sandbox_net_isolation_unavailable",
             detail="network isolation requested but bwrap is unavailable",
         )
-    return [sys.executable, "-c", full_code]
+    return [sys.executable, "-"]
 
 
 def _preexec_fn() -> callable | None:
@@ -784,11 +792,12 @@ print("__HELIOAI_RESULT__" + json.dumps(_out))
 # silently start pointing tracebacks at the wrong line again.
 _PREAMBLE_LINES = 2 + len(_SANDBOX_PREAMBLE.splitlines())
 
-_TRACEBACK_FRAME = re.compile(r'File "<string>", line (\d+)')
+_TRACEBACK_FRAME = re.compile(r'File "<(?:string|stdin)>", line (\d+)')
 
 
 def _rewrite_traceback(stderr: str) -> str:
-    """Renumber `File "<string>", line N` frames onto the agent's own code.
+    """Renumber `File "<stdin>", line N` frames onto the agent's own code (`<string>`
+    when the program travelled as the argument of `-c`, as it used to).
 
     The traceback counts from the top of the assembled script, so a one-line typo was
     reported ~212 lines below where the agent could see it — and the `code_N.py` written
@@ -879,10 +888,10 @@ async def run_python(
         speasy_seed = await asyncio.to_thread(_user_speasy_seed, current_user())
     cmd = _build_sandbox_cmd(
         plot_dir,
-        full_code,
         no_net=_no_net,
         speasy_seed=str(speasy_seed) if speasy_seed else None,
     )
+    program = full_code.encode("utf-8")
     using_bwrap = cmd[0].endswith("bwrap") if cmd else False
 
     try:
@@ -890,6 +899,7 @@ async def run_python(
             sandbox_env = _sandbox_env(home=plot_dir)
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=sandbox_env,
@@ -900,6 +910,7 @@ async def run_python(
             sandbox_env = _sandbox_env()
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=sandbox_env,
@@ -908,7 +919,9 @@ async def run_python(
                 cwd=plot_dir,  # same working directory as the bwrap path's --chdir
             )
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(input=program), timeout=timeout
+            )
         except TimeoutError:
             _kill_proc_tree(proc)
             stdout_bytes, stderr_bytes = await proc.communicate()

@@ -488,17 +488,27 @@ async def collect(task: asyncio.Task) -> dict[str, Any] | None:
 class _JevBackend:
     """TypeSafe's System One through `typesafe-sdk`, imported only when first asked.
 
-    One client per process, no SDK-level retry: the whole call is already bounded by
+    One client per event loop, no SDK-level retry: the whole call is already bounded by
     `ask`, and a retry inside a 2 s budget would only make the timeout the common case.
+    Per loop rather than per process because the CLI runs one `asyncio.run()` per query:
+    a pool opened under the first loop raised `Event loop is closed` from the second
+    query on, and the judge abstained silently for the rest of the session.
     """
 
     def __init__(self) -> None:
         self._client: Any = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def _get_client(self) -> Any:
+        if not settings.judgment.api_key:
+            raise RuntimeError("TYPESAFE_API_KEY is not set")
+        try:
+            loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._client is not None and self._loop is not loop:
+            self._client = None
         if self._client is None:
-            if not settings.judgment.api_key:
-                raise RuntimeError("TYPESAFE_API_KEY is not set")
             from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
             self._client = AsyncTypeSafeClient(
@@ -506,6 +516,7 @@ class _JevBackend:
                 model=settings.judgment.model,
                 retry=RetryPolicy(max_retries=0, timeout=settings.judgment.timeout_s),
             )
+            self._loop = loop
         return self._client
 
     async def ask(self, state: dict[str, Any], questions: dict[str, Question]) -> Any:

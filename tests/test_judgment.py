@@ -212,6 +212,40 @@ def test_the_key_is_read_from_the_environment_and_never_required(monkeypatch):
     assert loaded.judgment.api_key == "k" and loaded.judgment.timeout_s == 0.5
 
 
+def test_the_jev_client_is_reopened_when_the_event_loop_changes(monkeypatch):
+    """Live run of 2026-09-23, six questions with the judge on, one `asyncio.run()` per
+    question as the CLI does: the pool opened under the first loop raised
+    `RuntimeError: Event loop is closed` on the second, `_warn_once` said so once, and
+    the judge abstained silently on every question after the first."""
+    import sys
+    from types import ModuleType
+
+    created: list[object] = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            created.append(self)
+
+    sdk = ModuleType("typesafe_sdk")
+    sdk.AsyncTypeSafeClient = FakeClient
+    sdk.RetryPolicy = lambda **kwargs: None
+    monkeypatch.setitem(sys.modules, "typesafe_sdk", sdk)
+    monkeypatch.setattr(settings.judgment, "api_key", "k")
+    backend = judgment._JevBackend()
+
+    async def once():
+        return backend._get_client()
+
+    async def twice():
+        return backend._get_client(), backend._get_client()
+
+    first = asyncio.run(once())
+    same_loop = asyncio.run(twice())
+    assert same_loop[0] is same_loop[1], "one client per loop, not per call"
+    assert same_loop[0] is not first, "a new loop gets a new client, never a closed pool"
+    assert len(created) == 2
+
+
 def test_our_questions_map_onto_the_sdk_types():
     pytest.importorskip("typesafe_sdk")
     sdk = judgment.to_sdk(QUESTIONS)

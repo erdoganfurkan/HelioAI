@@ -4,7 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # Stacked review branches (pr/*) are PRs too: a PR whose base is not main
+    # gets the same checks as one that is, or its review is a reading with no run.
+    branches: [main, 'pr/**']
 
 permissions:
   contents: read

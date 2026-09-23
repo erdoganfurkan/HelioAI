@@ -157,7 +157,11 @@ def test_bound_run_exports_every_result_with_units_and_preserves_tuple_unpacking
         np.testing.assert_array_equal(np.atleast_1d(getattr(result, name)), run.value(name))
     assert len(run.figures) == 1
     assert run.figures[0].axes[0].get_title() == "Pitch angle distribution"
-    header = next(line for line in PATH.read_text().splitlines() if line.startswith("# outputs:"))
+    header = next(
+        line
+        for line in PATH.read_text(encoding="utf-8").splitlines()
+        if line.startswith("# outputs:")
+    )
     assert set(header.removeprefix("# outputs:").strip().split(", ")) == set(UNITS)
 
 

@@ -1059,3 +1059,13 @@ async def test_a_program_larger_than_a_command_line_runs() -> None:
     result = await run_python(code)
     assert result.get("error") is None, result.get("error")
     assert "ran 42" in result["stdout"]
+
+
+def test_the_program_writes_utf8_whatever_the_host_default_is() -> None:
+    """The server decodes stdout and stderr as UTF-8; on Windows the child defaulted to
+    cp1252 and a recipe that printed `→` died with a UnicodeEncodeError (first Windows CI
+    run, 2026-09-23). UTF-8 mode is set for the program on every platform."""
+    from helioai.tools.sandbox import _sandbox_env
+
+    assert _sandbox_env()["PYTHONUTF8"] == "1"
+    assert _sandbox_env(home="/x")["PYTHONUTF8"] == "1"

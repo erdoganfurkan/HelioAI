@@ -59,6 +59,18 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   none is never demoted for it. On the 30 replayed n1 queries, five processes each: recall@1
   56.7 → 73.3 %, recall@3 90.0 → 96.7 %, recall@5 90.0 → 100 %, MRR 0.736 → 0.847 — read
   with the caveat that those 30 queries are where the failures these rules name were found.
+  second, where a 2026 IMAP position led before.
+- **A sandbox program has no size limit anymore; `run_recipe` works on Windows.** The
+  assembled script — a 14 576-character preamble, then the agent's code — travelled to the
+  interpreter as the argument of `python -c`, and an argument has a size: 32 767 characters
+  for the whole command line on Windows, 131 072 for one argument on Linux. So on Windows
+  about 18 000 characters were left for the agent's code, and `run_recipe` of any recipe
+  above that — `theta_bn` is 28 763, `superposed_epoch`, `rankine_hugoniot`, `walen_test`
+  and the CUSUM recipe likewise — failed before it started with `WinError 206`; on Linux a
+  140 000-character program failed with `E2BIG`. Found by the first Windows CI run of this
+  branch. The program is now written to the interpreter's stdin (`python -`) on both spawn
+  paths; the bubblewrap flags are unchanged, traceback frames are renumbered as before, and
+  the program text no longer appears in the process list.
 - **`superposed_epoch` no longer refuses `nT (1min)` against `nT`.** CDAWeb labels some
   products with their cadence in parentheses after the unit; a live composite of Wind
   `BF1` events was refused three times as "incompatible units" until the caller dropped

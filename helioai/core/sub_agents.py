@@ -121,6 +121,8 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
         allowed_tools=(
             "search_parameters",
             "get_timeseries",
+            "list_catalogs",
+            "get_catalog",
             "get_events_timeseries",
             "load_recipe",
             "run_recipe",

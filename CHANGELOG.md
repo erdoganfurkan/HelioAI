@@ -177,6 +177,32 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   ICME of 2015" — but `get_events_timeseries` described its window as "events in this
   window", which reads as overlap, and each tool carried its own copy of the filter.
   One helper, one wording, and tests on the edge events.
+- **The data analyst can find the catalogue it is asked to analyse.** Its tool list had
+  `get_events_timeseries`, which takes a `catalog_id`, and neither `list_catalogs` nor
+  `get_catalog`, which produce one — the two arrived with the catalogue tools and the
+  whitelist was never revisited. When the lead delegated a superposed-epoch task with
+  the discovery step inside it, the analyst was asked to call tools it did not have and
+  improvised: `import speasy` in a sandbox without network (a 60 s timeout), then three
+  runs reading speasy's own source, until its turn cap — twice out of two on 2026-09-24,
+  while the day before the same question passed because the lead had listed the
+  catalogues itself. Both read-only tools are on the analyst's list now.
+- **The judge no longer falls silent after the first question of a CLI session.** The
+  Jev client and its connection pool were opened once per process, under the event loop
+  of the first question; the CLI runs one `asyncio.run()` per question, so the second one
+  raised `Event loop is closed` and the judge abstained — silently, since the failure is
+  warned once. Six judged questions in one process on 2026-09-23: one contract, then
+  nothing. One client per event loop, closed with the LLM client at the end of a query.
+- **The intent joins read what the sub-agents produced.** They were fed the lead's own
+  artifacts, so a figure the analyst drew read as "figure missing" (three of the four
+  figures in the same six questions) and no window or quantity was ever joined. They now
+  see the artifacts the sub-agents streamed through the turn; the answer validator keeps
+  the lead's list on purpose, because its recipe check reads exports against the lead's
+  history, where a delegated `run_recipe` never appears.
+- **An exported notebook no longer fails on a non-numeric `export()`.** The session's
+  `export()` records a value it cannot turn into numbers and moves on; the helper inlined
+  in the exported notebook raised `ValueError` on the same call — the live quickstart's
+  plot cell, `export('t_shock_iso', str(t_shock))`, drew its figure and then failed. The
+  exported helper prints such a value as it is.
 - `import helioai` no longer creates directories: the session store now creates its
   database and schema on first use rather than at import.
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the

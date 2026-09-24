@@ -12,6 +12,7 @@ run_recipe(name, inputs) executes it verbatim in the sandbox on the caller's inp
 
 from __future__ import annotations
 
+import ast
 import logging
 import re
 from pathlib import Path
@@ -200,7 +201,11 @@ def _bindings(inputs: dict) -> list[str]:
     """One assignment per input. A string is a Python expression evaluated in the
     sandbox — `load_data('b').values[:20]` — because a recipe's inputs are arrays
     the model cannot pass by value; anything else is a JSON literal, spelled as the
-    Python literal it already is."""
+    Python literal it already is. A string that cannot be an expression — it does not
+    parse, or it is a single bare name — is bound as the literal string it obviously
+    is: a live run bound `{"units": "nT", "param_label": "|B| OMNI 1-min"}` as
+    `param_label = (|B| OMNI 1-min)`, a SyntaxError and a lost turn, and nothing in a
+    fresh script can ever be named `nT`."""
     lines = []
     for key, value in inputs.items():
         if not _INPUT_NAME.match(str(key)):
@@ -208,8 +213,18 @@ def _bindings(inputs: dict) -> list[str]:
         rhs = value.strip() if isinstance(value, str) else repr(value)
         if not rhs:
             raise ValueError(f"input {key!r} has no value")
+        if isinstance(value, str) and not _is_expression(rhs):
+            rhs = repr(rhs)
         lines.append(f"{key} = ({rhs})")
     return lines
+
+
+def _is_expression(text: str) -> bool:
+    try:
+        tree = ast.parse(text, mode="eval")
+    except SyntaxError:
+        return False
+    return not isinstance(tree.body, ast.Name)
 
 
 def recipe_script(name: str, code: str, inputs: dict, call: str | None) -> str:

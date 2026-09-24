@@ -198,6 +198,13 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   see the artifacts the sub-agents streamed through the turn; the answer validator keeps
   the lead's list on purpose, because its recipe check reads exports against the lead's
   history, where a delegated `run_recipe` never appears.
+- **`run_recipe` binds a string that cannot be an expression as the literal it is.** An
+  input string is a Python expression evaluated in the sandbox, because a recipe's inputs
+  are arrays the model cannot pass by value — so `{"units": "nT", "param_label": "|B| OMNI
+  1-min"}` became `param_label = (|B| OMNI 1-min)`, a `SyntaxError`, a lost turn, and the
+  model re-quoting every string on a live superposed-epoch run. A string that does not
+  parse, or is a single bare name nothing in a fresh script can carry, is now bound as the
+  string; numbers, lists and calls are the expressions they always were.
 - **An exported notebook no longer fails on a non-numeric `export()`.** The session's
   `export()` records a value it cannot turn into numbers and moves on; the helper inlined
   in the exported notebook raised `ValueError` on the same call — the live quickstart's

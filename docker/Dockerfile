@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
@@ -14,7 +14,7 @@ COPY README.md ./
 RUN uv sync --frozen --no-dev
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 COPY --from=builder /app/.venv /app/.venv
 # Recipes live in helioai/data/recipes/ and travel with the package; user data

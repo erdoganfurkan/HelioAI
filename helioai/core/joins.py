@@ -51,7 +51,12 @@ def checks(contract: dict, artifacts: list[dict], claims: list[dict]) -> dict[st
         contract: `judgment.contract_fields` output — the decided intent, `None` where
             the judge abstained or the request named nothing.
         artifacts: `RunEnd.artifacts` — every parameter card, figure, export and
-            catalogue preview the run produced, sub-agents included.
+            catalogue preview the lead produced — plus the artifacts its sub-agents
+            streamed. `RunEnd.artifacts` alone never held the latter: six live turns
+            with the judge on read "figure missing" on three of the four figures a
+            sub-agent drew, and joined no frame or window at all. `validate()` keeps
+            the lead's list by design — its recipe check reads exports against the
+            lead's own history, and a delegated `run_recipe` would read as bypassed.
         claims: `RunEnd.claims` — the numbers the answer named through `final_answer`.
     """
     cards = [a for a in artifacts if a.get("kind") == "parameter_card"]

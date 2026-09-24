@@ -474,6 +474,7 @@ async def _stream_turn(
     try:
         end: RunEnd | None = None
         figure_reviews: list[str] = []
+        delegated: list[dict] = []
         plan: Plan | None = None
         trace: list[dict] = []
         async with aclosing(runner.run(history)) as run:
@@ -491,6 +492,10 @@ async def _stream_turn(
                     plan = Plan.from_payload(item["data"])
                 elif item["event"] in ("tool_call", "sub_agent_end"):
                     trace.append(item)
+                elif item["event"] == "artifact" and item["data"].get("sub_agent_ctx"):
+                    delegated.append(
+                        {k: v for k, v in item["data"].items() if k != "sub_agent_ctx"}
+                    )
         assert end is not None
 
         if end.capped:
@@ -553,7 +558,7 @@ async def _stream_turn(
         if intent_task is not None:
             contract = await judgment.collect(intent_task)
             if contract is not None:
-                contract["checks"] = joins.checks(contract, end.artifacts, end.claims)
+                contract["checks"] = joins.checks(contract, end.artifacts + delegated, end.claims)
                 yield make("intent", **contract)
         yield make("done", n_iterations=end.turns)
 

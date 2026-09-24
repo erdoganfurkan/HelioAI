@@ -164,6 +164,103 @@ async def test_a_slow_or_failing_judge_costs_the_turn_nothing(
     assert next(e for e in events if e["event"] == "reply")["data"]["text"] == "fine."
 
 
+@pytest.mark.asyncio
+async def test_the_joins_read_what_the_sub_agents_produced_and_the_validator_does_not(
+    monkeypatch, tmp_path, fake_llm_factory
+):
+    """Six live turns with the judge on (2026-09-23): the analyst drew the figure, loaded
+    the products and ran the recipe, and the joins — fed `RunEnd.artifacts`, the lead's
+    own — read "figure missing" on three of four and joined no window at all. The
+    delegated artifacts already stream through the lead's turn; the joins must see them.
+    The validator must not: its recipe check reads exports against the lead's history,
+    where no `run_recipe` ever appears for a delegated computation."""
+    from helioai.core import agent_loop
+    from helioai.core.llm.base import ToolCall
+    from helioai.core.session import SessionStore
+
+    monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
+    monkeypatch.setattr(settings.judgment, "backend", "jev")
+    monkeypatch.setattr(settings.judgment, "timeout_s", 1.0)
+    monkeypatch.setattr(settings.agent, "experiments", frozenset({"judgment_intent"}))
+
+    async def fake_ask(site, state, questions, *, decided=None):
+        return _answers(
+            wants_value=True,
+            wants_figure=True,
+            quantity="MagneticField",
+            year="2015",
+            month="03",
+            day="17",
+        )
+
+    monkeypatch.setattr(judgment, "ask", fake_ask)
+
+    ctx = {"role": "data_analyst", "task_id": "t1"}
+    produced = [
+        {
+            "kind": "parameter_card",
+            "tool": "get_timeseries",
+            "param_id": "cda/WI_H0_MFI/B3GSM",
+            "start": "2015-03-17T03:30:00",
+            "stop": "2015-03-17T04:30:00",
+        },
+        {"kind": "image", "tool": "run_recipe", "figure_paths": [str(tmp_path / "fig.png")]},
+        {
+            "kind": "exports",
+            "tool": "run_recipe",
+            "values": {"theta_bn": {"units": "deg", "mean": 60.9}},
+        },
+    ]
+
+    async def fake_subagent(**kwargs):
+        for artifact in produced:
+            yield {"event": "artifact", "data": {**artifact, "sub_agent_ctx": ctx}}
+        yield {
+            "event": "sub_agent_end",
+            "data": {
+                "task_id": kwargs["task_id"],
+                "role": kwargs["role"],
+                "findings": {},
+                "summary": "theta_Bn = 60.9 deg",
+                "n_iterations": 3,
+                "error": None,
+                "artifacts": produced,
+            },
+        }
+
+    monkeypatch.setattr(agent_loop, "stream_subagent", fake_subagent)
+    llm = fake_llm_factory(
+        [
+            Message(
+                role="assistant",
+                tool_calls=[
+                    ToolCall(
+                        id="t1",
+                        name="task",
+                        arguments={"agent_role": "data_analyst", "description": "θ_Bn"},
+                    )
+                ],
+            ),
+            Message(role="assistant", content="θ_Bn is 60.9°; the figure is attached."),
+        ]
+    )
+    events = await _collect(
+        agent_loop.stream_chat(llm, "u", "s-delegated", "plot Wind B and θ_Bn on 2015-03-17")
+    )
+
+    kinds = [e["event"] for e in events]
+    intent = next(e for e in events if e["event"] == "intent")["data"]
+    deliverable = intent["checks"]["responsiveness"]["deliverable"]
+    assert deliverable["figures"] == 1 and deliverable["missing"] == []
+    assert deliverable["match"] is True, "a figure drawn by the analyst is a figure of the run"
+    assert intent["checks"]["window"]["covered"] is True, "the analyst's download covers the day"
+    assert "recipe_bypassed" not in kinds, (
+        "the delegated theta_bn export must not read as a recipe the lead never loaded"
+    )
+    reply = next(e for e in events if e["event"] == "reply")["data"]["text"]
+    assert "never loaded" not in reply
+
+
 def test_every_intent_question_is_closed_or_yes_no():
     """The judge never writes free text into the system."""
     from helioai.core.judgment import Choice, Noul

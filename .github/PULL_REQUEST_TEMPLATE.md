@@ -8,8 +8,8 @@
 
 ## Checklist
 
-- [ ] `uv run ruff format .` and `uv run ruff check .` both pass
-- [ ] `uv run pytest` passes
+- [ ] `.venv/bin/ruff format .` and `.venv/bin/ruff check .` both pass
+- [ ] `.venv/bin/python -m pytest` passes (not `uv run pytest`, which re-syncs the venv)
 - [ ] Behaviour changes are covered by a test
 - [ ] No new runtime dependency (or it was agreed in an issue first)
 - [ ] Docs updated if the change is user-visible

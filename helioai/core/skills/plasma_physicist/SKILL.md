@@ -2,7 +2,7 @@
 name: plasma_physicist
 description: Compute plasma physics quantities using PlasmaPy tools or run_python sandbox.
 when_to_use: The user wants to compute derived plasma quantities — plasma beta, gyrofrequency, Debye length, Alfvén speed, inertial length, power spectrum — or needs unit validation for plasma parameters.
-allowed_tools: [run_python, search_parameters, list_recipes, load_recipe]
+allowed_tools: [run_python, search_parameters, list_recipes, load_recipe, run_recipe]
 ---
 
 # Procedure — plasma physics calculations

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import random
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -148,12 +148,27 @@ class Message:
         cached_tokens: The subset of `prompt_tokens` served from the provider's
             prompt cache. Priced differently by every provider, so it is kept
             apart from the total rather than folded into it.
+        origin: Who really wrote a `user` message when it was not the person.
+            `None` for the human and the model; `"correction"` for the automated
+            note the loop injects when an answer quotes ids the catalogue does
+            not have. The provider clients only forward `user` and `assistant`
+            turns from history, so a synthetic message must keep the user role to
+            be seen at all — this field is what lets the replay and the notebook
+            export tell it from a question. Persisted by `SessionStore`.
+        name: For `tool` messages, the tool that produced the result. The wire
+            formats carry only the call id, so every reader that needed to know
+            which tool a result came from sniffed the JSON's shape — `load_recipe`
+            was recognised by having `name`, `code` and `metadata` keys at once.
+            Recorded here instead, and persisted, so a reader asks the message.
+            Not sent to any provider.
     """
 
     role: Literal["system", "user", "assistant", "tool"]
     content: str = ""
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
+    origin: str | None = None
+    name: str | None = None
     # Telemetry about the response, not part of the conversation: `SessionStore`
     # deliberately does not persist these, so a reloaded history reports no cost.
     prompt_tokens: int = 0
@@ -244,3 +259,33 @@ class LLMClient(ABC):
             The assistant reply, carrying `tool_calls` when the model requested any.
         """
         raise NotImplementedError
+
+    async def stream_chat(
+        self,
+        messages: list[Message],
+        tools: list[ToolDef],
+        system_prompt: str | None = None,
+        tool_choice: str = "auto",
+    ) -> AsyncIterator[str | Message]:
+        """Send one turn and yield the reply's text as it is generated, then the reply.
+
+        The default is `chat()` in one piece: a client with no streaming support yields
+        the finished `Message` and nothing before it, so a caller that streams works
+        unchanged against every provider. Clients that stream yield text deltas (`str`)
+        and end with the same `Message` `chat()` would have returned — same content,
+        same tool calls, same usage.
+
+        Args:
+            messages: Conversation history.
+            tools: Tools the model may call this turn.
+            system_prompt: Instructions placed before the history.
+            tool_choice: As for `chat`. Passed on only when it is not the default, so
+                a client whose `chat` predates the argument still works.
+
+        Yields:
+            Text deltas, then the final `Message`.
+        """
+        kwargs: dict[str, Any] = {"system_prompt": system_prompt}
+        if tool_choice != "auto":
+            kwargs["tool_choice"] = tool_choice
+        yield await self.chat(messages, tools, **kwargs)

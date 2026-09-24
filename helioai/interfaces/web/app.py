@@ -6,6 +6,8 @@ Figures from the sandbox are served via /figure?path=<abs_path>.
 
 from __future__ import annotations
 
+import asyncio
+import hmac
 import json
 import shutil
 from contextlib import asynccontextmanager
@@ -21,6 +23,7 @@ from helioai.config import dev_unlock, settings
 from helioai.core.agent_loop import stream_chat
 from helioai.core.llm.factory import build_llm_client
 from helioai.core.session import store
+from helioai.interfaces.web.legacy_replay import messages_view
 from helioai.logging_config import get_logger
 from helioai.workspace import is_under_workspace, user_home
 
@@ -48,9 +51,13 @@ async def require_user(x_helio_token: str | None = Header(default=None)) -> str:
     users = settings.web_auth.users
     if not users:
         return _DEFAULT_USER
-    if not x_helio_token or x_helio_token not in users:
-        raise HTTPException(status_code=401, detail="Invalid or missing token")
-    return users[x_helio_token]
+    # Compared token by token in constant time, like the dev token and the MCP bearer:
+    # a dict lookup leaks how much of a guess matched through its timing.
+    if x_helio_token:
+        for token, user_id in users.items():
+            if hmac.compare_digest(token, x_helio_token):
+                return user_id
+    raise HTTPException(status_code=401, detail="Invalid or missing token")
 
 
 def _profile_path(user_id: str) -> Path:
@@ -75,13 +82,63 @@ def _owns_path(user_id: str, path: str) -> bool:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     from helioai.tools.mcp_client import discover_and_register
+    from helioai.workspace import cleanup_periodically
 
     await discover_and_register()
-    yield
+    janitor = asyncio.create_task(cleanup_periodically())
+    try:
+        yield
+    finally:
+        janitor.cancel()
 
 
 app = FastAPI(title="HelioAI", docs_url=None, redoc_url=None, lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+# Everything the page needs is served from this origin — the markdown and syntax
+# highlighting libraries are vendored under /static — so inline scripts injected
+# through a tool result would have nowhere to run even if DOMPurify let one through.
+# `unsafe-inline` for styles only: the UI sets a few style attributes from JS.
+_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'"
+)
+
+
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", _CSP)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    return response
+
+
+def harden_for_host(app: FastAPI, host: str) -> FastAPI:
+    """Add the middleware a given bind address calls for, and return the app.
+
+    Kept apart from `serve_web` so a test can build exactly what uvicorn will serve:
+    added inside `serve_web`, the host guard was never on the `app` the TestClient
+    imported, and the DNS-rebinding defence went untested for a year.
+
+    Args:
+        app: The FastAPI application.
+        host: The address about to be bound.
+
+    Returns:
+        The same app, so the call reads as an expression.
+    """
+    if host in _LOOPBACK_HOSTS:
+        # A loopback bind is not a boundary: any web page can resolve its own domain
+        # to 127.0.0.1 and reach this server (DNS rebinding). Pinning Host costs
+        # nothing here and CORS does not cover it.
+        from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(_LOOPBACK_HOSTS))
+    else:
+        log.warning("web_exposed_beyond_loopback", host=host)
+    return app
 
 
 class _ChatRequest(BaseModel):
@@ -140,6 +197,11 @@ async def chat_stream(
     # token still unlocks scope when no users are configured (local dev).
     restricted = not (bool(settings.web_auth.users) or dev_unlock(x_helio_dev_token))
 
+    # stream_chat serialises turns per session with a lock; answering 409 here is
+    # only so a second tab fails fast instead of looking hung while it queues.
+    if store.is_busy(user_id, req.session_id):
+        raise HTTPException(status_code=409, detail="a reply is already streaming for this session")
+
     async def gen():
         llm = None
         try:
@@ -164,6 +226,28 @@ async def chat_stream(
     )
 
 
+@app.get("/api/me")
+async def me(user_id: str = Depends(require_user)) -> dict:
+    """Who the caller is and what they have spent.
+
+    The first thing a per-user quota needs is a number to compare against; until now
+    nothing summed the token counts the providers report. Totals for today (UTC-ish:
+    the last 24 h), the last 30 days and all time.
+
+    Returns:
+        `{"user_id", "usage": {"day", "month", "total"}}` — each a dict of
+        prompt/completion/cached tokens and call count.
+    """
+    return {
+        "user_id": user_id,
+        "usage": {
+            "day": store.usage_totals(user_id, since_days=1),
+            "month": store.usage_totals(user_id, since_days=30),
+            "total": store.usage_totals(user_id),
+        },
+    }
+
+
 @app.get("/api/sessions")
 async def list_sessions(user_id: str = Depends(require_user)) -> list:
     """List the calling user's sessions, most recent first.
@@ -178,151 +262,42 @@ async def list_sessions(user_id: str = Depends(require_user)) -> list:
     return store.list_summaries(user_id)
 
 
-@app.get("/api/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str, user_id: str = Depends(require_user)) -> dict:
-    """Replay a session: its messages plus any figures and figure reviews.
+@app.get("/api/sessions/{session_id}/events")
+async def get_session_events(session_id: str, user_id: str = Depends(require_user)) -> dict:
+    """Replay a session from its journal: every event the live stream showed, in order.
 
-    Artifacts accumulate from tool results and are attached to the assistant message
-    that closes the turn. A turn cut short — browser closed mid-stream, iteration cap —
-    has no such message, so its figures and scripts are flushed as an empty assistant
-    entry instead: once at the next user message, so they cannot be pinned onto an
-    unrelated later answer, and once at the end of the history, so they are not
-    dropped altogether. Both happened in the audit replay.
+    The browser renders these with the same function as the live stream, so a reloaded
+    session shows the plan, the provenance verdict, the figure reviews and the
+    sub-agent trace exactly as they appeared.
 
     Args:
         session_id: Session to replay.
-        user_id: Resolved by `require_user`; a session belonging to anyone else
-            reads as empty rather than as a 403, which says nothing about
-            whether it exists.
+        user_id: Resolved by `require_user`; a session belonging to anyone else reads
+            as empty rather than as a 403, which says nothing about whether it exists.
 
     Returns:
-        `{"messages": [...]}` — the stored messages in order, each assistant
-        entry carrying the figures, cards, catalogs, code and recipes that the
-        tool calls before it produced.
+        `{"events": [...]}` — empty for a session recorded before the journal existed,
+        which the browser then fetches through `/messages`.
     """
-    history = store.get_or_create(user_id, session_id)
-    out: list[dict] = []
-    pending_figures: list[str] = []
-    pending_cards: list[dict] = []
-    pending_catalogs: list[dict] = []
-    pending_code: list[dict] = []
-    pending_recipes: list[dict] = []
+    return {"events": store.events(user_id, session_id)}
 
-    def _flush(content: str) -> None:
-        nonlocal pending_figures, pending_cards, pending_catalogs, pending_code, pending_recipes
-        entry: dict = {"role": "assistant", "content": content}
-        if pending_figures:
-            entry["figures"] = pending_figures[:]
-            pending_figures = []
-        if pending_cards:
-            entry["cards"] = pending_cards[:]
-            pending_cards = []
-        if pending_catalogs:
-            entry["catalogs"] = pending_catalogs[:]
-            pending_catalogs = []
-        if pending_code:
-            entry["code"] = pending_code[:]
-            pending_code = []
-        if pending_recipes:
-            entry["recipes"] = pending_recipes[:]
-            pending_recipes = []
-        if content or len(entry) > 2:
-            out.append(entry)
 
-    for m in history:
-        if m.role == "user":
-            _flush("")
-            out.append({"role": "user", "content": m.content})
-        elif m.role == "assistant" and m.content:
-            _flush(m.content)
-        elif m.role == "tool" and m.content:
-            try:
-                data = json.loads(m.content)
-                if isinstance(data, dict):
-                    if data.get("figure_paths"):  # run_python direct
-                        pending_figures.extend(data["figure_paths"])
-                    for card in data.get(
-                        "cards", []
-                    ):  # param_card()/document_method() in run_python
-                        if not isinstance(card, dict):
-                            continue
-                        if card.get("kind") == "parameter_card":
-                            pending_cards.append(card)
-                        elif card.get("kind") == "method_used":
-                            pending_recipes.append(
-                                {
-                                    "kind": "recipe_used",
-                                    "name": card.get("name", ""),
-                                    "reference": card.get("reference", ""),
-                                    "description": card.get("method", ""),
-                                }
-                            )
-                    if data.get("code_path"):  # run_python direct — artifact code
-                        pending_code.append(
-                            {
-                                "kind": "code",
-                                "code_path": data["code_path"],
-                                "name": Path(data["code_path"]).name,
-                                "n_lines": data.get("n_lines"),
-                            }
-                        )
-                    if "metadata" in data and data.get("name") and data.get("code"):  # load_recipe
-                        _meta = data.get("metadata") or {}
-                        pending_recipes.append(
-                            {
-                                "kind": "recipe_used",
-                                "name": data["name"],
-                                "reference": _meta.get("reference", ""),
-                                "description": _meta.get("description", ""),
-                            }
-                        )
-                    if data.get("_kind") == "catalog_preview":  # get_catalog
-                        pending_catalogs.append(
-                            {
-                                "kind": "catalog_preview",
-                                "catalog_id": data.get("catalog_id"),
-                                "name": data.get("name"),
-                                "type": data.get("type"),
-                                "nb_events_total": data.get("nb_events_total"),
-                                "columns": data.get("columns", []),
-                                "sample": (data.get("sample") or [])[:5],
-                                "survey_start": data.get("survey_start"),
-                                "survey_stop": data.get("survey_stop"),
-                            }
-                        )
-                    if data.get("param_id") and "preview" in data:  # get_timeseries direct
-                        pending_cards.append(
-                            {
-                                "kind": "parameter_card",
-                                "param_id": data.get("param_id"),
-                                "name": data.get("name"),
-                                "mission": data.get("mission"),
-                                "instrument": data.get("instrument"),
-                                "units": data.get("units"),
-                                "cadence": data.get("cadence"),
-                                "components": data.get("components"),
-                                "n_points": data.get("n_points"),
-                                "start": data.get("start"),
-                                "stop": data.get("stop"),
-                            }
-                        )
-                    for art in data.get("artifacts", []):  # résultat sous-agent
-                        if not isinstance(art, dict):
-                            continue
-                        if art.get("figure_paths"):
-                            pending_figures.extend(art["figure_paths"])
-                        if art.get("kind") == "parameter_card":
-                            pending_cards.append(art)
-                        if art.get("kind") == "catalog_preview":
-                            pending_catalogs.append(art)
-                        if art.get("kind") == "code":
-                            pending_code.append(art)
-                        if art.get("kind") == "recipe_used":
-                            pending_recipes.append(art)
-            except (ValueError, TypeError):
-                pass
-    _flush("")
-    return {"messages": out}
+@app.get("/api/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, user_id: str = Depends(require_user)) -> dict:
+    """Replay a session recorded before the event journal, from its messages.
+
+    Kept for those sessions only — see `legacy_replay`. A session with a journal is
+    served by `/events`.
+
+    Args:
+        session_id: Session to replay.
+        user_id: Resolved by `require_user`; another user's session reads as empty.
+
+    Returns:
+        `{"messages": [...]}` — the stored messages in order, each assistant entry
+        carrying the artifacts the tool calls before it produced.
+    """
+    return {"messages": messages_view(store.get_or_create(user_id, session_id))}
 
 
 @app.get("/api/profile")
@@ -487,16 +462,40 @@ def serve_web(host: str = "127.0.0.1", port: int = 7890) -> None:
         port: TCP port.
     """
     import uvicorn
-    from starlette.middleware.trustedhost import TrustedHostMiddleware
 
     from helioai.workspace import cleanup_old_runs
 
-    if host in {"127.0.0.1", "localhost", "::1"}:
-        # A loopback bind is not a boundary: any web page can resolve its own
-        # domain to 127.0.0.1 and reach this server (DNS rebinding). Pinning Host
-        # costs nothing here and CORS does not cover it.
-        app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
-    else:
-        log.warning("web_exposed_beyond_loopback", host=host)
+    refuse_unauthenticated_public_bind(host)
+    harden_for_host(app, host)
     cleanup_old_runs()
     uvicorn.run(app, host=host, port=port)
+
+
+def refuse_unauthenticated_public_bind(host: str) -> None:
+    """Exit rather than serve `run_python` to a network with no one authenticated.
+
+    The same rule `helioai-mcp --http` applies to a bind without a token: a public
+    address with no `HELIOAI_USERS` is a deployment error, and a warning someone might
+    read after the fact is not a boundary. `HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC=1` is
+    the explicit opt-out for a container that binds 0.0.0.0 behind a loopback publish.
+
+    Args:
+        host: The address about to be bound.
+
+    Raises:
+        SystemExit: On a non-loopback host with neither users nor the opt-out.
+    """
+    if host in _LOOPBACK_HOSTS or settings.web_auth.users:
+        return
+    if settings.web_auth.allow_unauthenticated_public:
+        log.warning("web_public_unauthenticated_by_choice", host=host)
+        return
+    log.error(
+        "web_refused_without_auth",
+        host=host,
+        detail=(
+            "set HELIOAI_USERS, bind to loopback, or set "
+            "HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC=1 behind a loopback port publish"
+        ),
+    )
+    raise SystemExit(1)

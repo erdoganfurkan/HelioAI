@@ -15,6 +15,7 @@ import json
 import pytest
 
 from helioai.core.llm.base import Message, ToolCall
+from helioai.tools.results import ToolResult
 
 
 def _exports_result(session_dir, exports):
@@ -36,11 +37,9 @@ async def _collect(gen):
 
 @pytest.mark.asyncio
 async def test_lead_flags_a_recipe_it_never_loaded(monkeypatch, tmp_path, fake_llm_factory):
-    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
 
     exports = {
@@ -49,7 +48,7 @@ async def test_lead_flags_a_recipe_it_never_loaded(monkeypatch, tmp_path, fake_l
     }
 
     async def fake_call_tool(name, arguments, trusted=None):
-        return _exports_result(tmp_path, exports)
+        return ToolResult.from_raw(name, _exports_result(tmp_path, exports))
 
     monkeypatch.setattr(agent_loop.registry, "call_tool", fake_call_tool)
 
@@ -80,11 +79,9 @@ async def test_lead_flags_a_recipe_it_loaded_but_never_called(
 ):
     """The lead doing run 4's mistake itself: `load_recipe("theta_bn")`, then the
     formula rewritten inline and exported under the recipe's own name."""
-    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
 
     recipe = json.dumps(
@@ -97,7 +94,9 @@ async def test_lead_flags_a_recipe_it_loaded_but_never_called(
     exports = {"theta_bn": {"mean": 54.85, "min": 54.85, "max": 54.85, "units": "deg"}}
 
     async def fake_call_tool(name, arguments, trusted=None):
-        return recipe if name == "load_recipe" else _exports_result(tmp_path, exports)
+        return ToolResult.from_raw(
+            name, recipe if name == "load_recipe" else _exports_result(tmp_path, exports)
+        )
 
     monkeypatch.setattr(agent_loop.registry, "call_tool", fake_call_tool)
 
@@ -129,11 +128,9 @@ async def test_lead_flags_a_recipe_it_loaded_but_never_called(
 @pytest.mark.asyncio
 async def test_lead_says_nothing_when_it_exported_nothing(monkeypatch, tmp_path, fake_llm_factory):
     """A search or a catalogue listing must not be accused of skipping a recipe."""
-    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
 
     llm = fake_llm_factory([Message(role="assistant", content="Wind flies at L1.")])
@@ -151,12 +148,10 @@ async def test_lead_retries_once_on_an_invented_id(monkeypatch, tmp_path, fake_l
     *path* into an id that exists nowhere, the detector fired, and the loop ended at
     `n_iterations: 2` — shipping the invented id with the correction stapled to it.
     """
-    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
     from helioai.tools import rag
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
 
     real = "cda/MMS1_FGM_SRVY_L2/mms1_fgm_b_gsm_srvy_l2"
@@ -189,17 +184,29 @@ async def test_lead_retries_once_on_an_invented_id(monkeypatch, tmp_path, fake_l
     assert not [e for e in events if e["event"] == "invalid_ids"]
     reply = [e for e in events if e["event"] == "reply"][-1]["data"]["text"]
     assert real in reply and "AUTOMATED CORRECTION" not in reply
+    kinds = [e["event"] for e in events]
+    assert kinds.count("correction") == 1 and kinds.index("correction") < kinds.index("reply")
+    journaled = SessionStore(tmp_path / "sessions.db").events("u", "s")
+    assert [e["data"]["ids"] for e in journaled if e["event"] == "correction"] == [[bogus]]
+
+    # The correction reaches the model as a user turn — that is the only role the
+    # provider clients forward from history — but it is HelioAI's, not the person's,
+    # and the persisted copy must say so or the replay shows it as a question.
+    assert correction.origin == "correction"
+    persisted = SessionStore(tmp_path / "sessions.db").get_or_create("u", "s")
+    synthetic = [m for m in persisted if m.origin == "correction"]
+    assert len(synthetic) == 1 and bogus in synthetic[0].content
+    human = [m for m in persisted if m.role == "user" and m.origin is None]
+    assert [m.content for m in human] == ["MMS1 FGM survey B in GSM"]
 
 
 @pytest.mark.asyncio
 async def test_lead_gives_up_after_one_retry(monkeypatch, tmp_path, fake_llm_factory):
     """One retry, not a loop — a model that repeats itself still gets contradicted."""
-    from helioai.config import settings
     from helioai.core import agent_loop
     from helioai.core.session import SessionStore
     from helioai.tools import rag
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
 
     bogus = "cda/MMS1_FGM_SRVY_L2/mms1_fgm_b_gsm_srvy_l2_clean"
@@ -219,4 +226,33 @@ async def test_lead_gives_up_after_one_retry(monkeypatch, tmp_path, fake_llm_fac
     assert flagged and flagged[0]["data"]["ids"] == [bogus]
     assert (
         "AUTOMATED CORRECTION" in [e for e in events if e["event"] == "reply"][-1]["data"]["text"]
+    )
+
+
+def test_a_run_that_used_the_shue_model_did_not_bypass_the_pressure_balance_recipe():
+    """MMS1 live run: the analyst called `mp_shue1998(pdyn, bz)` — the sandbox's empirical
+    magnetopause, with its reference — and exported `magnetopause_r_at_mms_Re`. The
+    recipe check read "magnetopause" and flagged pressure_balance as never loaded. Another
+    published model is a choice, not a hand-written copy of the recipe."""
+    from helioai.core.tool_exec import _flag_recipe_bypass
+
+    code = "th, r = mp_shue1998(pdyn_nPa, bz_nT)\nexport('magnetopause_r_at_mms_Re', r[0], 'Re')"
+    history = [
+        Message(role="user", content="q"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c1", name="run_python", arguments={"code": code})],
+        ),
+        Message(role="tool", tool_call_id="c1", name="run_python", content="{}"),
+    ]
+    exports = [{"kind": "exports", "values": {"magnetopause_r_at_mms_Re": {"mean": 8.57}}}]
+    text, flags = _flag_recipe_bypass("r_mp = 8.57 Re", history, exports)
+    assert flags == [] and "RECIPE CHECK" not in text
+
+    hand_written = history[1].tool_calls[0].arguments["code"] = "r = 10.22 * pdyn ** (-1 / 6.6)"
+    assert hand_written
+    _, flags = _flag_recipe_bypass("r_mp = 8.57 Re", history, exports)
+    assert flags == [{"recipe": "pressure_balance", "reason": "not_loaded"}], (
+        "the same export from a formula typed by hand is still a bypass"
     )

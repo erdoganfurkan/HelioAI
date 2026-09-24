@@ -10,6 +10,7 @@ import pytest
 
 from helioai.config import settings
 from helioai.core import vision
+from helioai.tools.results import ToolResult
 
 
 @pytest.fixture
@@ -29,8 +30,10 @@ def _fig(tmp_path, size=(100, 80)):
     return str(p)
 
 
-def _result(fig_path: str) -> str:
-    return json.dumps({"figure_paths": [fig_path], "exports": {}, "stdout": ""})
+def _result(fig_path: str) -> ToolResult:
+    return ToolResult.from_raw(
+        "run_python", json.dumps({"figure_paths": [fig_path], "exports": {}, "stdout": ""})
+    )
 
 
 async def test_disabled_is_passthrough(monkeypatch, tmp_path):
@@ -44,7 +47,7 @@ async def test_disabled_is_passthrough(monkeypatch, tmp_path):
     monkeypatch.setattr(vision, "_call_vision", boom)
     result = _result(_fig(tmp_path))
     out, verdict = await vision.maybe_review("run_python", result)
-    assert out == result and verdict is None and not called
+    assert out is result and verdict is None and not called
 
 
 async def test_verdict_attached(vision_on, monkeypatch, tmp_path):
@@ -55,7 +58,8 @@ async def test_verdict_attached(vision_on, monkeypatch, tmp_path):
     monkeypatch.setattr(vision, "_call_vision", fake)
     out, verdict = await vision.maybe_review("run_python", _result(_fig(tmp_path)))
     assert verdict == "OK — labels and data visible"
-    assert json.loads(out)["figure_review"] == verdict
+    assert out.payload["figure_review"] == verdict
+    assert json.loads(out.for_llm())["figure_review"] == verdict
 
 
 async def test_other_tools_ignored(vision_on, monkeypatch, tmp_path):
@@ -65,7 +69,7 @@ async def test_other_tools_ignored(vision_on, monkeypatch, tmp_path):
     monkeypatch.setattr(vision, "_call_vision", fake)
     result = _result(_fig(tmp_path))
     out, verdict = await vision.maybe_review("get_catalog", result)
-    assert out == result and verdict is None
+    assert out is result and verdict is None
 
 
 async def test_error_and_figureless_results_ignored(vision_on, monkeypatch):
@@ -73,13 +77,14 @@ async def test_error_and_figureless_results_ignored(vision_on, monkeypatch):
         raise AssertionError("must not be called")
 
     monkeypatch.setattr(vision, "_call_vision", fake)
-    for result in (
+    for raw in (
         json.dumps({"error": "boom", "figure_paths": ["x.png"]}),
         json.dumps({"exports": {}, "figure_paths": []}),
         "not-json",
     ):
+        result = ToolResult.from_raw("run_python", raw)
         out, verdict = await vision.maybe_review("run_python", result)
-        assert out == result and verdict is None
+        assert out is result and verdict is None
 
 
 async def test_exception_never_blocks(vision_on, monkeypatch, tmp_path):
@@ -89,7 +94,7 @@ async def test_exception_never_blocks(vision_on, monkeypatch, tmp_path):
     monkeypatch.setattr(vision, "_call_vision", fake)
     result = _result(_fig(tmp_path))
     out, verdict = await vision.maybe_review("run_python", result)
-    assert out == result and verdict is None
+    assert out is result and verdict is None
 
 
 async def test_missing_creds_disables(monkeypatch, tmp_path):
@@ -99,7 +104,7 @@ async def test_missing_creds_disables(monkeypatch, tmp_path):
     monkeypatch.setattr(vision, "_warned_no_creds", False)
     result = _result(_fig(tmp_path))
     out, verdict = await vision.maybe_review("run_python", result)
-    assert out == result and verdict is None
+    assert out is result and verdict is None
 
 
 def test_png_downscaled(tmp_path):
@@ -116,7 +121,6 @@ async def test_loop_emits_figure_review_event(vision_on, monkeypatch, tmp_path):
     from helioai.core.llm.base import Message, ToolCall
     from helioai.core.session import SessionStore
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     store = SessionStore(tmp_path / "sessions.db")
     monkeypatch.setattr(agent_loop, "store", store)
 

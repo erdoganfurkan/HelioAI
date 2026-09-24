@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,47 @@ async def test_timeout_hard() -> None:
     result = await run_python("import time; time.sleep(100)", timeout=5.0)
     assert "error" in result
     assert "timed out" in result["error"].lower()
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="process groups: on Windows the kill path is proc.kill()"
+)
+async def test_a_cancelled_run_kills_its_process_tree(monkeypatch) -> None:
+    """Closing the browser tab cancels the SSE generator, and with it `run_python`.
+
+    Only `TimeoutError` used to kill the subprocess; a cancellation propagated straight
+    out of `wait_for` and left the bubblewrap tree running until its own 300 s ceiling —
+    a machine hosting a demo accumulated one orphan per abandoned question.
+    """
+    spawned: list[asyncio.subprocess.Process] = []
+    real_exec = asyncio.create_subprocess_exec
+
+    async def spy_exec(*args, **kwargs):
+        proc = await real_exec(*args, **kwargs)
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(sandbox.asyncio, "create_subprocess_exec", spy_exec)
+
+    task = asyncio.create_task(run_python("import time\nprint('up', flush=True)\ntime.sleep(60)"))
+    while not spawned:
+        await asyncio.sleep(0.02)
+    proc = spawned[0]
+    await asyncio.sleep(0.3)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.wait_for(proc.wait(), timeout=5)
+    assert proc.returncode is not None
+    for _ in range(100):
+        try:
+            os.killpg(proc.pid, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.05)
+    else:
+        pytest.fail(f"process group {proc.pid} still has live members after cancellation")
 
 
 async def test_timeout_is_capped_server_side(monkeypatch) -> None:
@@ -375,8 +417,9 @@ async def test_registry_rejects_private_args() -> None:
         return kwargs
 
     out = await reg.call_tool("echo", {"x": 1, "_plot_dir": "/etc"})
-    assert "rejected private argument" in out
-    assert "_plot_dir" in out
+    assert not out.ok
+    assert "rejected private argument" in out.error
+    assert "_plot_dir" in out.error
 
 
 async def test_registry_allows_trusted_private_args() -> None:
@@ -389,8 +432,8 @@ async def test_registry_allows_trusted_private_args() -> None:
         return kwargs
 
     out = await reg.call_tool("echo", {"x": 1}, trusted={"_plot_dir": "/safe"})
-    assert "rejected private argument" not in out
-    assert "/safe" in out
+    assert out.ok
+    assert out.payload == {"x": 1, "_plot_dir": "/safe"}
 
 
 async def test_physics_helpers_available_in_sandbox() -> None:
@@ -604,7 +647,16 @@ export('fill_blanked', magnitude(np.array([[1e31, 1e31, 1e31]])))
     assert ex["fill_blanked"]["n_finite"] == 0, "1e31 fill must not become a magnitude"
 
 
-def test_a_fresh_sandbox_home_gets_the_hosts_speasy_inventory(tmp_path, monkeypatch):
+def _host_inventory(monkeypatch, tmp_path, files: dict[str, bytes]) -> Path:
+    src = tmp_path / "host" / "speasy"
+    for rel, content in files.items():
+        (src / rel).parent.mkdir(parents=True, exist_ok=True)
+        (src / rel).write_bytes(content)
+    monkeypatch.setattr(sandbox, "_host_speasy_inventory", lambda: src)
+    return src
+
+
+def test_a_users_first_run_copies_the_hosts_speasy_inventory_once(tmp_path, monkeypatch):
     """Regression: a session could burn every run_python without executing user code.
 
     The sandbox hands each session a new HOME, so speasy found no inventory and
@@ -612,49 +664,79 @@ def test_a_fresh_sandbox_home_gets_the_hosts_speasy_inventory(tmp_path, monkeypa
     the index stayed incomplete, so the next spawn started over. Five run_python calls
     were lost to it in one Act, including a bare `print("hello")` at 30 s.
     """
-    from helioai.tools.sandbox import _seed_speasy_inventory
+    from helioai.workspace import user_home
 
-    host = tmp_path / "host"
-    (host / "speasy" / "index").mkdir(parents=True)
-    (host / "speasy" / "index" / "cache.db").write_text("inventory", encoding="utf-8")
-    monkeypatch.setenv("XDG_DATA_HOME", str(host))
+    _host_inventory(monkeypatch, tmp_path, {"index/cache.db": b"inventory"})
 
-    home = tmp_path / "session"
-    home.mkdir()
-    _seed_speasy_inventory(str(home))
+    seed = sandbox._user_speasy_seed("alice")
 
-    assert (home / ".local" / "share" / "speasy" / "index" / "cache.db").read_text(
-        encoding="utf-8"
-    ) == "inventory"
+    assert seed == user_home("alice") / ".speasy"
+    assert (seed / "index" / "cache.db").read_bytes() == b"inventory"
+    assert not list(seed.parent.glob(".speasy.*")), "staging directory left behind"
 
 
-def test_seeding_never_overwrites_an_inventory_the_session_already_built(tmp_path, monkeypatch):
-    """The session's own index is the fresher one; clobbering it would lose its warm state."""
-    from helioai.tools.sandbox import _seed_speasy_inventory
+def test_two_sessions_of_one_user_share_the_seed_and_no_session_holds_a_copy(tmp_path, monkeypatch):
+    """269 MB per session was the cost of copying per session; the seed lives beside the
+    workspaces, never inside one, so an export never ships it and the TTL never has to."""
+    from helioai.workspace import user_home
 
-    host = tmp_path / "host"
-    (host / "speasy").mkdir(parents=True)
-    (host / "speasy" / "cache.db").write_text("host", encoding="utf-8")
-    monkeypatch.setenv("XDG_DATA_HOME", str(host))
+    _host_inventory(monkeypatch, tmp_path, {"index/cache.db": b"inventory"})
 
-    home = tmp_path / "session"
-    own = home / ".local" / "share" / "speasy"
+    first = sandbox._user_speasy_seed("alice")
+    (first / "index" / "warm.db").write_bytes(b"warmed by session one")
+    second = sandbox._user_speasy_seed("alice")
+
+    assert second == first
+    assert (second / "index" / "warm.db").read_bytes() == b"warmed by session one"
+    assert not first.is_relative_to(user_home("alice") / "workspace")
+    assert sandbox._user_speasy_seed("bob") != first
+
+
+def test_seeding_never_overwrites_a_seed_the_user_already_has(tmp_path, monkeypatch):
+    """The user's own index is the fresher one; clobbering it would lose its warm state."""
+    from helioai.workspace import user_home
+
+    _host_inventory(monkeypatch, tmp_path, {"cache.db": b"host"})
+    own = user_home("alice") / ".speasy"
     own.mkdir(parents=True)
-    (own / "cache.db").write_text("session", encoding="utf-8")
+    (own / "cache.db").write_bytes(b"user")
 
-    _seed_speasy_inventory(str(home))
-    assert (own / "cache.db").read_text(encoding="utf-8") == "session"
+    assert sandbox._user_speasy_seed("alice") == own
+    assert (own / "cache.db").read_bytes() == b"user"
 
 
 def test_seeding_is_silent_when_the_host_has_no_inventory(tmp_path, monkeypatch):
     """No host inventory is the fresh-install case: pay the rebuild, never raise."""
-    from helioai.tools.sandbox import _seed_speasy_inventory
+    from helioai.workspace import user_home
 
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "nothing-here"))
-    home = tmp_path / "session"
-    home.mkdir()
-    _seed_speasy_inventory(str(home))  # must not raise
-    assert not (home / ".local" / "share" / "speasy").exists()
+    monkeypatch.setattr(sandbox, "_host_speasy_inventory", lambda: tmp_path / "nothing-here")
+
+    assert sandbox._user_speasy_seed("alice") is None
+    assert not (user_home("alice") / ".speasy").exists()
+
+
+def test_the_seed_is_bound_after_the_data_tmpfs_and_the_workspace(tmp_path, monkeypatch):
+    """`--tmpfs data_dir` masks everything under data/, and the seed lives there; the
+    workspace bind re-exposes the session directory the seed is mounted into. Either
+    one placed later would hide the seed, and speasy would rebuild its inventory in
+    the session — the 2026-08-12 lesson, in mount order."""
+    from helioai.config import settings
+
+    monkeypatch.setattr(sandbox, "_bwrap_works", lambda: True)
+    plot_dir = str(tmp_path / "users" / "alice" / "workspace" / "s1")
+    seed = str(tmp_path / "users" / "alice" / ".speasy")
+
+    cmd = sandbox._build_sandbox_cmd(plot_dir, speasy_seed=seed)
+
+    target = os.path.join(plot_dir, ".local", "share", "speasy")
+    seed_idx = cmd.index(seed)
+    assert cmd[seed_idx - 1] == "--bind"
+    assert cmd[seed_idx + 1] == target
+    data_tmpfs_idx = cmd.index(str(settings.data_dir))
+    assert cmd[data_tmpfs_idx - 1] == "--tmpfs"
+    assert data_tmpfs_idx < cmd.index(plot_dir) < seed_idx < cmd.index("--chdir")
+
+    assert seed not in sandbox._build_sandbox_cmd(plot_dir)
 
 
 async def test_speasy_is_not_imported_until_it_is_used() -> None:
@@ -776,7 +858,7 @@ def test_sensitive_home_paths_masked_before_workspace_bind(tmp_path, monkeypatch
     monkeypatch.setattr(sb, "_bwrap_works", lambda: True)
 
     plot_dir = str(tmp_path / "plot")
-    cmd = sb._build_sandbox_cmd(plot_dir, "print('test')")
+    cmd = sb._build_sandbox_cmd(plot_dir)
 
     assert "--tmpfs" in cmd
     ssh_idx = cmd.index(str(fake_ssh))
@@ -822,10 +904,10 @@ def test_build_sandbox_cmd_unshare_net(monkeypatch, tmp_path):
     monkeypatch.setattr(sb, "_bwrap_works", lambda: True)
     plot_dir = str(tmp_path / "plot")
 
-    cmd_net = sb._build_sandbox_cmd(plot_dir, "print(1)", no_net=False)
+    cmd_net = sb._build_sandbox_cmd(plot_dir, no_net=False)
     assert "--unshare-net" not in cmd_net
 
-    cmd_no_net = sb._build_sandbox_cmd(plot_dir, "print(1)", no_net=True)
+    cmd_no_net = sb._build_sandbox_cmd(plot_dir, no_net=True)
     assert "--unshare-net" in cmd_no_net
 
 
@@ -856,21 +938,18 @@ def test_seed_skips_the_read_only_download_caches(tmp_path, monkeypatch):
     Copying everything cost 706 MB per spawn against 95 MB for the index, and the
     homes are never deleted — fourteen of them filled a 149 GB disk in fifty minutes.
     """
-    import helioai.tools.sandbox as sb
+    _host_inventory(
+        monkeypatch,
+        tmp_path,
+        {
+            "index/9b/cache.val": b"x" * 2048,
+            "cda_inventory/masters_cdf/aim_cips.cdf": b"y" * 4096,
+            "index.diskcache.backup/old.val": b"z" * 4096,
+        },
+    )
 
-    src = tmp_path / "xdg" / "speasy"
-    (src / "index" / "9b").mkdir(parents=True)
-    (src / "index" / "9b" / "cache.val").write_bytes(b"x" * 2048)
-    (src / "cda_inventory" / "masters_cdf").mkdir(parents=True)
-    (src / "cda_inventory" / "masters_cdf" / "aim_cips.cdf").write_bytes(b"y" * 4096)
-    (src / "index.diskcache.backup").mkdir()
-    (src / "index.diskcache.backup" / "old.val").write_bytes(b"z" * 4096)
+    seeded = sandbox._user_speasy_seed("alice")
 
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
-    home = tmp_path / "sandbox_home"
-    sb._seed_speasy_inventory(str(home))
-
-    seeded = home / ".local" / "share" / "speasy"
     assert (seeded / "index" / "9b" / "cache.val").read_bytes() == b"x" * 2048
     assert not (seeded / "cda_inventory").exists()
     assert not (seeded / "index.diskcache.backup").exists()
@@ -884,7 +963,7 @@ def test_build_sandbox_cmd_warns_when_no_net_and_no_bwrap(monkeypatch):
     monkeypatch.setattr("helioai.tools.sandbox._bwrap_works", lambda: False)
 
     with capture_logs() as cap_logs:
-        _build_sandbox_cmd("/tmp/fake", "print(1)", no_net=True)
+        _build_sandbox_cmd("/tmp/fake", no_net=True)
 
     assert any(
         log.get("event") == "sandbox_net_isolation_unavailable"
@@ -943,3 +1022,26 @@ async def test_theta_bn_recipe_end_to_end_on_a_gapped_timeseries(tmp_path) -> No
 
     assert result.get("error") is None, result.get("stderr", "")
     assert result["exports"]["theta_bn"]["mean"] == pytest.approx(60.0, abs=0.01)
+
+
+async def test_a_program_larger_than_a_command_line_runs() -> None:
+    """The script used to travel as the argument of `-c`: 32 767 characters for the whole
+    command line on Windows — the 14 576-character preamble left ~18 000 for the user's
+    code, and `run_recipe` of `theta_bn` (28 763) failed with WinError 206 before it
+    started — and 131 072 per argument on Linux (E2BIG). It goes through stdin now."""
+    from helioai.tools.sandbox import run_python
+
+    code = "# " + "x" * 140_000 + "\nprint('ran', 6 * 7)\n"
+    result = await run_python(code)
+    assert result.get("error") is None, result.get("error")
+    assert "ran 42" in result["stdout"]
+
+
+def test_the_program_writes_utf8_whatever_the_host_default_is() -> None:
+    """The server decodes stdout and stderr as UTF-8; on Windows the child defaulted to
+    cp1252 and a recipe that printed `→` died with a UnicodeEncodeError (first Windows CI
+    run, 2026-09-23). UTF-8 mode is set for the program on every platform."""
+    from helioai.tools.sandbox import _sandbox_env
+
+    assert _sandbox_env()["PYTHONUTF8"] == "1"
+    assert _sandbox_env(home="/x")["PYTHONUTF8"] == "1"

@@ -42,6 +42,18 @@
     The image ships with `bubblewrap`, so the sandbox is fully isolated. Mount `./data`
     to persist the index and sessions.
 
+### Check the install
+
+```bash
+helioai doctor            # offline: Python, .env found where, provider key, index, sandbox, disk
+helioai doctor --online   # plus one request to the provider's model list
+helioai doctor --json     # the same report for a bug report or a CI smoke test
+```
+
+Every line is a check with a status; `✗` lines block HelioAI and name the fix (`helioai
+index`, `helioai migrate-storage`, the missing key). The exit code is 1 when any check
+fails, so the command doubles as a health probe.
+
 ### Optional extras
 
 | Extra | Brings | For |
@@ -64,9 +76,10 @@ GROQ_API_KEY=your_key_here
 | `groq` | `llama-3.3-70b-versatile` | free tier, fast — good place to start |
 | `gemini` | `gemini-2.5-flash` | stronger reasoning, generous free quota |
 | `azure` | your deployment | enterprise deployments |
+| `opencode` | set `HELIOAI_OPENCODE_MODEL` | OpenCode's Zen gateway, flat-rate access to hosted reasoning models |
 | `ollama` | `qwen2.5:14b-instruct` | fully local, no API key |
 
-Any other OpenAI-compatible endpoint works too: a provider is a `base_url` entry in
+Every variable is listed in [Configuration](configuration.md). Any other OpenAI-compatible endpoint works too: a provider is a `base_url` entry in
 `helioai/core/llm/factory.py`, not a class. See [Extending HelioAI](dev/extending.md).
 
 !!! note "Data access needs no key"
@@ -83,7 +96,13 @@ helioai index
 
 This downloads the speasy catalogue and indexes it into a local ChromaDB. It lands in
 `<repo>/data/` when you are running from a clone, and in `~/.local/share/helioai/` when
-installed from PyPI. Override with `HELIOAI_DATA_DIR`.
+installed from PyPI. Override with `HELIOAI_DATA_DIR`: the index, the session store,
+the per-user workspaces, the saved catalogues and the profile all live under it.
+
+!!! note "Upgrading an install that already set `HELIOAI_DATA_DIR`"
+    Earlier versions kept the index, the catalogues and the profile under the
+    *default* data directory whatever the variable said. Run `helioai migrate-storage`
+    once to move them; the `search_parameters` error also tells you when this applies.
 
 Rebuild from scratch with `helioai index --rebuild` — worth doing when speasy ships a
 significant catalogue update.

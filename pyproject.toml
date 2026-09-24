@@ -15,17 +15,27 @@ license = { text = "MIT" }
 authors = [{ name = "Furkan Erdogan", email = "furkan.erdogan.pro@gmail.com" }]
 keywords = ["heliophysics", "plasma", "space physics", "AI agent", "MCP"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    # Beta, not Alpha: a published package with a documentation site, a security
+    # policy, a provenance ledger and a thousand tests undersold itself.
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    # The sandbox is only real on Linux (SECURITY.md); the other two run the fallback.
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Framework :: Jupyter",
+    "Typing :: Typed",
 ]
 dependencies = [
     "speasy>=1.4",
-    "plasmapy>=2024.5",
+    "plasmapy>=2026.2",
     "chromadb>=0.5",
     "sentence-transformers>=3.0",
     # torch is only reached through sentence-transformers, but the floor has to be ours:
@@ -41,6 +51,11 @@ dependencies = [
     "httpx>=0.27",
     "uvicorn[standard]>=0.30",
     "mcp>=2.0",
+    # Imported directly by tools/mcp_client.py: the SDK's streamable-HTTP client is
+    # typed on httpx2.AsyncClient, so the plain httpx client cannot be handed to it.
+    # It arrives through mcp anyway; declaring it means a future mcp that drops it
+    # fails at resolution, not at import.
+    "httpx2>=2.0",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "structlog>=24.0",
@@ -113,6 +128,11 @@ only-include = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "recipes: executes the shipped scientific recipes with synthetic inputs (-m 'not recipes' to skip)",
+    "network: touches the real network (-m 'not network' to skip)",
+    "slow: takes more than a few seconds",
+]
 addopts = "--cov=helioai --cov-report=term-missing --cov-fail-under=70"
 
 [tool.coverage.run]

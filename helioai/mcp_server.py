@@ -19,7 +19,6 @@ import base64
 import contextlib
 import hmac
 import io
-import json
 import sys
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -55,11 +54,11 @@ from mcp.types import (
 
 import helioai
 import helioai.tools.setup  # noqa: F401 — registers all tools at import time
-from helioai import workspace
 from helioai.config import settings
 from helioai.core.skills_loader import SkillError, list_skills, load_skill
-from helioai.core.tool_exec import inject_run_python_args
+from helioai.core.tool_exec import trusted_args
 from helioai.logging_config import get_logger, setup_logging
+from helioai.runtime.context import RunContext
 from helioai.tools.recipes import list_recipes, load_recipe
 from helioai.tools.registry import registry
 
@@ -115,26 +114,10 @@ def _session_id(ctx: ServerRequestContext | None) -> str:
         return _PROCESS_SESSION
 
 
-def _is_error(result: str) -> bool:
-    """Whether a registry result is a failure.
-
-    `registry.call_tool` never raises: an unknown tool, a rejected private argument and
-    any exception all come back as a JSON object carrying `error`, and several tools
-    report their own failures the same way. Reading that back is the only signal there
-    is, and clients drive retries and their own error display off `isError` — returning
-    False unconditionally reported every one of those as a success.
-    """
-    try:
-        payload = json.loads(result)
-    except (TypeError, ValueError):
-        return False
-    return isinstance(payload, dict) and "error" in payload
-
-
 FIGURE_MAX_PX = 768
 
 
-def _figure_content(result: str) -> list[ImageContent]:
+def _figure_content(payload: object) -> list[ImageContent]:
     """Attach the figures a tool produced, downscaled, to its result.
 
     The sandbox returns `figure_paths` — paths on the server's filesystem. That is
@@ -147,10 +130,6 @@ def _figure_content(result: str) -> list[ImageContent]:
     thumbnail says. A figure that cannot be read is skipped rather than failing the
     call — it already succeeded.
     """
-    try:
-        payload = json.loads(result)
-    except (TypeError, ValueError):
-        return []
     if not isinstance(payload, dict):
         return []
 
@@ -177,20 +156,23 @@ def _figure_content(result: str) -> list[ImageContent]:
 
 
 async def _call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
-    user_token = workspace.set_user(MCP_USER)
-    session_token = workspace.set_session(_session_id(ctx))
-    try:
+    # One context per connection: the MCP user, and a session minted for the link, so
+    # two clients never share a code_0.py or see each other's downloads.
+    run_ctx = RunContext.for_session(MCP_USER, _session_id(ctx), agent="mcp")
+    with run_ctx.bound():
         result = await registry.call_tool(
             params.name,
             params.arguments or {},
-            trusted=inject_run_python_args(params.name),
+            trusted=trusted_args(params.name, run_ctx),
         )
-    finally:
-        workspace.reset_session(session_token)
-        workspace.reset_user(user_token)
+    # `isError` drives the client's retries and error display; `registry.call_tool`
+    # never raises, so the failed result is the only signal there is. A dict payload
+    # also travels as structured content, which clients may read instead of parsing
+    # the text.
     return CallToolResult(
-        content=[TextContent(type="text", text=result), *_figure_content(result)],
-        is_error=_is_error(result),
+        content=[TextContent(type="text", text=result.for_llm()), *_figure_content(result.payload)],
+        structured_content=result.payload if isinstance(result.payload, dict) else None,
+        is_error=not result.ok,
     )
 
 
@@ -411,6 +393,9 @@ def main() -> None:
         helioai-mcp --http --port 8765     # streamable HTTP on 127.0.0.1:8765
     """
     setup_logging("WARNING")
+    from helioai.workspace import cleanup_old_runs
+
+    cleanup_old_runs()
     args = sys.argv[1:]
     if "--http" in args:
         host = _arg(args, "--host", "127.0.0.1")

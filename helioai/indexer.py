@@ -367,6 +367,12 @@ def _walk(
             )
             continue
 
+        if provider_prefix == "ssc" and spz_type == "ParameterIndex":
+            doc = _ssc_trajectory_doc(child_vars, skip_ids)
+            if doc is not None:
+                out.append(doc)
+            continue
+
         xmlid = child_vars.get("xmlid") or ""
         description = child_vars.get("description") or ""
         is_amda = bool(xmlid)
@@ -429,6 +435,45 @@ def _walk(
 
 
 _TIME_CDF_TYPES = ("CDF_EPOCH", "CDF_EPOCH16", "CDF_TIME_TT2000")
+
+
+def _ssc_trajectory_doc(child_vars: dict, skip_ids: set[str]) -> dict | None:
+    """The index entry for one SSC trajectory, or None when it is not one.
+
+    SSC nodes have neither `xmlid` nor `description` — only `Id`, `Resolution`,
+    `start_date`, `stop_date` and the display name — so the general walk skipped all 314
+    of them and the index had no spacecraft position at all: a question "where was MMS1"
+    could only be answered from an instrument's own ephemeris variable, when one existed,
+    and `provider="ssc"` returned nothing while the prompt offered it. The text is written
+    the way a position question is asked; the id is the one speasy downloads
+    (`spz.get_data("ssc/mms1", …)` — GSE km by default, GSM/GEO/SM on request).
+    """
+    uid = str(child_vars.get("__spz_uid__") or child_vars.get("Id") or "")
+    if not uid:
+        return None
+    pid = f"ssc/{uid}"
+    if pid in skip_ids:
+        return None
+    skip_ids.add(pid)
+    name = str(child_vars.get("__spz_name__") or uid)
+    resolution = child_vars.get("Resolution")
+    cadence = f" Cadence: {resolution} s." if resolution else ""
+    region = _get_region(pid)
+    text = (
+        f"{name} spacecraft position (orbit, trajectory, ephemeris) from NASA SSCWeb. "
+        f"Location of {name} as X, Y, Z in km — GSE by default; GSM, GEO, GEI, SM, GSM "
+        f"on request. Where the spacecraft was at a given time.{cadence} Units: km."
+        + (f" Region: {region}." if region else "")
+    )
+    meta: dict = {"name": name, "units": "km", "xmlid": uid, "provider": "ssc"}
+    if region:
+        meta["region"] = region
+    cov_start, cov_stop = _coverage(child_vars)
+    if cov_start:
+        meta["start_time"] = cov_start
+    if cov_stop:
+        meta["stop_time"] = cov_stop
+    return {"id": pid, "text": text, "meta": meta}
 
 
 def _is_time_axis(child_vars: dict) -> bool:

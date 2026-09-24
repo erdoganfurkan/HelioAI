@@ -88,43 +88,46 @@ def record(
     if not values or not code_path:
         return
     try:
+        from helioai.datastore import dir_lock, write_json_atomic
+
         code = Path(code_path)
         session_dir = code.parent
         m = _RUN_IDX_RE.search(code.name)
         run_idx = int(m.group(1)) if m else None
         created = str(int(time.time()))
-
-        ledger = _read_ledger_file(session_dir)
-        for name, stats in values.items():
-            if not isinstance(stats, dict) or stats.get("error"):
-                continue
-            ledger["values"].append(
-                {
-                    "name": name,
-                    "mean": stats.get("mean"),
-                    "min": stats.get("min"),
-                    "max": stats.get("max"),
-                    "std": stats.get("std"),
-                    # `shape` and `sample` are what tell a scalar from a summary. Without
-                    # them a 3-component normal can only ever vouch for two of its three
-                    # numbers — the min and the max — and the third was reported as
-                    # contradicting the very export it came from. `sample` holds the first
-                    # eight flattened values, so for a short vector it holds all of them.
-                    "shape": stats.get("shape"),
-                    "sample": stats.get("sample"),
-                    "units": stats.get("units", ""),
-                    "code_path": str(code),
-                    "run_idx": run_idx,
-                    "agent": agent,
-                    "task_id": task_id,
-                    "turn": turn,
-                    "created": created,
-                }
-            )
-        (session_dir / DATA_SUBDIR).mkdir(parents=True, exist_ok=True)
-        _ledger_path(session_dir).write_text(
-            json.dumps(ledger, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        entries = [
+            {
+                "name": name,
+                "mean": stats.get("mean"),
+                "min": stats.get("min"),
+                "max": stats.get("max"),
+                "std": stats.get("std"),
+                # `shape` and `sample` are what tell a scalar from a summary. Without
+                # them a 3-component normal can only ever vouch for two of its three
+                # numbers — the min and the max — and the third was reported as
+                # contradicting the very export it came from. `sample` holds the first
+                # eight flattened values, so for a short vector it holds all of them.
+                "shape": stats.get("shape"),
+                "sample": stats.get("sample"),
+                "units": stats.get("units", ""),
+                "code_path": str(code),
+                "run_idx": run_idx,
+                "agent": agent,
+                "task_id": task_id,
+                "turn": turn,
+                "created": created,
+            }
+            for name, stats in values.items()
+            if isinstance(stats, dict) and not stats.get("error")
+        ]
+        data_dir = session_dir / DATA_SUBDIR
+        data_dir.mkdir(parents=True, exist_ok=True)
+        # Same lock and same atomic swap as the manifest: the ledger is a
+        # read-modify-write too, and two runs appending at once lost one of them.
+        with dir_lock(data_dir):
+            ledger = _read_ledger_file(session_dir)
+            ledger["values"].extend(entries)
+            write_json_atomic(_ledger_path(session_dir), ledger)
     except Exception as e:
         log.debug("provenance record failed: %s", e)
 

@@ -130,3 +130,187 @@ def test_unknown_tool_result_avoids_dumping_raw_json():
 
 def test_empty_result_does_not_crash():
     assert isinstance(describe_tool_result("x", ""), str)
+
+
+# ── findings ──────────────────────────────────────────────────────────────────
+
+
+def test_describe_findings_one_line_per_measured_value():
+    from helioai.core.event_display import describe_findings
+
+    lines = describe_findings(
+        {
+            "theta_bn_deg": {"value": 47.3, "units": "deg"},
+            "r": {"value": 2.59, "units": "", "min": 2.41, "max": 2.77},
+        }
+    )
+    assert lines == ["theta_bn_deg = 47.3 deg", "r = 2.59 [2.41, 2.77]"]
+
+
+def test_describe_findings_is_empty_when_nothing_was_measured():
+    from helioai.core.event_display import describe_findings
+
+    assert describe_findings({}) == []
+    assert describe_findings(None) == []
+
+
+def test_describe_findings_caps_a_long_table_and_says_so():
+    from helioai.core.event_display import describe_findings
+
+    table = {f"v{i}": {"value": i, "units": "nT"} for i in range(12)}
+    lines = describe_findings(table, limit=8)
+    assert len(lines) == 9
+    assert lines[-1] == "… and 4 more"
+
+
+# ── verdict ───────────────────────────────────────────────────────────────────
+
+
+def test_describe_verdict_spells_out_a_contradiction_with_both_numbers():
+    from helioai.core.event_display import describe_verdict
+
+    summary, lines = describe_verdict(
+        {
+            "matched": 2,
+            "contradicted": 1,
+            "unsourced": 1,
+            "claims": [
+                {
+                    "status": "contradicted",
+                    "name": "theta_bn",
+                    "value": 62.7,
+                    "units": "deg",
+                    "source": "theta_bn",
+                    "ledger": 57.16,
+                    "ledger_units": "deg",
+                },
+                {
+                    "status": "unsourced",
+                    "name": "Dst",
+                    "value": -223,
+                    "units": "nT",
+                    "source": "literature",
+                },
+                {
+                    "status": "matched",
+                    "name": "r_B",
+                    "value": 2.5,
+                    "units": "",
+                    "source": "compression_ratio",
+                },
+                {
+                    "status": "matched",
+                    "name": "B_up",
+                    "value": 10.1,
+                    "units": "nT",
+                    "source": "Bmag_up",
+                },
+            ],
+        }
+    )
+    assert "2 backed" in summary and "1 contradicted" in summary and "1 unsourced" in summary
+    assert lines[0].startswith("contradicted: theta_bn stated 62.7 deg")
+    assert "57.16 deg" in lines[0]
+    assert lines[1] == "unsourced: Dst = -223 nT — source: literature"
+    assert len(lines) == 2, "matched claims are counted, not listed"
+
+
+def test_describe_verdict_with_every_claim_backed_is_one_line():
+    from helioai.core.event_display import describe_verdict
+
+    summary, lines = describe_verdict(
+        {"matched": 3, "contradicted": 0, "unsourced": 0, "claims": []}
+    )
+    assert summary.startswith("claims — 3 backed") and lines == []
+
+
+# ── plan report ───────────────────────────────────────────────────────────────
+
+
+def test_describe_plan_report_names_the_skipped_and_the_improvised_tools():
+    from helioai.core.event_display import describe_plan_report
+
+    line = describe_plan_report(
+        {
+            "title": "t",
+            "planned": ["search_parameters", "get_timeseries", "run_python"],
+            "executed": ["search_parameters", "find_papers", "run_python"],
+            "unplanned_tools": ["find_papers"],
+            "missed_tools": ["get_timeseries"],
+            "ratio": 0.67,
+        }
+    )
+    assert line == "plan — 2/3 planned tools used, not get_timeseries; unplanned: find_papers"
+
+
+def test_describe_plan_report_for_a_plan_followed_exactly_is_just_the_count():
+    from helioai.core.event_display import describe_plan_report
+
+    line = describe_plan_report(
+        {"planned": ["run_python"], "executed": ["run_python"], "ratio": 1.0}
+    )
+    assert line == "plan — 1/1 planned tools used"
+
+
+def test_describe_plan_report_says_when_the_plan_named_no_tool():
+    from helioai.core.event_display import describe_plan_report
+
+    assert describe_plan_report({"planned": [], "executed": ["run_python"], "ratio": None}) == (
+        "plan named no tools — used: run_python"
+    )
+    assert describe_plan_report({"planned": [], "executed": []}).endswith("used: none")
+
+
+def test_describe_plan_report_names_the_capped_role_and_counts_the_rest():
+    from helioai.core.event_display import describe_plan_report
+
+    line = describe_plan_report(
+        {
+            "planned": ["task"],
+            "executed": ["task"],
+            "delegations": [
+                {"role": "data_analyst", "n_iterations": 5, "capped": False},
+                {"role": "librarian", "n_iterations": 4, "capped": True},
+                {"role": "librarian", "n_iterations": 2, "capped": False},
+            ],
+        }
+    )
+    assert line == "plan — 1/1 planned tools used; 3 delegations, librarian capped"
+
+
+# ── sub_agent_end ─────────────────────────────────────────────────────────────
+
+
+def test_a_role_capped_with_findings_finished_and_says_what_it_measured():
+    from helioai.core.event_display import describe_sub_agent_end
+
+    text, tone = describe_sub_agent_end(
+        {
+            "role": "data_analyst",
+            "n_iterations": 12,
+            "capped": True,
+            "error": "(sub-agent 'data_analyst' reached its 12-turn cap)",
+            "summary": "(sub-agent 'data_analyst' reached its 12-turn cap)",
+            "findings": {"MMS1_X_GSM_Re": {"value": 21.36}, "MMS1_Y_GSM_Re": {"value": -16.1}},
+        }
+    )
+    assert tone == "capped"
+    assert text == "data_analyst: finished at its 12-turn cap — 2 values measured"
+
+
+def test_a_role_capped_with_nothing_measured_failed():
+    from helioai.core.event_display import describe_sub_agent_end
+
+    text, tone = describe_sub_agent_end(
+        {"role": "data_analyst", "n_iterations": 12, "capped": True, "error": "cap", "findings": {}}
+    )
+    assert tone == "error" and text == "data_analyst: cap"
+
+
+def test_a_role_that_finished_shows_its_summary_on_one_line():
+    from helioai.core.event_display import describe_sub_agent_end
+
+    text, tone = describe_sub_agent_end(
+        {"role": "librarian", "summary": "Found two\n\npapers:  Wu 2016.", "error": None}
+    )
+    assert tone == "ok" and text == "librarian: Found two papers: Wu 2016."

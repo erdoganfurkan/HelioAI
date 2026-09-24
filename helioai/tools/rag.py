@@ -8,7 +8,6 @@ Models load lazily and are cached at module scope.
 from __future__ import annotations
 
 import logging
-import math
 import re
 import threading
 
@@ -17,8 +16,6 @@ from helioai.config import settings
 log = logging.getLogger(__name__)
 
 _model = None
-_reranker = None
-_reranker_loaded = False
 _collection = None
 _lock = threading.Lock()
 
@@ -63,6 +60,29 @@ def _quiet_model_loading() -> None:
         pass
 
 
+def _index_missing_message() -> str:
+    """Explain an absent index, naming a legacy copy when one exists.
+
+    Earlier versions ignored `HELIOAI_DATA_DIR` for the index, which lived under the default data
+    directory; an install that set the variable finds its index gone after upgrading.
+    Rebuilding takes the better part of an hour, moving takes a second — so the message
+    points at the copy and at the command that moves it.
+    """
+    from helioai.config import _default_data_dir
+
+    msg = (
+        f"ChromaDB index not found at {settings.rag.chroma_dir}. "
+        "Run `helioai index` first to build the parameter catalog."
+    )
+    legacy = _default_data_dir() / "chroma"
+    if legacy.exists() and legacy.resolve() != settings.rag.chroma_dir.resolve():
+        msg += (
+            f" An index built by an earlier version exists at {legacy}: run "
+            "`helioai migrate-storage` to move it here instead of rebuilding."
+        )
+    return msg
+
+
 def _load():
     global _model, _collection
     if _model is not None and _collection is not None:
@@ -78,10 +98,7 @@ def _load():
             import chromadb
 
             if not settings.rag.chroma_dir.exists():
-                raise RuntimeError(
-                    f"ChromaDB index not found at {settings.rag.chroma_dir}. "
-                    "Run `helioai index` first to build the parameter catalog."
-                )
+                raise RuntimeError(_index_missing_message())
             client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
             _collection = client.get_collection(name=settings.rag.collection_name)
 
@@ -102,30 +119,10 @@ def _collection_only():
             import chromadb
 
             if not settings.rag.chroma_dir.exists():
-                raise RuntimeError(f"ChromaDB index not found at {settings.rag.chroma_dir}.")
+                raise RuntimeError(_index_missing_message())
             client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
             _collection = client.get_collection(name=settings.rag.collection_name)
     return _collection
-
-
-def _load_reranker():
-    global _reranker, _reranker_loaded
-    if not settings.rag.rerank_enabled:
-        return None
-    if _reranker_loaded:
-        return _reranker
-    with _lock:
-        if not _reranker_loaded:
-            try:
-                from sentence_transformers import CrossEncoder
-
-                _quiet_model_loading()
-                _reranker = CrossEncoder(settings.rag.rerank_model)
-            except Exception as e:
-                log.warning("reranker %s unavailable (%s)", settings.rag.rerank_model, e)
-                _reranker = None
-            _reranker_loaded = True
-    return _reranker
 
 
 def _load_bm25():
@@ -170,6 +167,61 @@ def _load_bm25():
 
 # How many out-of-filter hits to append when a provider filter is in force.
 _CROSS_PROVIDER_EXTRA = 2
+
+# How many sibling variables of a hit's dataset are listed alongside it.
+DATASET_VARIABLES_CAP = 40
+
+
+def indexed_providers() -> dict[str, int]:
+    """How many products the index holds per provider prefix.
+
+    What `provider=` can filter on. The prompt offered `ssc` for a year while the index
+    held no SSC product at all, and a filtered search came back with CDA hits marked
+    `outside_filter` and no word that the provider asked for was empty.
+    """
+    if _load_bm25() is None:
+        return {}
+    counts: dict[str, int] = {}
+    for pid in _bm25_ids:
+        counts[_provider_of(pid)] = counts.get(_provider_of(pid), 0) + 1
+    return counts
+
+
+def dataset_of(product_id: str) -> str | None:
+    """The dataset a product id belongs to: `cda/WI_H1_SWE/Proton_W_nonlin` → `cda/WI_H1_SWE`.
+
+    A CDA or CSA id is `provider/DATASET/variable`; an AMDA id is `amda/variable` and has
+    no dataset level to list, so None.
+    """
+    parts = product_id.split("/")
+    return "/".join(parts[:2]) if len(parts) >= 3 else None
+
+
+def dataset_variables(product_id: str, cap: int = DATASET_VARIABLES_CAP) -> dict | None:
+    """Every indexed variable of the dataset a hit belongs to, by name.
+
+    A search that lands on `WI_H1_SWE/Proton_Np_moment` has found the dataset; the model
+    then asked twelve times for variables it imagined the dataset had (`Proton_Temp`,
+    `Proton_V_GSE_moment`) instead of reading what it does have. Listing the siblings
+    with the hit makes one search enough: the names are right there, and a name that is
+    not in the list does not exist under that dataset.
+
+    Args:
+        product_id: A hit's id.
+        cap: How many variables to list; the total is reported either way.
+
+    Returns:
+        `{"dataset": "cda/WI_H1_SWE", "count": 41, "variables": ["Proton_Np_moment", …]}`
+        or None for an id with no dataset level, or when the corpus is not loaded.
+    """
+    dataset = dataset_of(product_id)
+    if dataset is None or _load_bm25() is None:
+        return None
+    prefix = dataset + "/"
+    names = sorted(pid[len(prefix) :] for pid in _bm25_ids if pid.startswith(prefix))
+    if not names:
+        return None
+    return {"dataset": dataset, "count": len(names), "variables": names[:cap]}
 
 
 def _provider_of(param_id: str) -> str:
@@ -338,6 +390,21 @@ def _is_auxiliary(param_id: str, text: str) -> bool:
 # magnetometer product, because its text says "magnetic field" too.
 _NON_SCIENCE_PREFIXES = ("hk_",)
 
+# A question about where a spacecraft IS. The MEC ephemeris files carry, next to the
+# position vector, a dozen positions computed with a field model — the min-B point of
+# the field line, its footpoints, the field-line apex — whose descriptions all say
+# "GSM position of …". Six of them (BRST/SRVY × three field models) filled the whole
+# top-6 for "MMS1 spacecraft position" while the position vector itself sat at rank 165.
+_POSITION_QUERY = re.compile(
+    r"\b(position|location|where (is|was|were)|orbit|trajectory|ephemeris|coordinates?)\b",
+    re.I,
+)
+_MODEL_DERIVED_TEXT = re.compile(
+    r"min-?b point|footpoint|foot point|field ?line|threading|apex|magnetic equator|"
+    r"conjugate|l-?shell|l\*|mlt\b|magnetic local time|invariant latitude|model field",
+    re.I,
+)
+
 
 def _rerank_penalty(query: str, candidate: dict) -> int:
     """0 = keep, higher = push down. Never drops, only reorders.
@@ -369,7 +436,47 @@ def _rerank_penalty(query: str, candidate: dict) -> int:
         candidate["id"], candidate.get("description", "")
     ):
         penalty += 2
+    if (
+        _POSITION_QUERY.search(query)
+        and not _MODEL_DERIVED_TEXT.search(query)
+        and _MODEL_DERIVED_TEXT.search(candidate.get("description", ""))
+    ):
+        penalty += 2
     return penalty
+
+
+def _variant_key(param_id: str) -> str:
+    """What makes two ids the same product in another mode or model.
+
+    `MMS1_MEC_BRST_L2_EPHT89D/mms1_mec_r_gsm` and `MMS1_MEC_SRVY_L2_EPHTS04D/
+    mms1_mec_r_gsm` are one variable of one instrument under two cadences and two field
+    models. Key: provider, the dataset up to its first mode/model token, the variable.
+    """
+    parts = param_id.split("/")
+    if len(parts) < 3:
+        return param_id
+    provider, dataset, variable = parts[0], parts[1], "/".join(parts[2:])
+    stem = re.split(r"_(?:BRST|SRVY|FAST|SLOW|EPHT\w+|L[0-9]\w*)(?:_|$)", dataset, maxsplit=1)[0]
+    return f"{provider}/{stem}/{variable}"
+
+
+def _collapse_variants(candidates: list[dict]) -> list[dict]:
+    """Keep the best-ranked variant of a product and list the others under `also_in`.
+
+    Six variants of `mms1_mec_pmin_gsm` were six of the six results: nothing else could
+    be seen. The variants are still there — the model picks a cadence by dataset name
+    from `also_in` — but they cost one slot instead of six.
+    """
+    kept: list[dict] = []
+    by_key: dict[str, dict] = {}
+    for c in candidates:
+        key = _variant_key(c["id"])
+        if key in by_key:
+            by_key[key].setdefault("also_in", []).append(c["id"])
+            continue
+        by_key[key] = c
+        kept.append(c)
+    return kept
 
 
 def _apply_domain_rerank(query: str, candidates: list[dict]) -> list[dict]:
@@ -492,15 +599,7 @@ def _fuse_query(
         for pid in ordered_ids
     ]
 
-    reranker = _load_reranker()
-    if reranker is not None and len(candidates) > 1:
-        head = candidates[: max(top_k, settings.rag.rerank_fetch_k)]
-        rerank_scores = reranker.predict([(query, c["_full_text"]) for c in head])
-        for c, s in zip(head, rerank_scores, strict=False):
-            c["score"] = round(1.0 / (1.0 + math.exp(-float(s))), 4)
-        head.sort(key=lambda c: c["score"], reverse=True)
-        candidates = head
-    elif score_mode == "rrf":
+    if score_mode == "rrf":
         raws = [c["_raw"] for c in candidates]
         lo, hi = min(raws), max(raws)
         span = (hi - lo) or 1.0
@@ -516,8 +615,8 @@ def _fuse_query(
 
     # Applied before the cut, deliberately: the correct product for "Wind proton
     # density" ranked 24th, so demoting inside an already-truncated top-5 would change
-    # nothing.
-    return _apply_domain_rerank(query, candidates)[:top_k]
+    # nothing. Variants are collapsed after the rerank so the best-placed one is kept.
+    return _collapse_variants(_apply_domain_rerank(query, candidates))[:top_k]
 
 
 def search_batch(
@@ -571,12 +670,7 @@ def search_batch(
     active = uncached
     model, collection = _load()
     hybrid = settings.rag.hybrid_enabled
-    if hybrid:
-        dense_k = settings.rag.hybrid_fetch_k
-    elif settings.rag.rerank_enabled:
-        dense_k = max(top_k, settings.rag.rerank_fetch_k)
-    else:
-        dense_k = top_k
+    dense_k = settings.rag.hybrid_fetch_k if hybrid else top_k
 
     vecs = model.encode(
         [q for _, q in active],

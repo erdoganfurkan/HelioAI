@@ -63,6 +63,8 @@ function createView(sid) {
     steps: 0, tools: 0, subagents: 0,
     streaming: false,
     abort: null,
+    pendingUser: null,
+    liveReply: null,
   };
   views.set(sid, view);
   return view;
@@ -211,7 +213,18 @@ function renderEvent(view, ev) {
   const nested = !!data.sub_agent_ctx;
   const nestCls = nested ? ' tl-nested' : '';
 
-  if (event === 'tool_call') {
+  if (event === 'user') {
+    // The live path shows the question the instant it is sent (see sendMessage), before
+    // the server answers; the event then confirms the bubble already there. On a replay
+    // nothing is pending, so the bubble is drawn here — the same code path as live.
+    if (view.pendingUser) {
+      view.pendingUser = null;
+    } else {
+      view.chat.append(el('div', 'msg-user', data.text || ''));
+      if (isActive(view)) scrollBottom();
+    }
+
+  } else if (event === 'tool_call') {
     view.tools++;
     // `display` is built server-side by core/event_display.py so this timeline, the CLI
     // and the Jupyter magic word things identically. The argsStr fallback keeps replays
@@ -230,9 +243,28 @@ function renderEvent(view, ev) {
     appendTlEvent(view, '⚡', `spawning ${data.role}…`, 'tl-subagent');
 
   } else if (event === 'sub_agent_end') {
-    const summary = (data.summary || '').slice(0, 100);
-    const icon = data.error ? '✗' : '✓';
-    appendTlEvent(view, icon, `${data.role}: ${data.error || summary}`, 'tl-subagent');
+    // A role that hit its cap with findings on the table finished, it did not fail:
+    // amber and "N values measured", not the red cross of a run that produced nothing.
+    const findings0 = Object.keys(data.findings || {}).length;
+    const capped = data.capped && findings0 > 0;
+    const summary = (data.summary || '').replace(/\s+/g, ' ').slice(0, 100);
+    const icon = capped ? '◔' : (data.error ? '✗' : '✓');
+    const text = capped
+      ? `${data.role}: finished at its ${data.n_iterations}-turn cap — ${findings0} value${findings0 > 1 ? 's' : ''} measured`
+      : `${data.role}: ${data.error || summary}`;
+    const row = appendTlEvent(view, icon, text, 'tl-subagent' + (capped ? ' tl-capped' : (data.error ? ' tl-issue' : '')));
+    // The measured values, not the prose: one line per finding, capped like the CLI.
+    const findings = Object.entries(data.findings || {});
+    if (findings.length) {
+      const list = el('ul', 'tl-findings');
+      for (const [name, f] of findings.slice(0, 8)) {
+        let text = `${name} = ${f.value}${f.units ? ' ' + f.units : ''}`;
+        if (f.min !== undefined && f.min !== null) text += ` [${f.min}, ${f.max}]`;
+        list.append(el('li', '', text));
+      }
+      if (findings.length > 8) list.append(el('li', '', `… and ${findings.length - 8} more`));
+      row.append(list);
+    }
 
   } else if (event === 'skill_loaded') {
     appendTlEvent(view, '📖', `skill: ${data.name}`, 'tl-skill' + nestCls);
@@ -246,6 +278,27 @@ function renderEvent(view, ev) {
     // in the browser. Rendered in the chat, not the timeline: it is addressed to the
     // reader, not a trace of what the agent did.
     renderPlan(view, data);
+
+  } else if (event === 'plan_report') {
+    // How the turn followed the plan it opened with. A timeline line, not a chat
+    // bubble: it is a trace of what the agent did against what it said.
+    const planned = data.planned || [], missed = data.missed_tools || [], unplanned = data.unplanned_tools || [];
+    let text;
+    if (!planned.length) {
+      text = `plan named no tools — used: ${(data.executed || []).join(', ') || 'none'}`;
+    } else {
+      text = `plan — ${planned.length - missed.length}/${planned.length} planned tools used`;
+      if (missed.length) text += `, not ${missed.join(', ')}`;
+      if (unplanned.length) text += `; unplanned: ${unplanned.join(', ')}`;
+    }
+    const delegations = data.delegations || [];
+    const capped = delegations.filter(d => d.capped).map(d => d.role || '?');
+    if (delegations.length) {
+      text += `; ${delegations.length} delegation${delegations.length > 1 ? 's' : ''}`;
+      if (capped.length) text += `, ${capped.join(', ')} capped`;
+    }
+    const deviated = missed.length || unplanned.length || capped.length;
+    appendTlEvent(view, deviated ? '⚠' : '✓', text, deviated ? 'tl-issue' : 'tl-ok');
 
   } else if (event === 'figure_review') {
     renderFigureReview(view, data.text);
@@ -262,6 +315,35 @@ function renderEvent(view, ev) {
   } else if (event === 'provenance') {
     renderProvenance(view, data);
 
+  } else if (event === 'verdict') {
+    // The claims the answer named, judged by name against the ledger: a contradiction
+    // is the strongest signal there is, so it opens the list; matched ones are counted.
+    const summary = `⚖ claims — ${data.matched || 0} backed, ${data.contradicted || 0} contradicted, ${data.unsourced || 0} unsourced`;
+    const row = appendTlEvent(view, data.contradicted ? '⚠' : '✓', summary, data.contradicted ? 'tl-issue' : 'tl-ok');
+    const flagged = (data.claims || []).filter(c => c.status !== 'matched');
+    if (flagged.length) {
+      const box = el('details', 'provenance-details');
+      box.append(el('summary', null, `${flagged.length} claim${flagged.length > 1 ? 's' : ''} to check`));
+      const ul = el('ul');
+      for (const c of flagged) {
+        const stated = `${c.value}${c.units ? ' ' + c.units : ''}`;
+        const text = c.status === 'contradicted'
+          ? `${c.name} stated ${stated}, the session computed ${c.ledger}${c.ledger_units ? ' ' + c.ledger_units : ''}`
+          : `${c.name} = ${stated} — source: ${c.source || 'asserted'}${c.note ? ' (' + c.note + ')' : ''}`;
+        const li = el('li');
+        li.append(el('span', 'provenance-status', c.status));
+        li.append(document.createTextNode(' ' + text));
+        ul.append(li);
+      }
+      box.append(ul);
+      row.append(box);
+    }
+
+  } else if (event === 'correction') {
+    // HelioAI's own note to the model, shown the way the legacy replay shows the
+    // persisted message: neither bubble. Journaled, so a reload keeps it.
+    view.chat.append(el('div', 'msg-system', data.text));
+
   } else if (event === 'invalid_ids') {
     // A sub-agent quoting parameter ids that exist in no catalogue is the most
     // damaging thing it can produce, so this one is a banner, not a timeline line.
@@ -273,10 +355,23 @@ function renderEvent(view, ev) {
     view.chat.append(box);
     if (isActive(view)) scrollBottom();
 
+  } else if (event === 'reply_delta') {
+    // The answer as it is written: plain text into one live bubble, which the final
+    // `reply` then re-renders as Markdown in place — so a reader watches the answer
+    // arrive and still gets the formatted version, once.
+    if (!view.liveReply) {
+      view.liveReply = el('div', 'msg-ai msg-ai-live');
+      view.chat.append(view.liveReply);
+    }
+    view.liveReply.textContent += data.text || '';
+    if (isActive(view)) scrollBottom();
+
   } else if (event === 'reply') {
-    const bubble = el('div', 'msg-ai');
+    const bubble = view.liveReply || el('div', 'msg-ai');
+    view.liveReply = null;
+    bubble.classList.remove('msg-ai-live');
     bubble.innerHTML = DOMPurify.sanitize(marked.parse(data.text || ''));
-    view.chat.append(bubble);
+    if (!bubble.parentNode) view.chat.append(bubble);
     if (isActive(view)) scrollBottom();
 
   } else if (event === 'done') {
@@ -347,7 +442,6 @@ function renderPlan(view, data) {
 }
 
 function renderArtifact(view, data) {
-  console.log('[HelioAI] artifact event:', data);
   if (data.kind === 'image' && data.figure_paths && data.figure_paths.length > 0) {
     data.figure_paths.forEach(path => {
       const url = `/figure?path=${encodeURIComponent(path)}`;
@@ -503,12 +597,6 @@ function renderArtifact(view, data) {
 
     view.chat.append(card);
     if (isActive(view)) scrollBottom();
-
-  } else if (data.kind === 'data_preview' && data.preview) {
-    const pre = el('div', 'artifact-preview',
-      `${data.param_id} — ${data.n_points} pts\n${data.preview}`);
-    view.chat.append(pre);
-    if (isActive(view)) scrollBottom();
   }
 }
 
@@ -563,7 +651,8 @@ async function sendMessage() {
   if (!text || !view || view.streaming) return;
 
   view.chat.querySelector('.welcome')?.remove();
-  view.chat.append(el('div', 'msg-user', text));
+  view.pendingUser = el('div', 'msg-user', text);
+  view.chat.append(view.pendingUser);
   input.value = '';
   input.style.height = 'auto';
   scrollBottom();
@@ -590,7 +679,9 @@ async function sendMessage() {
     });
 
     if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}`);
+      throw new Error(resp.status === 409
+        ? 'a reply is already streaming for this session — wait for it to finish'
+        : `HTTP ${resp.status}`);
     }
 
     const reader = resp.body.getReader();
@@ -618,6 +709,8 @@ async function sendMessage() {
     if (isActive(view)) scrollBottom();
   } finally {
     view.abort = null;
+    view.pendingUser = null;
+    view.liveReply = null;
     view.streaming = false;
     if (isActive(view)) setStreaming(false);
   }
@@ -703,12 +796,27 @@ async function resumeSession(sid, itemEl) {
   if (itemEl) itemEl.classList.add('active');
 
   try {
+    // The journal is what the live stream showed, event by event; it renders through
+    // the very function the stream used, so a reloaded session looks like it did.
+    const journal = await fetch(`/api/sessions/${sid}/events`);
+    const events = (await journal.json()).events || [];
+    if (events.length) {
+      resetDock(view);
+      events.forEach(ev => renderEvent(view, ev));
+      if (isActive(view)) scrollBottom();
+      return;
+    }
+    // A session recorded before the journal existed: the server groups its messages
+    // and guesses the artifacts from their shape (legacy_replay.py). Never used when a
+    // journal exists.
     const resp = await fetch(`/api/sessions/${sid}/messages`);
     const data = await resp.json();
     const messages = data.messages || data;
     messages.forEach(m => {
       if (m.role === 'user') {
         view.chat.append(el('div', 'msg-user', m.content));
+      } else if (m.role === 'system') {
+        view.chat.append(el('div', 'msg-system', m.content));
       } else if (m.role === 'assistant') {
         // Artifacts come before the text even when the text is empty: a turn cut short
         // still produced its figure and its script, and the replay must show them.

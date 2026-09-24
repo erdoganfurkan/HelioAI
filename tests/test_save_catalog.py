@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
-from helioai.config import settings
+from support.fake_speasy import FakeSpeasy, FakeVariable
 
 
 @pytest.fixture()
 def catalogs_dir(tmp_path, monkeypatch):
     from helioai.workspace import DEFAULT_USER, reset_user, set_user
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     tok = set_user(DEFAULT_USER)
     d = tmp_path / "users" / DEFAULT_USER / "catalogs"
     yield d
@@ -103,11 +101,9 @@ async def test_list_catalogs_includes_local(catalogs_dir):
 
     await save_catalog("my_shocks", _make_events(4), description="my catalog")
 
-    spz_mock = MagicMock()
-    spz_mock.inventories.flat_inventories.amda.catalogs = {}
-    spz_mock.inventories.flat_inventories.amda.timetables = {}
+    fake_spz = FakeSpeasy()
 
-    with patch("helioai.tools.catalog_tools._get_spz", return_value=spz_mock):
+    with patch("helioai.tools.catalog_tools._get_spz", return_value=fake_spz):
         with patch("helioai.tools.catalog_tools._walk_catalogs", return_value=[]):
             from helioai.tools.catalog_tools import list_catalogs
 
@@ -129,9 +125,9 @@ async def test_get_catalog_local(catalogs_dir):
 
     await save_catalog("icme_list", _make_events(3))
 
-    spz_mock = MagicMock()
+    fake_spz = FakeSpeasy()
 
-    with patch("helioai.tools.catalog_tools._get_spz", return_value=spz_mock):
+    with patch("helioai.tools.catalog_tools._get_spz", return_value=fake_spz):
         result = await get_catalog("local/icme_list")
 
     assert result.get("catalog_id") == "local/icme_list"
@@ -143,8 +139,8 @@ async def test_get_catalog_local(catalogs_dir):
 async def test_get_catalog_local_not_found(catalogs_dir):
     from helioai.tools.catalog_tools import get_catalog
 
-    spz_mock = MagicMock()
-    with patch("helioai.tools.catalog_tools._get_spz", return_value=spz_mock):
+    fake_spz = FakeSpeasy()
+    with patch("helioai.tools.catalog_tools._get_spz", return_value=fake_spz):
         result = await get_catalog("local/nonexistent")
 
     assert "error" in result
@@ -161,23 +157,20 @@ async def test_round_trip_save_then_get_events(catalogs_dir, tmp_path, monkeypat
     import helioai.workspace as ws_module
     from helioai.tools.catalog_tools import get_events_timeseries, save_catalog
 
-    monkeypatch.setattr(settings.workspace, "workspace_dir", tmp_path)
     token = ws_module.set_label("test_f2")
     try:
         events = _make_events(2)
         await save_catalog("my_events", events)
 
-        # Mock speasy get_data to return a fake timeseries per event
-        fake_ts = MagicMock()
-        fake_ts.time = np.array(["2005-01-01T00:00:00"], dtype="datetime64[s]")
-        fake_ts.values = np.array([[1.0, 2.0, 3.0]])
-        fake_ts.columns = ["Bx", "By", "Bz"]
-        fake_ts.unit = "nT"
+        fake_ts = FakeVariable(
+            time=np.array(["2005-01-01T00:00:00"], dtype="datetime64[s]"),
+            values=np.array([[1.0, 2.0, 3.0]]),
+            columns=["Bx", "By", "Bz"],
+            unit="nT",
+        )
+        fake_spz = FakeSpeasy(get_data=[fake_ts, fake_ts])
 
-        spz_mock = MagicMock()
-        spz_mock.get_data.return_value = [fake_ts, fake_ts]
-
-        with patch("helioai.tools.catalog_tools._get_spz", return_value=spz_mock):
+        with patch("helioai.tools.catalog_tools._get_spz", return_value=fake_spz):
             result = await get_events_timeseries(
                 "local/my_events",
                 "amda/imf_gsm",

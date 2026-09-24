@@ -15,12 +15,36 @@ import time
 from pathlib import Path
 from typing import Any
 
+from helioai.tools.offload import run_blocking, speasy_gate
+
 log = logging.getLogger(__name__)
 
 
 def _ev_iso(ev, attr_time: str, attr_plain: str) -> str:
     raw = str(getattr(ev, attr_time, "") or getattr(ev, attr_plain, "") or "")[:19]
     return raw.replace(" ", "T")
+
+
+def _starts_within(ev, start: str | None, stop: str | None) -> bool:
+    """Whether an event's *start* lies in `[start, stop]`; an open side is unbounded.
+
+    Both catalog tools select events by where they begin, deliberately: a superposed
+    epoch analysis aligns events on their onset, and "every ICME of 2015" means the
+    ICMEs that arrived in 2015. An event that started before the window and ended
+    inside it is therefore out, one that started inside and ran past the end is in.
+    The comparison is on 19-character ISO strings, which sort chronologically.
+
+    Args:
+        ev: A speasy event (`start_time`) or a reconstructed one (`start`).
+        start: Inclusive ISO lower bound, or None.
+        stop: Inclusive ISO upper bound, or None.
+    """
+    ev_start = _ev_iso(ev, "start_time", "start")
+    if start and ev_start < start:
+        return False
+    if stop and ev_start > stop:
+        return False
+    return True
 
 
 def _event_value(ev, column: str):
@@ -35,8 +59,22 @@ def _event_value(ev, column: str):
     return None
 
 
+WHERE_OPS: tuple[str, ...] = ("eq", "ne", "gt", "gte", "lt", "lte", "contains")
+"""The operators `_match` can apply, and the enum `get_catalog`'s schema offers.
+
+One tuple rather than two lists: the schema advertised what the model may send and the
+dispatch decided what actually ran, with nothing holding them together."""
+
+
 def _match(op: str, a, b) -> bool:
-    """Apply comparison operator op between event value a and filter value b."""
+    """Apply comparison operator op between event value a and filter value b.
+
+    Raises:
+        ValueError: `op` is not one of `WHERE_OPS`. It used to fall through to False,
+            which filtered every event out, so a typo read as an empty window.
+    """
+    if op not in WHERE_OPS:
+        raise ValueError(f"unknown where operator {op!r}; use one of {', '.join(WHERE_OPS)}")
     try:
         a_f, b_f = float(a), float(b)
         a, b = a_f, b_f
@@ -56,7 +94,7 @@ def _match(op: str, a, b) -> bool:
         return a is not None and a <= b
     if op == "contains":
         return b.lower() in str(a).lower() if a is not None else False
-    return False
+    raise AssertionError(f"{op!r} is listed in WHERE_OPS but has no branch here")
 
 
 _catalog_cache: dict = {"ts": 0.0, "entries": []}
@@ -259,6 +297,14 @@ async def list_catalogs(
           'nb_events': 2003, 'survey_start': '1975-01-08', 'survey_stop': '2022-10-21',
           'description': '...'}, ...]}
     """
+    return await run_blocking(_list_catalogs_sync, type=type, region=region)
+
+
+def _list_catalogs_sync(
+    type: str = "all",
+    region: str | None = None,
+) -> dict:
+    """Synchronous body of `list_catalogs`, run off the event loop by its wrapper."""
     spz = _get_spz()
     if spz is None:
         return {"error": "speasy is not installed"}
@@ -267,7 +313,7 @@ async def list_catalogs(
 
     # Append local/ catalogs (direct disk read, bypasses TTL cache)
     try:
-        for p in sorted(_catalogs_dir().glob("*.json")):
+        for p in sorted(_catalogs_dir_of_bound_user().glob("*.json")):
             data = json.loads(p.read_text(encoding="utf-8"))
             nb = len(data.get("events", []))
             entries.append(
@@ -357,6 +403,32 @@ async def get_catalog(
          'returned': 5, 'columns': [...], 'sample': [{'start': ..., 'stop': ..., ...}, ...],
          'survey_start': '1975-01-08', 'survey_stop': '2022-10-21'}
     """
+    return await run_blocking(
+        _get_catalog_sync,
+        catalog_id=catalog_id,
+        start=start,
+        stop=stop,
+        max_events=max_events,
+        columns=columns,
+        where=where,
+        sort_by=sort_by,
+        descending=descending,
+        offset=offset,
+    )
+
+
+def _get_catalog_sync(
+    catalog_id: str,
+    start: str | None = None,
+    stop: str | None = None,
+    max_events: int = 10,
+    columns: list[str] | None = None,
+    where: dict | None = None,
+    sort_by: str | None = None,
+    descending: bool = False,
+    offset: int = 0,
+) -> dict:
+    """Synchronous body of `get_catalog`, run off the event loop by its wrapper."""
     spz = _get_spz()
     if spz is None:
         return {"error": "speasy is not installed"}
@@ -376,17 +448,9 @@ async def get_catalog(
 
     nb_total = len(events)
 
-    # 1. Time window filter
+    # 1. Time window filter — by event start, see _starts_within
     if start or stop:
-        filtered: list = []
-        for ev in events:
-            ev_start = _ev_iso(ev, "start_time", "start")
-            if start and ev_start < start:
-                continue
-            if stop and ev_start > stop:
-                continue
-            filtered.append(ev)
-        events = filtered
+        events = [ev for ev in events if _starts_within(ev, start, stop)]
 
     # 2. where filter
     if where and isinstance(where, dict):
@@ -394,7 +458,13 @@ async def get_catalog(
         op = where.get("op", "eq")
         val = where.get("value")
         if col and op and val is not None:
-            events = [ev for ev in events if _match(op, _event_value(ev, col), val)]
+            # Refused rather than applied: an operator with no branch used to filter
+            # every event out, and a count of zero reads the same whether the filter
+            # was wrong or the window is genuinely empty.
+            try:
+                events = [ev for ev in events if _match(op, _event_value(ev, col), val)]
+            except ValueError as e:
+                return {"error": str(e)}
 
     nb_filtered = len(events)
 
@@ -470,6 +540,7 @@ async def get_events_timeseries(
     start: str,
     stop: str,
     max_events: int = 50,
+    _data_dir: str | None = None,
 ) -> dict:
     """Download a parameter for every event in a catalog window (superposed epoch).
 
@@ -485,6 +556,8 @@ async def get_events_timeseries(
         start:      ISO 8601 start — restrict to events beginning after this time.
         stop:       ISO 8601 stop  — restrict to events beginning before this time.
         max_events: cap on events to download (default 20 — each is one speasy call slot).
+        _data_dir: injected by the runtime (`tool_exec.trusted_args`) — the session's data
+            directory the collection is persisted in. Not exposed in the LLM tool schema.
 
     Returns per-event statistics and saves the raw data to the workspace for run_python.
 
@@ -495,6 +568,26 @@ async def get_events_timeseries(
          {'event': 0, 'start': '2015-01-03T...', 'stop': '2015-01-04T...',
           'n_points': ..., ...}, ...], ...}
     """
+    return await run_blocking(
+        _get_events_timeseries_sync,
+        catalog_id=catalog_id,
+        param_id=param_id,
+        start=start,
+        stop=stop,
+        max_events=max_events,
+        _data_dir=_data_dir,
+    )
+
+
+def _get_events_timeseries_sync(
+    catalog_id: str,
+    param_id: str,
+    start: str,
+    stop: str,
+    max_events: int = 50,
+    _data_dir: str | None = None,
+) -> dict:
+    """Synchronous body of `get_events_timeseries`, run off the event loop by its wrapper."""
     spz = _get_spz()
     if spz is None:
         return {"error": "speasy is not installed"}
@@ -514,12 +607,7 @@ async def get_events_timeseries(
     except Exception as e:
         return {"error": f"Cannot iterate catalog: {e}"}
 
-    filtered = []
-    for ev in events:
-        ev_start = _ev_iso(ev, "start_time", "start")
-        if ev_start < start or ev_start > stop:
-            continue
-        filtered.append(ev)
+    filtered = [ev for ev in events if _starts_within(ev, start, stop)]
 
     if not filtered:
         return {
@@ -537,7 +625,8 @@ async def get_events_timeseries(
 
     # --- batch download: ONE speasy call for all events ---
     try:
-        timeseries_list = spz.get_data(param_id, selected)
+        with speasy_gate:
+            timeseries_list = spz.get_data(param_id, selected)
     except Exception as e:
         return {"error": f"speasy.get_data({param_id!r}, events) failed: {e}"}
 
@@ -628,6 +717,7 @@ async def get_events_timeseries(
         param_id=param_id,
         units=units,
         source="get_events_timeseries",
+        data_dir=Path(_data_dir) if _data_dir else None,
     )
 
     result: dict = {
@@ -674,7 +764,7 @@ _LOCAL_NAME_RE = re.compile(r"^[a-z0-9_\-]{1,40}$")
 _MAX_EVENTS_LOCAL = 5000
 
 
-def _catalogs_dir() -> Path:
+def _catalogs_dir_of_bound_user() -> Path:
     from helioai.workspace import current_user, user_home
 
     d = user_home(current_user()) / "catalogs"
@@ -686,7 +776,7 @@ def _load_local_catalog(name: str):
     """Load a local catalog from JSON and reconstruct a speasy Catalog."""
     from speasy.products import Catalog, Event
 
-    path = _catalogs_dir() / f"{name}.json"
+    path = _catalogs_dir_of_bound_user() / f"{name}.json"
     if not path.exists():
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -719,7 +809,8 @@ def _resolve_catalog(catalog_id: str, spz):
     index = cats.get(uid) or tts.get(uid)
     if index is None:
         return None, None
-    cat = spz.get_data(index)
+    with speasy_gate:
+        cat = spz.get_data(index)
     return cat, index
 
 
@@ -727,6 +818,7 @@ async def save_catalog(
     name: str,
     events: list[dict],
     description: str = "",
+    _catalogs_dir: str | None = None,
 ) -> dict:
     """Save a list of events as a local catalog under the local/<name> prefix.
 
@@ -734,6 +826,8 @@ async def save_catalog(
         name:        Catalog name — lowercase letters, digits, hyphens, underscores (1-40 chars).
         events:      List of dicts with 'start' and 'stop' ISO 8601 strings plus optional extra keys.
         description: Short description (optional).
+        _catalogs_dir: injected by the runtime (`tool_exec.trusted_args`) — the user's
+            catalogue directory. Not exposed in the LLM tool schema.
 
     Returns {"catalog_id": "local/<name>", "nb_events": N, "note": "..."}.
     Overwrites an existing catalog with the same name.
@@ -745,6 +839,22 @@ async def save_catalog(
         ...                      "note": "St. Patrick's Day storm shock"}])
         {'catalog_id': 'local/my-shocks', 'nb_events': 1, 'overwritten': False, 'note': '...'}
     """
+    return await run_blocking(
+        _save_catalog_sync,
+        name=name,
+        events=events,
+        description=description,
+        _catalogs_dir=_catalogs_dir,
+    )
+
+
+def _save_catalog_sync(
+    name: str,
+    events: list[dict],
+    description: str = "",
+    _catalogs_dir: str | None = None,
+) -> dict:
+    """Synchronous body of `save_catalog`, run off the event loop by its wrapper."""
     if not _LOCAL_NAME_RE.fullmatch(name):
         return {
             "error": (
@@ -776,7 +886,9 @@ async def save_catalog(
         "created": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "events": validated,
     }
-    path = _catalogs_dir() / f"{name}.json"
+    target = Path(_catalogs_dir) if _catalogs_dir else _catalogs_dir_of_bound_user()
+    target.mkdir(parents=True, exist_ok=True)
+    path = target / f"{name}.json"
     overwritten = path.exists()
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 

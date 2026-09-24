@@ -236,3 +236,251 @@ def test_strip_partial_orphan_keeps_answered() -> None:
     assert len(result) == 2
     assert len(result[0].tool_calls) == 1
     assert result[0].tool_calls[0].id == "tc1"
+
+
+def test_turn_lock_is_one_object_per_session(db: Path) -> None:
+    """The lock only serialises anything if every caller for a key gets the same one."""
+    store = SessionStore(db)
+    assert store.turn_lock("u", "s1") is store.turn_lock("u", "s1")
+    assert store.turn_lock("u", "s1") is not store.turn_lock("u", "s2")
+    assert store.turn_lock("u", "s1") is not store.turn_lock("v", "s1")
+
+
+async def test_is_busy_reflects_a_held_turn_lock(db: Path) -> None:
+    store = SessionStore(db)
+    assert not store.is_busy("u", "s1")
+    async with store.turn_lock("u", "s1"):
+        assert store.is_busy("u", "s1")
+        assert not store.is_busy("u", "s2")
+    assert not store.is_busy("u", "s1")
+
+
+def test_reset_forgets_the_turn_lock(db: Path) -> None:
+    store = SessionStore(db)
+    lock = store.turn_lock("u", "s1")
+    store.reset("u", "s1")
+    assert store.turn_lock("u", "s1") is not lock
+
+
+def test_origin_round_trips(db: Path) -> None:
+    """`origin` is what tells an injected correction from the user's own question once
+    the history is read back; losing it on save would re-credit the person with it."""
+    store = SessionStore(db)
+    h = store.get_or_create("u", "s")
+    h.append(Message(role="user", content="plot Bz"))
+    h.append(Message(role="assistant", content="Use cda/BOGUS."))
+    h.append(Message(role="user", content="⚠️ AUTOMATED CORRECTION …", origin="correction"))
+    store.save("u", "s", h)
+
+    reloaded = SessionStore(db).get_or_create("u", "s")
+    assert [m.origin for m in reloaded] == [None, None, "correction"]
+
+
+def test_a_database_from_before_the_origin_column_is_migrated_on_open(db: Path) -> None:
+    """Existing installs carry a `messages` table without `origin`; opening it must add
+    the column silently and read the old rows as human messages."""
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+            user_id TEXT NOT NULL, session_id TEXT NOT NULL,
+            created_at REAL NOT NULL DEFAULT (julianday('now')),
+            updated_at REAL NOT NULL DEFAULT (julianday('now')),
+            workspace_dir TEXT, PRIMARY KEY (user_id, session_id));
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '', tool_calls TEXT, tool_call_id TEXT);
+        INSERT INTO sessions(user_id, session_id) VALUES ('u', 'old');
+        INSERT INTO messages(user_id, session_id, seq, role, content)
+            VALUES ('u', 'old', 0, 'user', 'legacy question');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = SessionStore(db)
+    history = store.get_or_create("u", "old")
+    assert [(m.role, m.content, m.origin) for m in history] == [("user", "legacy question", None)]
+    history.append(Message(role="user", content="note", origin="correction"))
+    store.save("u", "old", history)
+    assert SessionStore(db).get_or_create("u", "old")[-1].origin == "correction"
+
+
+def test_strip_orphans_keeps_origin() -> None:
+    h = [
+        Message(
+            role="assistant",
+            content="text",
+            tool_calls=[ToolCall(id="x", name="t", arguments={})],
+            origin=None,
+        ),
+        Message(role="user", content="fix it", origin="correction"),
+    ]
+    cleaned = strip_orphan_tool_calls(h)
+    assert cleaned[0].tool_calls is None and cleaned[0].content == "text"
+    assert cleaned[1].origin == "correction"
+
+
+def test_constructing_a_store_touches_no_disk_until_first_use(tmp_path: Path) -> None:
+    """`store = SessionStore()` runs at import time; creating directories then made
+    `import helioai` itself write to the filesystem."""
+    db = tmp_path / "nested" / "sessions.db"
+    store = SessionStore(db)
+    assert not db.parent.exists()
+    store.get_or_create("u", "s")
+    assert db.exists()
+
+
+def test_save_on_a_fresh_store_does_not_deadlock(tmp_path: Path) -> None:
+    """`save` holds the store lock while it connects, and the first connection has to
+    create the schema — that must not re-take the same lock."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.save("u", "s", [Message(role="user", content="hi")])
+    assert SessionStore(tmp_path / "sessions.db").get_or_create("u", "s")[0].content == "hi"
+
+
+# ── usage: what the providers report, finally kept ────────────────────────────
+
+
+def test_usage_is_recorded_per_call_and_summed(db: Path) -> None:
+    store = SessionStore(db)
+    store.record_usage(
+        "u", "s1", turn=1, agent="lead", provider="groq", prompt_tokens=1000, completion_tokens=200
+    )
+    store.record_usage(
+        "u",
+        "s1",
+        turn=1,
+        agent="data_analyst",
+        provider="groq",
+        prompt_tokens=3000,
+        completion_tokens=500,
+        cached_tokens=800,
+    )
+    store.record_usage(
+        "u", "s2", turn=1, agent="lead", provider="groq", prompt_tokens=10, completion_tokens=1
+    )
+    store.record_usage(
+        "v", "s1", turn=1, agent="lead", provider="groq", prompt_tokens=99, completion_tokens=99
+    )
+
+    assert store.usage_totals("u", "s1") == {
+        "prompt_tokens": 4000,
+        "completion_tokens": 700,
+        "cached_tokens": 800,
+        "n_calls": 2,
+    }
+    assert store.usage_totals("u")["n_calls"] == 3
+    assert store.usage_totals("v")["prompt_tokens"] == 99
+    assert store.usage_totals("nobody") == {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "cached_tokens": 0,
+        "n_calls": 0,
+    }
+
+
+def test_zero_usage_leaves_no_row(db: Path) -> None:
+    """A provider that reports nothing must not look like a free call."""
+    store = SessionStore(db)
+    store.record_usage(
+        "u", "s", turn=1, agent="lead", provider="ollama", prompt_tokens=0, completion_tokens=0
+    )
+    assert store.usage_totals("u")["n_calls"] == 0
+
+
+def test_usage_survives_a_history_save_and_dies_with_a_reset(db: Path) -> None:
+    store = SessionStore(db)
+    store.record_usage(
+        "u", "s", turn=1, agent="lead", provider="groq", prompt_tokens=5, completion_tokens=5
+    )
+    store.save("u", "s", [Message(role="user", content="hi")])
+    assert store.usage_totals("u", "s")["n_calls"] == 1
+    store.reset("u", "s")
+    assert store.usage_totals("u", "s")["n_calls"] == 0
+
+
+def test_list_summaries_carries_the_session_tokens(db: Path) -> None:
+    store = SessionStore(db)
+    store.save("u", "s", [Message(role="user", content="q")])
+    store.record_usage(
+        "u", "s", turn=1, agent="lead", provider="groq", prompt_tokens=700, completion_tokens=300
+    )
+    assert store.list_summaries("u")[0]["tokens"] == 1000
+
+
+def test_a_database_without_the_usage_table_gains_it_on_open(db: Path) -> None:
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (user_id TEXT NOT NULL, session_id TEXT NOT NULL,
+            created_at REAL NOT NULL DEFAULT (julianday('now')),
+            updated_at REAL NOT NULL DEFAULT (julianday('now')),
+            workspace_dir TEXT, PRIMARY KEY (user_id, session_id));
+        CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '', tool_calls TEXT, tool_call_id TEXT);
+        """
+    )
+    conn.commit()
+    conn.close()
+    store = SessionStore(db)
+    store.record_usage(
+        "u", "s", turn=1, agent="lead", provider="groq", prompt_tokens=1, completion_tokens=1
+    )
+    assert store.usage_totals("u")["n_calls"] == 1
+
+
+def test_events_are_journaled_in_order_and_come_back_in_the_shape_they_were_yielded(
+    db: Path,
+) -> None:
+    store = SessionStore(db)
+    first = {"event": "user", "data": {"text": "θ_Bn for the 2015-03-17 shock?"}}
+    second = {"event": "tool_call", "data": {"turn": 1, "name": "load_recipe", "arguments": {}}}
+    store.append_event("u", "s", first)
+    store.append_event("u", "s", second)
+    store.append_event("u", "other", {"event": "user", "data": {"text": "elsewhere"}})
+
+    assert store.events("u", "s") == [first, second]
+    assert store.events("u", "other")[0]["data"]["text"] == "elsewhere"
+    assert store.events("u", "never") == []
+
+
+def test_the_journal_survives_a_history_save_and_dies_with_a_reset(db: Path) -> None:
+    """`save` rewrites `messages` whole; the record of what was shown must not go with
+    it, and a deleted session must not leave its journal behind."""
+    store = SessionStore(db)
+    store.append_event("u", "s", {"event": "user", "data": {"text": "q"}})
+    store.save("u", "s", [Message(role="user", content="q")])
+    assert len(store.events("u", "s")) == 1
+    store.reset("u", "s")
+    assert store.events("u", "s") == []
+
+
+def test_a_database_without_the_events_table_gains_it_on_open(db: Path) -> None:
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (user_id TEXT NOT NULL, session_id TEXT NOT NULL,
+            created_at REAL NOT NULL DEFAULT (julianday('now')),
+            updated_at REAL NOT NULL DEFAULT (julianday('now')),
+            workspace_dir TEXT, PRIMARY KEY (user_id, session_id));
+        CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '', tool_calls TEXT, tool_call_id TEXT);
+        """
+    )
+    conn.commit()
+    conn.close()
+    store = SessionStore(db)
+    store.append_event("u", "s", {"event": "done", "data": {"n_iterations": 1}})
+    assert store.events("u", "s") == [{"event": "done", "data": {"n_iterations": 1}}]
+
+
+def test_a_payload_the_model_would_see_stringified_is_journaled_the_same_way(db: Path) -> None:
+    from pathlib import PurePosixPath
+
+    store = SessionStore(db)
+    store.append_event("u", "s", {"event": "artifact", "data": {"path": PurePosixPath("/a/b")}})
+    assert store.events("u", "s")[0]["data"] == {"path": "/a/b"}

@@ -59,14 +59,14 @@ def test_data_dir_override_moves_the_index_too(monkeypatch, tmp_path):
     monkeypatch.setenv("HELIOAI_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("HELIOAI_LLM_PROVIDER", "groq")
     monkeypatch.setenv("GROQ_API_KEY", "probe")
-    for var in ("HELIOAI_WORKSPACE", "HELIOAI_PROFILE", "HELIOAI_CATALOGS_DIR"):
-        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("HELIOAI_CATALOGS_DIR", raising=False)
 
     s = config._load()
 
     assert s.data_dir == tmp_path
     assert s.rag.chroma_dir == tmp_path / "chroma"
-    assert s.workspace.workspace_dir == tmp_path / "workspace"
+    # Workspaces are per user under data_dir (workspace.user_home); the former
+    # `workspace_dir` setting was read and consumed by nothing, and is gone.
     assert s.profile.profile_path == tmp_path / "profile.md"
     assert s.catalogs.catalogs_dir == tmp_path / "catalogs"
 
@@ -107,7 +107,6 @@ def test_user_data_is_never_written_inside_the_package():
     for label, path in (
         ("data_dir", settings.data_dir),
         ("chroma_dir", settings.rag.chroma_dir),
-        ("workspace_dir", settings.workspace.workspace_dir),
         ("catalogs_dir", settings.catalogs.catalogs_dir),
         ("profile_path", settings.profile.profile_path),
     ):
@@ -250,3 +249,9 @@ def test_example_notebook_code_parses(path):
             ast.parse(wrapped)
         except SyntaxError as exc:
             raise AssertionError(f"{path.name} cell {i} is not valid Python: {exc}") from exc
+
+
+def test_the_package_ships_its_typed_marker():
+    """`py.typed` is what lets a downstream type checker read our annotations at all
+    (PEP 561); the `Typing :: Typed` classifier promises it."""
+    assert (PACKAGE_DIR / "py.typed").exists()

@@ -14,10 +14,8 @@ from starlette.testclient import TestClient
 
 
 def _write_profile(monkeypatch, tmp_path, user, text):
-    from helioai.config import settings
     from helioai.workspace import user_home
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     p = user_home(user) / "profile.md"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text, encoding="utf-8")
@@ -25,10 +23,6 @@ def _write_profile(monkeypatch, tmp_path, user, text):
 
 
 def test_load_user_profile_missing(tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-
     from helioai.core.agent_loop import _load_user_profile
 
     assert _load_user_profile("alice") == ""
@@ -77,11 +71,9 @@ def fake_stream():
 
 @pytest.fixture
 def web_client(monkeypatch, fake_stream, tmp_path):
-    from helioai.config import settings
     from helioai.core.session import SessionStore
 
     test_store = SessionStore(tmp_path / "sessions.db")
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr("helioai.interfaces.web.app.stream_chat", fake_stream)
     monkeypatch.setattr("helioai.interfaces.web.app.build_llm_client", lambda provider=None: None)
     monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
@@ -121,11 +113,9 @@ def test_cli_profile_edits_the_file_the_agent_reads(tmp_path, monkeypatch):
     and nothing ever injected what the command wrote. The command still succeeded, so
     it looked implemented — only the web UI actually worked.
     """
-    from helioai.config import settings
     from helioai.core.agent_loop import _load_user_profile
     from helioai.interfaces.cli import _run_profile
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setenv("EDITOR", "true")
 
     _run_profile()
@@ -140,11 +130,8 @@ def test_cli_profile_edits_the_file_the_agent_reads(tmp_path, monkeypatch):
 
 def test_jupyter_profile_set_reaches_the_agent(tmp_path, monkeypatch):
     """Same defect as the CLI, same fix — `%helioai_profile set` wrote a dead file."""
-    from helioai.config import settings
     from helioai.core.agent_loop import _load_user_profile
     from helioai.interfaces.jupyter_magic import HelioAIMagics
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     magics = HelioAIMagics.__new__(HelioAIMagics)
     HelioAIMagics.helioai_profile(magics, 'set "I prefer GSM coordinates"')

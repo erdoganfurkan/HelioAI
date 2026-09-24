@@ -1,5 +1,19 @@
 # Core
 
+## Runtime
+
+The one loop, and the policies that make it the lead or a role.
+
+::: helioai.runtime.runner
+
+::: helioai.runtime.policies
+
+::: helioai.runtime.context
+
+::: helioai.runtime.validator
+
+::: helioai.runtime.plan
+
 ## Agent loop
 
 ::: helioai.core.agent_loop
@@ -10,7 +24,7 @@
 
 ## Tool execution
 
-Shared between the lead loop and the sub-agent loop.
+The tool-call mechanics the runner uses.
 
 ::: helioai.core.tool_exec
 

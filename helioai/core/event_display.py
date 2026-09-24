@@ -31,6 +31,39 @@ def _window(args: dict) -> str:
     return f" {str(start)[:16]}→{str(stop)[:16]}" if stop else f" from {str(start)[:16]}"
 
 
+def finding_str(entry) -> str:
+    """`value units [min, max]` for one sub-agent finding, the way the model sees it."""
+    if not isinstance(entry, dict):
+        return str(entry)[:60]
+    out = f"{entry.get('value')} {entry.get('units') or ''}".strip()
+    if entry.get("min") is not None:
+        out += f" [{entry['min']}, {entry['max']}]"
+    return out
+
+
+def describe_findings(findings: dict | None, limit: int = 8) -> list[str]:
+    """One `name = value units` line per measured value, for a person.
+
+    The same text in the CLI, the notebook and the browser, computed once here. Capped
+    because a sub-agent that exported a diagnostic table would otherwise print it whole;
+    the cap says how many were left out.
+
+    Args:
+        findings: The `findings` table of a `sub_agent_end` event.
+        limit: Lines to show before summarising the rest.
+
+    Returns:
+        Lines ready to print, empty when there is nothing measured.
+    """
+    if not findings:
+        return []
+    items = list(findings.items())
+    lines = [f"{name} = {finding_str(entry)}" for name, entry in items[:limit]]
+    if len(items) > limit:
+        lines.append(f"… and {len(items) - limit} more")
+    return lines
+
+
 def describe_tool_call(name: str, arguments: dict | None) -> str:
     """Describe what the agent is about to do, in a reader's terms.
 
@@ -49,6 +82,11 @@ def describe_tool_call(name: str, arguments: dict | None) -> str:
         # thing a reader can use here; the code itself has its own panel.
         n_lines = len(str(args.get("code", "")).splitlines())
         return f"{n_lines} lines of Python" if n_lines else "Python"
+
+    if name == "run_recipe":
+        bound = args.get("inputs") or {}
+        names = ", ".join(str(k) for k in bound) if isinstance(bound, dict) else ""
+        return _clip(f"{args.get('name', '')}({names})")
 
     if name == "search_parameters":
         queries = args.get("queries")
@@ -126,7 +164,7 @@ def describe_tool_result(name: str, result: str) -> str:
                 top = str(results[0].get("id", ""))
             return _clip(f"{len(results)} hits" + (f", top {top}" if top else ""))
 
-    if name == "run_python":
+    if name in ("run_python", "run_recipe"):
         bits = []
         n_fig = data.get("n_figures") or len(data.get("figure_paths") or [])
         if n_fig:
@@ -152,3 +190,127 @@ def describe_tool_result(name: str, result: str) -> str:
         if isinstance(v, (str, int, float, bool)) and str(v) and len(str(v)) <= 60
     ]
     return _clip(" · ".join(bits[:4])) if bits else "ok"
+
+
+def describe_verdict(data: dict) -> tuple[str, list[str]]:
+    """One line of counts and one line per claim worth a look, for a `verdict` event.
+
+    The claims the model named are judged by name against the ledger; a contradicted
+    one is the strongest signal this system has — the value was computed, and the answer
+    states another — so it is spelled out with both numbers. Unsourced claims are listed
+    with the source the model gave them (`literature`, `asserted`, or an export the
+    session never wrote), matched ones only counted.
+
+    Args:
+        data: The event payload.
+
+    Returns:
+        The summary line and the detail lines, without any styling.
+    """
+    summary = (
+        f"claims — {data.get('matched', 0)} backed, {data.get('contradicted', 0)} contradicted, "
+        f"{data.get('unsourced', 0)} unsourced"
+    )
+    lines: list[str] = []
+    for c in data.get("claims") or []:
+        stated = f"{c.get('value')}{' ' + c['units'] if c.get('units') else ''}"
+        if c.get("status") == "contradicted":
+            recorded = (
+                f"{c.get('ledger')}{' ' + c['ledger_units'] if c.get('ledger_units') else ''}"
+            )
+            lines.append(
+                f"contradicted: {c.get('name')} stated {stated}, the session computed {recorded}"
+            )
+        elif c.get("status") == "unsourced":
+            note = f" ({c['note']})" if c.get("note") else ""
+            source = c.get("source") or "asserted"
+            lines.append(f"unsourced: {c.get('name')} = {stated} — source: {source}{note}")
+    return summary, lines[:8]
+
+
+def describe_plan_report(data: dict) -> str:
+    """One line on how the turn followed its plan, for a `plan_report` event.
+
+    Reads as a sentence a person can act on — "3/4 planned tools used, not
+    get_timeseries; unplanned: find_papers" — rather than a ratio alone. A plan that
+    named no tool is said so; nothing here judges whether the deviation was right.
+
+    Args:
+        data: The event payload.
+
+    Returns:
+        The line, without any styling.
+    """
+    planned, executed = data.get("planned") or [], data.get("executed") or []
+    missed, unplanned = data.get("missed_tools") or [], data.get("unplanned_tools") or []
+    if not planned:
+        used = ", ".join(executed) if executed else "none"
+        text = f"plan named no tools — used: {used}"
+    else:
+        text = f"plan — {len(planned) - len(missed)}/{len(planned)} planned tools used"
+        if missed:
+            text += f", not {', '.join(missed)}"
+        if unplanned:
+            text += f"; unplanned: {', '.join(unplanned)}"
+    return text + _delegations_clause(data.get("delegations") or [])
+
+
+def _delegations_clause(delegations: list[dict]) -> str:
+    """ "; 2 delegations, librarian capped" — the roles that ran out of turns are named,
+    the ones that finished are only counted."""
+    if not delegations:
+        return ""
+    capped = [d.get("role") or "?" for d in delegations if d.get("capped")]
+    n = len(delegations)
+    text = f"; {n} delegation{'s' if n > 1 else ''}"
+    if capped:
+        text += f", {', '.join(capped)} capped"
+    return text
+
+
+def finished_at_cap(data: dict) -> bool:
+    """Whether a delegation that ran out of turns still finished.
+
+    A role that ran out of turns is not one story but two, and which one it is turns on
+    whether it measured anything on the way there. The predicate is named once because
+    two readers need it and they must not drift: the three renderers, which show that
+    case amber rather than red, and the lead's `task` result, which is what the model
+    reads and which for a while said only `error`.
+
+    Args:
+        data: A `sub_agent_end` payload.
+
+    Returns:
+        True when the run hit its cap with findings on the table.
+    """
+    return bool(data.get("capped")) and bool(data.get("findings"))
+
+
+def describe_sub_agent_end(data: dict) -> tuple[str, str]:
+    """The one line a `sub_agent_end` is shown as, and its tone.
+
+    A role that ran out of turns is not one story but two. With nothing measured it
+    failed, and the line says so in red. With findings on the table it finished at its
+    cap — the MMS1 run had its position, the boundary standoffs and a figure when the
+    twelfth turn ended, and the lead answered from them — so the line is amber, names
+    what was measured, and does not read as a failure of a run that produced the answer.
+
+    Args:
+        data: The event payload.
+
+    Returns:
+        `(text, tone)` with tone one of `"ok"`, `"capped"`, `"error"`.
+    """
+    role = data.get("role", "")
+    findings = data.get("findings") or {}
+    if finished_at_cap(data):
+        n = len(findings)
+        return (
+            f"{role}: finished at its {data.get('n_iterations', '?')}-turn cap — "
+            f"{n} value{'s' if n > 1 else ''} measured",
+            "capped",
+        )
+    if data.get("error"):
+        return f"{role}: {data['error']}", "error"
+    summary = " ".join((data.get("summary") or "").split())
+    return f"{role}: {_clip(summary, 100)}", "ok"

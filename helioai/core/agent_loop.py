@@ -9,17 +9,8 @@ Two consumption modes share the same generator core (stream_chat):
   - chat()        → collects all events, returns a single ChatResult
   - stream_chat() → async generator, yields one event dict per step
 
-Event shapes:
-  tool_call       {turn, name, arguments}
-  tool_result     {turn, name, summary}
-  sub_agent_start {task_id, role, description}
-  sub_agent_end   {task_id, role, summary, n_iterations, error}
-  plan            {title, steps}
-  skill_loaded    {name}
-  reply           {text}
-  provenance      {matched, contradicted, derived, unsourced, details}
-  done            {n_iterations}
-  error           {message}
+Event kinds and their payloads are listed once, in `core/events.py`, and held to the
+emitters and the three renderers by `tests/test_events_contract.py`.
 """
 
 from __future__ import annotations
@@ -27,13 +18,15 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
-import time
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from helioai.config import settings
-from helioai.core.event_display import describe_tool_call
-from helioai.core.llm.base import LLMClient, Message, ToolDef
+from helioai.core.event_display import finished_at_cap
+from helioai.core.events import NOT_JOURNALED, make
+from helioai.core.llm.base import LLMClient, Message, ToolCall, ToolDef
 from helioai.core.session import store, strip_orphan_tool_calls
 from helioai.core.skills_loader import SkillError, list_skill_names
 from helioai.core.skills_loader import load_index as load_skills_index
@@ -43,15 +36,22 @@ from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
     _extract_artifact,
     _history_tool_result,
     _summarize_tool_result,
+    cancel_pending,
     check_answer,
     compact_history,
     emit_post_tool_events,
-    inject_run_python_args,
+    start_tool_calls,
+    trusted_args,
     unknown_id_correction,
 )
-from helioai.core.vision import maybe_review
 from helioai.logging_config import get_logger
+from helioai.runtime.context import RunContext
+from helioai.runtime.plan import Plan, adherence
+from helioai.runtime.policies import Policy
+from helioai.runtime.runner import RunEnd, Runner
+from helioai.runtime.validator import validate
 from helioai.tools.registry import registry
+from helioai.tools.results import ToolResult
 
 log = get_logger(__name__)
 
@@ -65,6 +65,7 @@ You explore and analyze data from 70+ space missions (MMS, Solar Orbiter, Cluste
 - Always use ISO 8601 times: `2024-01-01T00:00:00`.
 - In `run_python`, never call `spz.get_data()` for data a tool result already exposes via a `dataset` key — use `load_data("name")` instead (no import needed).
 - `get_timeseries` persists the data and returns a `dataset` key. Download each parameter ONCE — batch all the downloads you need in a single turn, never re-download the same parameter+interval — then go straight to `run_python` and read them with `load_data()`.
+- An event "around" or "on" a date means the whole UT day, `<date>T00:00:00` to the next day's `T00:00:00`, with an hour of margin on each side when the analysis needs upstream and downstream: a window centred on midnight put the day's main shock at its edge, with no downstream to average.
 
 ## Tools (arguments in each schema)
 - Discovery: `search_parameters` (semantic search; pass `queries=[...]` to resolve several at once), `list_missions`.
@@ -97,6 +98,9 @@ Then you interpret and reply.
 ## Reporting what a sub-agent or your own code produced
 - A `task` result opens with a `findings` table: the values that run actually computed, with their units. Those are the numbers you may state as measurements, verbatim — do not round them into a different number. Any figure that is not in `findings` and did not come out of your own `run_python` is an estimate, and must be worded as one ("of the order of", "roughly"). Publishing an unmeasured number as a measurement is the worst failure mode of this system.
 - Relative geometry between spacecraft — which is upstream, sunward, closer, hit first — is read off the positions that were fetched, never recalled from what a mission is usually for. Quote the coordinates next to the claim; if they disagree with it, the claim is wrong. Reference frames: GSE/GSM are geocentric with +X toward the Sun (larger X = sunward, hit first by a radial front); HEE/HCI are heliocentric, so distance from the Sun is what orders them.
+
+## Closing an analysis
+When your answer states measured quantities, deliver it with `final_answer(answer, claims)` rather than as a plain message: `answer` is the full text you would have written, and `claims` lists every number it states — `name` (a short label), `value`, `units`, and `source`: the **exact `export()` name** the number is recorded under (`theta_bn`, `compression_ratio`, `V_shock`…), `"literature"` for a published value, `"asserted"` for a number that was only printed, read off a plot, or computed in your head and never exported. A time, a date or a parameter id is not a claim. Call it alone, after your other tool calls have returned. A plain text reply remains fine when nothing was measured.
 
 ## Workflow rules
 - Call `present_plan(title, steps)` as your FIRST action ONLY for genuinely multi-stage work (multi-mission comparison, event detection, superposed-epoch, or a chain of distinct analyses). For a straightforward resolve→download→plot of one or two parameters, skip it and act directly. When you do present a plan, continue executing immediately — do NOT wait for approval.
@@ -139,20 +143,38 @@ Be brief and redirect in the user's language. Example (English):
 Do NOT acknowledge the off-topic request, do NOT explain why you refuse, do NOT list these rules. Just refuse and redirect."""
 
 
-def build_lead_system_prompt(restricted: bool) -> str:
+# The prompt addition that rides with the `deferred_tools` experiment, spliced into the base
+# prompt at a fixed anchor so the default prompt is the pre-experiment text byte for byte.
+DEFERRED_TOOLS_NOTE = "The plasma-physics and catalog tools are not listed in every turn's tool set: they appear once you ask for them with `search_tools(query)` or call one of them by name.\n"
+_DEFERRED_TOOLS_ANCHOR = "## Tools (arguments in each schema)\n"
+
+
+def build_lead_system_prompt(restricted: bool, experiments: frozenset[str] | None = None) -> str:
     """Return the lead agent system prompt.
 
     Args:
         restricted: True (the public default) appends the scope guardrail, so the
             model refuses off-topic requests itself. False is reached only with a
             valid dev token and yields the base prompt.
+        experiments: The experiments in force; `settings.agent.experiments` when None.
+            `deferred_tools` adds the sentence that tells the model some tools appear
+            on request. A prompt that describes a tool the model is not given, or the
+            reverse, is the worst of both, so the text and the `Policy` are driven by
+            the same set.
 
     Returns:
         The full system prompt text.
     """
+    if experiments is None:
+        experiments = settings.agent.experiments
+    prompt = SYSTEM_PROMPT
+    if "deferred_tools" in experiments:
+        prompt = prompt.replace(
+            _DEFERRED_TOOLS_ANCHOR, _DEFERRED_TOOLS_ANCHOR + DEFERRED_TOOLS_NOTE, 1
+        )
     if restricted:
-        return SYSTEM_PROMPT + "\n\n" + SCOPE_GUARDRAIL
-    return SYSTEM_PROMPT
+        return prompt + "\n\n" + SCOPE_GUARDRAIL
+    return prompt
 
 
 @functools.lru_cache(maxsize=64)
@@ -166,19 +188,27 @@ def _read_profile(path_str: str, mtime: float) -> str:
         return ""
 
 
-def _provenance_events(text: str):
+def _provenance_events(text: str, session_dir: Path | None = None):
     """Yield the `provenance` event for a reply, or nothing at all.
 
     Annotation, never a gate: the reply is already out before this runs, and a failure
     here must cost the user nothing.
+
+    Args:
+        text: The reply to confront with the session's ledger.
+        session_dir: Where that ledger lives — the run's context names it; None reads
+            the bound session, for callers that predate contexts.
     """
     try:
-        import helioai.workspace as _ws
         from helioai.core.provenance_check import check_reply
 
-        payload = check_reply(text or "", _ws.get_session_dir())
+        if session_dir is None:
+            import helioai.workspace as _ws
+
+            session_dir = _ws.get_session_dir()
+        payload = check_reply(text or "", session_dir)
         if payload:
-            yield {"event": "provenance", "data": payload}
+            yield make("provenance", **payload)
     except Exception:
         log.debug("provenance_check_failed", exc_info=True)
 
@@ -269,26 +299,53 @@ _INTERNAL_TOOLS: list[ToolDef] = [
 
 _INTERNAL_TOOL_NAMES: frozenset[str] = frozenset(t.name for t in _INTERNAL_TOOLS)
 
+# Withheld from the model until asked for, under the `deferred_tools` experiment: the six
+# formulary wrappers and the four catalogue tools are used in a minority of sessions and
+# their definitions were a third of the 3 800 tokens re-sent on every call of a lead turn
+# (measured 2026-09-14: 21 definitions, 15 050 characters; 11 and 8 449 without these).
+# Whether the model answers as well with them hidden was never measured, hence the switch.
+_DEFERRED_TOOLS: frozenset[str] = frozenset(
+    {
+        "plasma_beta",
+        "gyrofrequency",
+        "debye_length",
+        "alfven_speed",
+        "inertial_length",
+        "power_spectrum",
+        "list_catalogs",
+        "get_catalog",
+        "get_events_timeseries",
+        "save_catalog",
+    }
+)
 
-def _dispatch_internal_tool(name: str, arguments: dict) -> str:
+
+def _dispatch_internal_tool(name: str, arguments: dict) -> ToolResult:
+    """Run one of the lead's own tools — skills and the plan — and type the result.
+
+    The payloads are serialised with `json.dumps` defaults, as they always were, and
+    wrapped with `from_raw` so the model keeps reading exactly that text.
+    """
     args = arguments or {}
     try:
         if name == "list_skills":
-            return json.dumps({"index": load_skills_index(), "names": list_skill_names()})
-        if name == "load_skill":
+            text = json.dumps({"index": load_skills_index(), "names": list_skill_names()})
+        elif name == "load_skill":
             skill = (args.get("name") or "").strip()
-            return json.dumps({"name": skill, "body": load_skill_body(skill)})
-        if name == "present_plan":
-            return json.dumps(
+            text = json.dumps({"name": skill, "body": load_skill_body(skill)})
+        elif name == "present_plan":
+            text = json.dumps(
                 {
                     "status": "presented",
                     "title": args.get("title", ""),
                     "steps": args.get("steps", []),
                 }
             )
+        else:
+            return ToolResult.failure(name, f"unknown internal tool {name!r}")
     except SkillError as e:
-        return json.dumps({"error": str(e)})
-    return json.dumps({"error": f"unknown internal tool {name!r}"})
+        return ToolResult.failure(name, str(e))
+    return ToolResult.from_raw(name, text)
 
 
 @dataclass
@@ -325,11 +382,10 @@ async def stream_chat(
             False (dev token) exposes the base prompt only.
 
     Yields:
-        Dicts with an `"event"` key, one of: `reply` (streamed answer text),
-        `tool_call` / `tool_result`, `artifact` (figure, parameter card, code),
-        `plan`, `sub_agent_start` / `sub_agent_end`, `skill_loaded`,
-        `figure_review`, `provenance`, `invalid_ids`, `recipe_bypassed`,
-        `error`, and finally `done`.
+        Dicts with an `"event"` key and a `"data"` payload — every kind listed in
+        `core/events.py`; the turn opens with `user` and ends with `done`. Each one is
+        appended to the session's journal (`SessionStore.append_event`) before it is
+        yielded, so `store.events()` replays exactly what an interface was shown.
 
     Example:
         >>> llm = build_llm_client()
@@ -337,231 +393,296 @@ async def stream_chat(
         ...     if ev["event"] == "reply":
         ...         print(ev["text"], end="")
     """
-    import helioai.workspace as _ws
+    # One turn at a time per session. The store hands every caller the same history
+    # list; two turns interleaving their appends persisted a corrupted transcript — two
+    # browser tabs on one session were enough. The lock is held for the whole turn, so
+    # a second request waits for the first to finish (the web layer answers 409 instead
+    # of waiting, see app.chat_stream). Closing the inner generator explicitly is what
+    # runs its cleanup now rather than at garbage collection.
+    async with store.turn_lock(user_id, session_id):
+        opening = make("user", text=user_text)
+        store.append_event(user_id, session_id, opening)
+        yield opening
+        turn = _stream_turn(llm_client, user_id, session_id, user_text, restricted=restricted)
+        try:
+            async for ev in turn:
+                if ev["event"] not in NOT_JOURNALED:
+                    store.append_event(user_id, session_id, ev)
+                yield ev
+        finally:
+            await turn.aclose()
 
-    _ws_token = _ws.set_session(session_id)
-    _user_token = _ws.set_user(user_id)
+
+async def _stream_turn(
+    llm_client: LLMClient,
+    user_id: str,
+    session_id: str,
+    user_text: str,
+    *,
+    restricted: bool = True,
+) -> AsyncIterator[dict]:
+    import helioai.workspace as _ws
 
     history = store.get_or_create(user_id, session_id)
     history.append(Message(role="user", content=user_text))
 
-    # What this run exported, kept so the answer can be checked against the recipe shelf
-    # the same way a sub-agent's is. The lead does its own physics often enough that
-    # leaving it unchecked was the hole, not an edge case.
-    run_artifacts: list[dict] = []
-
-    existing_dir = store.get_workspace_dir(user_id, session_id)
-    if existing_dir:
-        _label_token = _ws.set_label(existing_dir)
-    else:
-        label = _ws.make_session_label(user_text, session_id)
+    label = store.get_workspace_dir(user_id, session_id)
+    if not label:
+        label = _ws.make_session_label(user_text, session_id, store.workspace_dirs(user_id))
         store.save(user_id, session_id, history)
         store.set_workspace_dir(user_id, session_id, label)
-        _label_token = _ws.set_label(label)
+    ctx = RunContext.for_session(user_id, session_id, label=label)
 
-    tools = registry.list_tool_defs() + _INTERNAL_TOOLS + [task_tool_def()]
-    log.info("agent_tools_listed", count=len(tools), tools=[t.name for t in tools])
+    tools = tuple(registry.list_tool_defs() + _INTERNAL_TOOLS + [task_tool_def()])
+    tool_names = frozenset(t.name for t in tools)
+    log.info("agent_tools_listed", count=len(tools), tools=sorted(tool_names))
 
-    effective_prompt = build_lead_system_prompt(restricted)
+    experiments = settings.agent.experiments
+    effective_prompt = build_lead_system_prompt(restricted, experiments)
     profile = _load_user_profile(user_id)
     if profile:
         effective_prompt = f"{effective_prompt}\n\n## User profile\n{profile}"
 
-    retried_bogus_ids = False
+    policy = Policy(
+        name="lead",
+        system_prompt=effective_prompt,
+        tools=tools,
+        max_turns=settings.agent.max_iterations,
+        comment_replies=True,
+        stream_replies=True,
+        stop_on_empty_reply=True,
+        deferred=_DEFERRED_TOOLS if "deferred_tools" in experiments else frozenset(),
+        final_answer=True,
+    )
+    runner = Runner(
+        policy,
+        llm_client,
+        registry=registry,
+        ctx=ctx,
+        intercept=functools.partial(_lead_intercept, ctx=ctx, llm_client=llm_client),
+        on_llm_call=functools.partial(_record_lead_usage, user_id, session_id),
+    )
     try:
-        for i in range(settings.agent.max_iterations):
-            turn = i + 1
-            log.info("llm_call_start", turn=turn, n_messages=len(history))
-            t0 = time.monotonic()
-            history[:] = strip_orphan_tool_calls(history)
-            response = await llm_client.chat(
-                compact_history(history), tools, system_prompt=effective_prompt
+        end: RunEnd | None = None
+        figure_reviews: list[str] = []
+        plan: Plan | None = None
+        trace: list[dict] = []
+        async with aclosing(runner.run(history)) as run:
+            async for item in run:
+                if isinstance(item, RunEnd):
+                    end = item
+                    break
+                yield item
+                if item["event"] == "reply":
+                    for ev in _provenance_events(item["data"]["text"], ctx.session_dir):
+                        yield ev
+                elif item["event"] == "figure_review":
+                    figure_reviews.append(item["data"]["text"])
+                elif item["event"] == "plan":
+                    plan = Plan.from_payload(item["data"])
+                elif item["event"] in ("tool_call", "sub_agent_end"):
+                    trace.append(item)
+        assert end is not None
+
+        if end.capped:
+            log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
+            store.save(user_id, session_id, history)
+            if plan is not None:
+                yield make("plan_report", **adherence(plan, trace, known=tool_names))
+            yield make(
+                "error", message=f"agent loop exceeded {settings.agent.max_iterations} iterations"
             )
-            log.info(
-                "llm_call_end",
-                turn=turn,
-                duration_ms=int((time.monotonic() - t0) * 1000),
-                has_tool_calls=bool(response.tool_calls),
-            )
-            history.append(response)
+            return
 
-            if not response.tool_calls:
-                store.save(user_id, session_id, history)
-                # No tool calls AND no text is a failed turn, not an answer. It was
-                # being yielded as an empty reply, so the caller saw the request
-                # simply produce nothing — silence indistinguishable from success.
-                # The usual cause is the output budget: on Azure, reasoning tokens
-                # are drawn from the same allowance, so a long generation can spend
-                # it entirely on reasoning and emit no content at all.
-                if not (response.content or "").strip():
-                    provider, cap = _active_output_budget()
-                    log.warning("empty_llm_response", turn=turn, provider=provider, cap=cap)
-                    yield {
-                        "event": "error",
-                        "data": {
-                            "message": (
-                                "the model returned neither text nor a tool call. This is "
-                                "usually the output token budget running out — set "
-                                f"HELIOAI_MAX_OUTPUT_TOKENS above {cap} (the current "
-                                f"{provider} limit) and retry, or ask for a shorter answer."
-                            )
-                        },
-                    }
-                    yield {"event": "done", "data": {"n_iterations": turn}}
-                    return
-                final_text, bogus, bypassed = check_answer(response.content, history, run_artifacts)
-                # Detecting a fabricated id and annotating the answer still ships the
-                # fabrication: the reply is already written. Spend one more turn instead,
-                # once, so the model can copy the real ids it was just handed.
-                if bogus and not retried_bogus_ids:
-                    retried_bogus_ids = True
-                    log.warning("lead_invented_ids_retry", ids=bogus, turn=turn)
-                    history.append(Message(role="user", content=unknown_id_correction(bogus)))
-                    continue
-                yield {"event": "reply", "data": {"text": final_text}}
-                if bogus:
-                    log.warning("lead_invented_ids", ids=bogus)
-                    yield {"event": "invalid_ids", "data": {"ids": bogus}}
-                if bypassed:
-                    log.warning("lead_recipe_bypassed", recipes=bypassed)
-                    yield {"event": "recipe_bypassed", "data": {"recipes": bypassed}}
-                for ev in _provenance_events(final_text):
-                    yield ev
-                yield {"event": "done", "data": {"n_iterations": turn}}
-                return
-
-            if response.content and response.content.strip():
-                yield {"event": "reply", "data": {"text": response.content}}
-                for ev in _provenance_events(response.content):
-                    yield ev
-
-            for tc in response.tool_calls:
-                log.info("tool_call_issued", turn=turn, tool=tc.name)
-                yield {
-                    "event": "tool_call",
-                    "data": {
-                        "turn": turn,
-                        "name": tc.name,
-                        "arguments": tc.arguments,
-                        "display": describe_tool_call(tc.name, tc.arguments),
-                    },
-                }
-
-                sub_end_event: dict | None = None
-
-                try:
-                    if tc.name == TASK_TOOL_NAME:
-                        args = tc.arguments or {}
-                        sub_role = args.get("agent_role", "")
-                        sub_desc = args.get("description", "")
-                        yield {
-                            "event": "sub_agent_start",
-                            "data": {
-                                "task_id": tc.id,
-                                "role": sub_role,
-                                "description": sub_desc[:200],
-                            },
-                        }
-                        async for sub_ev in stream_subagent(
-                            role=sub_role,
-                            description=sub_desc,
-                            parent_session_id=session_id,
-                            user_id=user_id,
-                            llm_client=llm_client,
-                            task_id=tc.id,
-                        ):
-                            if sub_ev["event"] == "sub_agent_end":
-                                end_data = sub_ev["data"]
-                                result = json.dumps(
-                                    {
-                                        # First, deliberately: keys at the tail are the ones
-                                        # _summarize_tool_result drops when a stale result is
-                                        # trimmed, and the measured values must outlive the prose.
-                                        "findings": end_data.get("findings", {}),
-                                        "summary": end_data.get("summary", ""),
-                                        "n_iterations": end_data.get("n_iterations", 0),
-                                        "artifacts": end_data.get("artifacts", []),
-                                        "error": end_data.get("error"),
-                                    }
-                                )
-                                sub_end_event = {
-                                    "task_id": tc.id,
-                                    "role": sub_role,
-                                    "summary": end_data.get("summary", "")[:200],
-                                    "n_iterations": end_data.get("n_iterations", 0),
-                                    "error": end_data.get("error"),
-                                }
-                            else:
-                                yield sub_ev
-                    elif tc.name in _INTERNAL_TOOL_NAMES:
-                        result = _dispatch_internal_tool(tc.name, tc.arguments)
-                    else:
-                        result = await registry.call_tool(
-                            tc.name, tc.arguments, trusted=inject_run_python_args(tc.name)
-                        )
-                except Exception as e:
-                    log.exception("tool_call_failed", turn=turn, tool=tc.name)
-                    result = json.dumps({"error": str(e)})
-                    if tc.name == TASK_TOOL_NAME:
-                        sub_end_event = {
-                            "task_id": tc.id,
-                            "role": sub_role if "sub_role" in locals() else "",
-                            "summary": "",
-                            "n_iterations": 0,
-                            "error": str(e),
-                        }
-
-                result, figure_verdict = await maybe_review(tc.name, result)
-                if figure_verdict:
-                    yield {"event": "figure_review", "data": {"turn": turn, "text": figure_verdict}}
-
-                for ev in emit_post_tool_events(tc.name, result, tool_result_extra={"turn": turn}):
-                    if ev["event"] == "artifact":
-                        run_artifacts.append(ev["data"])
-                    yield ev
-                if sub_end_event is not None:
-                    yield {"event": "sub_agent_end", "data": sub_end_event}
-                if tc.name == "present_plan":
-                    try:
-                        plan = json.loads(result)
-                        yield {
-                            "event": "plan",
-                            "data": {
-                                "title": plan.get("title", ""),
-                                "steps": plan.get("steps", []),
-                            },
-                        }
-                    except (ValueError, TypeError):
-                        pass
-
-                history.append(
-                    Message(
-                        role="tool",
-                        tool_call_id=tc.id,
-                        content=_history_tool_result(tc.name, result),
-                    )
-                )
-
-        log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
         store.save(user_id, session_id, history)
-        yield {
-            "event": "error",
-            "data": {"message": f"agent loop exceeded {settings.agent.max_iterations} iterations"},
-        }
+        if end.empty:
+            # No tool calls AND no text is a failed turn, not an answer. It was being
+            # yielded as an empty reply, so the caller saw the request simply produce
+            # nothing — silence indistinguishable from success. The usual cause is the
+            # output budget: on Azure, reasoning tokens are drawn from the same
+            # allowance, so a long generation can spend it entirely on reasoning.
+            provider, cap = _active_output_budget()
+            log.warning("empty_llm_response", turn=end.turns, provider=provider, cap=cap)
+            yield make(
+                "error",
+                message=(
+                    "the model returned neither text nor a tool call. This is "
+                    "usually the output token budget running out — set "
+                    f"HELIOAI_MAX_OUTPUT_TOKENS above {cap} (the current "
+                    f"{provider} limit) and retry, or ask for a shorter answer."
+                ),
+            )
+            yield make("done", n_iterations=end.turns)
+            return
+
+        # The lead does its own physics often enough that leaving its answer unchecked
+        # was the hole, not an edge case: one validator judges the ids, the recipes, the
+        # numbers in the prose and — when the model named them — the claims by name.
+        final_text, verdict = validate(
+            end.final_text or "",
+            end.claims,
+            history=history,
+            artifacts=end.artifacts,
+            session_dir=ctx.session_dir,
+            figure_reviews=figure_reviews,
+        )
+        yield make("reply", text=final_text, **({"claims": end.claims} if end.claims else {}))
+        if verdict.unknown_ids:
+            log.warning("lead_invented_ids", ids=verdict.unknown_ids)
+            yield make("invalid_ids", ids=verdict.unknown_ids)
+        if verdict.recipe_flags:
+            log.warning("lead_recipe_bypassed", recipes=verdict.recipe_flags)
+            yield make("recipe_bypassed", recipes=verdict.recipe_flags)
+        if verdict.prose:
+            yield make("provenance", **verdict.prose)
+        if verdict.has_claims:
+            if verdict.contradicted:
+                log.warning("lead_claims_contradicted", claims=verdict.contradicted)
+            yield make("verdict", **verdict.as_event())
+        if plan is not None:
+            yield make("plan_report", **adherence(plan, trace, known=tool_names))
+        yield make("done", n_iterations=end.turns)
 
     except asyncio.CancelledError:
         store.save(user_id, session_id, strip_orphan_tool_calls(history))
         raise
 
     except Exception:
-        log.exception("agent_loop_crashed", turn=locals().get("turn"))
+        log.exception("agent_loop_crashed", turn=runner.turns)
         store.save(user_id, session_id, strip_orphan_tool_calls(history))
         raise
 
-    finally:
-        _ws.reset_session(_ws_token)
-        _ws.reset_label(_label_token)
-        _ws.reset_user(_user_token)
+
+def _record_lead_usage(user_id: str, session_id: str, turn: int, response: Message) -> None:
+    store.record_usage(
+        user_id,
+        session_id,
+        turn=turn,
+        agent="lead",
+        provider=settings.llm.provider,
+        prompt_tokens=response.prompt_tokens,
+        completion_tokens=response.completion_tokens,
+        cached_tokens=response.cached_tokens,
+    )
+
+
+def _lead_intercept(
+    tc: ToolCall, turn: int, *, ctx: RunContext, llm_client: LLMClient
+) -> AsyncIterator[dict | ToolResult] | None:
+    """The two kinds of tool call the lead answers itself, before the registry.
+
+    `task` spawns a sub-agent and forwards its events as they happen; its result is the
+    sub-agent's report, and the `sub_agent_end` the interfaces render comes *after* the
+    result's own events, as it always did. The internal tools (skills, the plan) are
+    answered in-process; `present_plan` is followed by the `plan` event.
+    """
+    if tc.name == TASK_TOOL_NAME:
+        return _run_task(tc, turn, ctx=ctx, llm_client=llm_client)
+    if tc.name in _INTERNAL_TOOL_NAMES:
+        return _run_internal(tc)
+    return None
+
+
+async def _run_internal(tc: ToolCall) -> AsyncIterator[dict | ToolResult]:
+    result = _dispatch_internal_tool(tc.name, tc.arguments)
+    yield result
+    if tc.name == "present_plan" and isinstance(result.payload, dict):
+        yield make(
+            "plan",
+            title=result.payload.get("title", ""),
+            steps=result.payload.get("steps", []),
+        )
+
+
+async def _run_task(
+    tc: ToolCall, turn: int, *, ctx: RunContext, llm_client: LLMClient
+) -> AsyncIterator[dict | ToolResult]:
+    user_id, session_id = ctx.user_id, ctx.session_id
+    args = tc.arguments or {}
+    sub_role = args.get("agent_role", "")
+    sub_desc = args.get("description", "")
+    yield make("sub_agent_start", task_id=tc.id, role=sub_role, description=sub_desc[:200])
+    result: ToolResult | None = None
+    sub_end_event: dict | None = None
+    try:
+        async for sub_ev in stream_subagent(
+            role=sub_role,
+            description=sub_desc,
+            parent_session_id=session_id,
+            user_id=user_id,
+            llm_client=llm_client,
+            task_id=tc.id,
+            context=ctx,
+        ):
+            if sub_ev["event"] != "sub_agent_end":
+                yield sub_ev
+                continue
+            end_data = sub_ev["data"]
+            # A run that reached its cap with values on the table finished; one that
+            # reached it with nothing did not. The renderers have drawn that line since
+            # 4c0c150 and the model could not: it read the cap message under `error`
+            # beside the findings, and `ToolResult.ok` was false with it, so the only
+            # reading available was that the delegation failed. `capped` says what
+            # happened; the error is kept for the half that really is one.
+            capped_but_finished = finished_at_cap(end_data)
+            result = ToolResult.from_raw(
+                TASK_TOOL_NAME,
+                json.dumps(
+                    {
+                        # First, deliberately: keys at the tail are the ones
+                        # _summarize_tool_result drops when a stale result is
+                        # trimmed, and the measured values must outlive the prose.
+                        "findings": end_data.get("findings", {}),
+                        "capped": bool(end_data.get("capped", False)),
+                        "summary": end_data.get("summary", ""),
+                        "n_iterations": end_data.get("n_iterations", 0),
+                        "artifacts": end_data.get("artifacts", []),
+                        "error": None if capped_but_finished else end_data.get("error"),
+                    }
+                ),
+            )
+            # `findings` travels with the event: it is the table of values the run
+            # actually measured, and the interfaces had no other way to show it — the
+            # prose summary is the model's account, the findings are the evidence.
+            usage = end_data.get("usage") or {}
+            store.record_usage(
+                user_id,
+                session_id,
+                turn=turn,
+                agent=sub_role or "sub_agent",
+                provider=usage.get("provider") or settings.llm.provider,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                cached_tokens=usage.get("cached_tokens", 0),
+            )
+            sub_end_event = {
+                "task_id": tc.id,
+                "role": sub_role,
+                "summary": end_data.get("summary", "")[:200],
+                "n_iterations": end_data.get("n_iterations", 0),
+                "error": end_data.get("error"),
+                "findings": end_data.get("findings", {}),
+                "usage": usage,
+                "capped": bool(end_data.get("capped", False)),
+            }
+    except Exception as e:
+        log.exception("tool_call_failed", turn=turn, tool=tc.name)
+        result = ToolResult.failure(tc.name, str(e) or type(e).__name__)
+        sub_end_event = {
+            "task_id": tc.id,
+            "role": sub_role,
+            "summary": "",
+            "n_iterations": 0,
+            "error": str(e),
+            "findings": {},
+            "usage": {},
+            "capped": False,
+        }
+    if result is None:
+        result = ToolResult.failure(tc.name, "sub-agent ended without a report")
+    yield result
+    if sub_end_event is not None:
+        yield make("sub_agent_end", **sub_end_event)
 
 
 async def chat(

@@ -88,6 +88,7 @@ helioai                       # interactive CLI
 helioai "θ_Bn for the 2005-01-16 WIND shock"      # one-shot
 helioai serve --web           # web UI on http://localhost:7890
 helioai mcp-install           # wire it into Claude Code, Claude Desktop or Codex
+helioai doctor                # is the index built, the sandbox real, the key found?
 ```
 
 In Jupyter:
@@ -121,7 +122,7 @@ Plus 217 AMDA event catalogs and timetables. Ask `helioai "what missions are ava
 |---|---|
 | [Quickstart](https://erdoganfurkan.github.io/HelioAI/quickstart/) | First session, end to end |
 | [Interfaces](https://erdoganfurkan.github.io/HelioAI/guide/interfaces/) | CLI · Jupyter · web UI · MCP |
-| [Agent tools](https://erdoganfurkan.github.io/HelioAI/guide/tools/) | The 17 tools and 4 sub-agents |
+| [Agent tools](https://erdoganfurkan.github.io/HelioAI/guide/tools/) | The 18 tools and 4 sub-agents |
 | [Recipes and provenance](https://erdoganfurkan.github.io/HelioAI/guide/recipes/) | The 11 vetted scientific scripts |
 | [Reproducible export](https://erdoganfurkan.github.io/HelioAI/guide/export/) | How a session becomes a notebook |
 | [Architecture](https://erdoganfurkan.github.io/HelioAI/dev/architecture/) | For contributors |
@@ -135,7 +136,7 @@ Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) 
 
 ```bash
 uv sync --extra dev
-.venv/bin/python -m pytest      # 992 tests, 82% coverage, no exclusions
+.venv/bin/python -m pytest      # the whole suite, coverage floor 70%, no exclusions
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
 ```
 

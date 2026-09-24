@@ -8,6 +8,10 @@ of AMDA's download_timeseries and list_parameters.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+
+from helioai.config import settings
+from helioai.tools.offload import run_blocking, speasy_gate
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +73,7 @@ async def get_timeseries(
     start: str,
     stop: str,
     max_points: int = 5000,
+    _data_dir: str | None = None,
 ) -> dict:
     """Download a time series from any speasy provider.
 
@@ -77,6 +82,8 @@ async def get_timeseries(
         start: ISO 8601 start time (e.g. '2024-01-01T00:00:00')
         stop:  ISO 8601 stop time
         max_points: max samples to return (downsampled if needed)
+        _data_dir: injected by the runtime (`tool_exec.trusted_args`) — the session's data
+            directory the download is persisted in. Not exposed in the LLM tool schema.
 
     The param_id should be in speasy format: "{provider}/{xmlid}"
     e.g. "amda/ace_epam_ca60_he", "cda/ACE_H0_MFI/BGSEc"
@@ -91,6 +98,24 @@ async def get_timeseries(
          'n_points': 1350, 'n_valid': 1350, 'quality': {'missing_pct': 0.0, ...},
          'preview': '2010-01-01T00:00:09.000000000  -1.839, 2.308, 0.108\\n...', ...}
     """
+    return await run_blocking(
+        _get_timeseries_sync,
+        param_id=param_id,
+        start=start,
+        stop=stop,
+        max_points=max_points,
+        _data_dir=_data_dir,
+    )
+
+
+def _get_timeseries_sync(
+    param_id: str,
+    start: str,
+    stop: str,
+    max_points: int = 5000,
+    _data_dir: str | None = None,
+) -> dict:
+    """Synchronous body of `get_timeseries`, run off the event loop by its wrapper."""
     try:
         import numpy as np
         import speasy as spz
@@ -99,7 +124,8 @@ async def get_timeseries(
 
     from helioai.datastore import find_existing
 
-    cached = find_existing(param_id, start, stop)
+    data_dir = Path(_data_dir) if _data_dir else None
+    cached = find_existing(param_id, start, stop, data_dir=data_dir)
     if cached is not None:
         return {
             "dataset": cached,
@@ -117,7 +143,8 @@ async def get_timeseries(
         return blocking
 
     try:
-        var = spz.get_data(param_id, start, stop)
+        with speasy_gate:
+            var = spz.get_data(param_id, start, stop)
     except Exception as e:
         log.warning("speasy.get_data failed: %s", e)
         # `str(e)` alone can be a bare "tuple index out of range", which tells the agent
@@ -186,6 +213,7 @@ async def get_timeseries(
         start=start,
         stop=stop,
         columns=list(getattr(var, "columns", None) or []),
+        data_dir=data_dir,
         source="get_timeseries",
     )
 
@@ -296,7 +324,8 @@ def _coverage_check(
     if provider not in _PROVIDERS_WITH_RANGE:
         return None, None
     try:
-        rng = getattr(spz, provider).parameter_range(param_id.split("/", 1)[1])
+        with speasy_gate:
+            rng = getattr(spz, provider).parameter_range(param_id.split("/", 1)[1])
         if rng is None:
             return None, None
         # speasy's DateTimeRange exposes start_time/stop_time as tz-aware datetimes.
@@ -402,6 +431,11 @@ async def list_missions() -> dict:
         {'providers': ['amda', 'archive', 'cda', 'csa', 'ssc', 'uiowaephtool'],
          'note': 'Use search_parameters to find specific parameters. ...'}
     """
+    return await run_blocking(_list_missions_sync)
+
+
+def _list_missions_sync() -> dict:
+    """Synchronous body of `list_missions`, run off the event loop by its wrapper."""
     try:
         import speasy as spz
     except ImportError:
@@ -439,6 +473,51 @@ def _strip_score(results: list[dict]) -> list[dict]:
     `rag._search_cache` holds.
     """
     return [{k: v for k, v in r.items() if k != "score"} for r in results]
+
+
+def _provider_note(provider: str | None) -> str | None:
+    """A sentence when the provider asked for has nothing in the index.
+
+    A filtered search that finds nothing under `ssc` and appends CDA hits marked
+    `outside_filter` reads as "the filter held, nothing matched"; the truth on the live
+    index was that no SSC product had ever been indexed. Say which providers are.
+    """
+    if not provider:
+        return None
+    try:
+        from helioai.tools.rag import indexed_providers
+
+        counts = indexed_providers()
+    except Exception:
+        return None
+    if not counts or counts.get(provider):
+        return None
+    have = ", ".join(f"{p} ({n})" for p, n in sorted(counts.items()))
+    return (
+        f"provider {provider!r} has no product in the index — indexed providers: {have}. "
+        "The hits below are from other providers; rebuild with `helioai index --rebuild` "
+        f"if {provider!r} should be there."
+    )
+
+
+def _with_dataset_variables(results: list[dict]) -> list[dict]:
+    """Attach the sibling variables of the top hit's dataset to that hit.
+
+    Only under the `search_variables` experiment, and only on the first hit: the point
+    is to show the model what the dataset it found holds, not to quadruple the payload.
+    Best effort — an index without a BM25 corpus adds nothing.
+    """
+    if not results or "search_variables" not in settings.agent.experiments:
+        return results
+    try:
+        from helioai.tools.rag import dataset_variables
+
+        siblings = dataset_variables(results[0].get("id") or "")
+    except Exception:
+        siblings = None
+    if siblings:
+        results[0]["dataset_variables"] = siblings
+    return results
 
 
 def _apply_window(results: list[dict], window: tuple[str, str] | None) -> list[dict]:
@@ -495,16 +574,41 @@ async def search_parameters(
                          'ACE/SWEPAM ... 1-Hour Level 2 Data ... Units: #/cc. ...',
           'coverage': '1998-02-04 → 2024-07-09'}, ...]}
     """
+    return await run_blocking(
+        _search_parameters_sync,
+        query=query,
+        top_k=top_k,
+        provider=provider,
+        queries=queries,
+        start=start,
+        stop=stop,
+    )
+
+
+def _search_parameters_sync(
+    query: str | None = None,
+    top_k: int = 5,
+    provider: str | None = None,
+    queries: list[str] | None = None,
+    start: str | None = None,
+    stop: str | None = None,
+) -> dict:
+    """Synchronous body of `search_parameters`, run off the event loop by its wrapper."""
     window = (start, stop) if start and stop else None
     if queries:
         try:
             from helioai.tools.rag import search_batch as rag_search_batch
 
             batch = rag_search_batch(queries, top_k=top_k, provider=provider)
+            note = _provider_note(provider)
             return {
                 "provider": provider,
+                **({"provider_note": note} if note else {}),
                 "groups": [
-                    {"query": q, "results": _apply_window(_strip_score(r), window)}
+                    {
+                        "query": q,
+                        "results": _with_dataset_variables(_apply_window(_strip_score(r), window)),
+                    }
                     for q, r in zip(queries, batch, strict=False)
                 ],
             }
@@ -530,10 +634,12 @@ async def search_parameters(
         from helioai.tools.rag import search as rag_search
 
         results = rag_search(query, top_k=top_k, provider=provider)
+        note = _provider_note(provider)
         return {
             "query": query,
             "provider": provider,
-            "results": _apply_window(_strip_score(results), window),
+            **({"provider_note": note} if note else {}),
+            "results": _with_dataset_variables(_apply_window(_strip_score(results), window)),
         }
     except Exception as e:
         log.warning("RAG search failed (%s), falling back to speasy inventory scan", e)

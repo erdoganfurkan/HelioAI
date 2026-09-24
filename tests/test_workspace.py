@@ -69,3 +69,28 @@ def test_safe_id_keeps_real_ids_intact_and_never_returns_empty():
     assert ws.safe_id("../..") == "session"
     assert ws.safe_id("") == "session"
     assert "/" not in ws.safe_id("a/../../b")
+
+
+def test_session_label_grows_its_suffix_when_six_characters_collide():
+    """The web API lets a client choose its session ids, and a benchmark named its runs
+    `bench-<question>-<hex>`: every id began with the same six characters, so every run
+    of a question shared one workspace and read its predecessors' downloads. Given the
+    labels a user already owns, the suffix grows until the label is new."""
+    import helioai.workspace as ws
+
+    first = ws.make_session_label("Find a shock", "session-001")
+    second = ws.make_session_label("Find a shock", "session-002", {first})
+    third = ws.make_session_label("Find a shock", "session-003", {first, second})
+    assert first == "find-a-shock_sessio"
+    assert second == "find-a-shock_session-"
+    assert third == "find-a-shock_session-00"
+    assert len({first, second, third}) == 3
+    assert "/" not in second and ".." not in second
+
+
+def test_session_label_falls_back_to_a_digest_when_the_whole_id_is_taken():
+    import helioai.workspace as ws
+
+    taken = {"q_abc", "q_abc-"}
+    label = ws.make_session_label("q", "abc", taken | {ws.make_session_label("q", "abc")})
+    assert label.startswith("q_abc-") and label not in taken and len(label) == len("q_abc-") + 6

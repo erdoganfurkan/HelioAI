@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hmac
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
@@ -157,13 +157,86 @@ class LLMConfig:
 
 @dataclass
 class AgentConfig:
-    """Agent loop limits.
+    """Agent loop limits, and which model each delegated role runs on.
 
     `max_iterations` caps how many tool-calling rounds one question may take
     before the loop gives up, bounding both runtime and token spend.
+
+    `role_models` maps a sub-agent role to `(provider, model)`. A `parameter_hunter`
+    resolves ids from search results and needs no frontier model; a `data_analyst`
+    writes the physics and does. Left empty, every role runs on the lead's client, as
+    it always did. Parsed from `HELIOAI_ROLE_MODELS="parameter_hunter=groq:llama-3.3-70b-
+    versatile,data_analyst=opencode"` — the model part is optional and defaults to the
+    provider's configured model.
+
+    `experiments` names the behaviours of `EXPERIMENTS` that are switched on, from
+    `HELIOAI_EXPERIMENTS`. Empty — the default — is the loop as it behaved before any of
+    them existed.
     """
 
     max_iterations: int = 10
+    role_models: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+    experiments: frozenset[str] = frozenset()
+
+
+EXPERIMENTS: frozenset[str] = frozenset({"deferred_tools", "search_budget", "search_variables"})
+"""The behaviours that change what the model sees or is told, each off by default.
+
+Every one of them was committed on the strength of a single live run and never measured
+against the loop it replaced. They stay in the code as named experiments so that each can
+be switched on alone and compared on the same questions, N runs each
+(`scripts/bench_live.py`):
+
+- `deferred_tools`: the lead sees the formulary and catalogue tools only after asking
+  for them with `search_tools`, and its prompt says so.
+- `search_budget`: a `data_analyst` past three lookups (a `plasma_physicist` past two)
+  with nothing downloaded receives a correction listing the ids it already has.
+- `search_variables`: the top hit of a parameter search lists every variable of its
+  dataset.
+
+`final_answer` was one of them and is now the default: on the third bench (34 clean runs,
+four configurations) it cost nothing on any question, re-enabled the claim verdict — zero
+contradictions over nine — and named rejected candidates as often as the loop it replaced.
+The two search experiments showed no value there (eight id-resolution runs correct without
+them); they stay off until a question that fails without them is recorded.
+"""
+
+
+def _parse_experiments(raw: str) -> frozenset[str]:
+    """Parse HELIOAI_EXPERIMENTS='final_answer,deferred_tools' → the set of names.
+
+    Kept lenient on purpose: this runs at `import helioai.config`, which must not fail —
+    the MCP server and the web app start from it before any model is built. A misspelt
+    name is refused by `validate_experiments`, called where the API key is already
+    validated (`build_llm_client`, `helioai doctor`), so nothing that runs the agent can
+    measure an experiment that silently does nothing.
+    """
+    return frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
+
+
+def validate_experiments(experiments: frozenset[str] | None = None) -> frozenset[str]:
+    """Refuse unknown experiment names — an error, not a warning.
+
+    An experiment that silently does nothing would be measured as if it did, and the
+    comparison would be wrong without anyone knowing.
+
+    Args:
+        experiments: The set to check; `settings.agent.experiments` when None.
+
+    Returns:
+        The same set, when every name is known.
+
+    Raises:
+        RuntimeError: Naming the unknown entries and the known ones.
+    """
+    if experiments is None:
+        experiments = settings.agent.experiments
+    unknown = experiments - EXPERIMENTS
+    if unknown:
+        raise RuntimeError(
+            f"HELIOAI_EXPERIMENTS: unknown {sorted(unknown)}; known: {sorted(EXPERIMENTS)}"
+        )
+    return experiments
 
 
 @dataclass
@@ -173,19 +246,18 @@ class RAGConfig:
     Retrieval is hybrid: dense embeddings for descriptions, BM25 for exact tokens
     like `BGSEc`, fused by Reciprocal Rank Fusion with parameter `rrf_k`.
 
-    `rerank_enabled` stays False on purpose. A generic MS MARCO cross-encoder was
-    measured to *degrade* results here: trained on web prose, it discards the
-    dense+sparse consensus that makes exact-code matching work. Only a
-    domain-tuned reranker would help.
+    There is no cross-encoder reranking stage, and that is a measured decision, not
+    an omission: a generic MS MARCO cross-encoder (`ms-marco-MiniLM-L-6-v2`) was tried
+    over the fused candidates and *degraded* results — trained on web prose, it
+    discards the dense+sparse consensus that makes exact-code matching work. The
+    plumbing sat disabled for a year and was removed; only a domain-tuned reranker
+    would be worth adding back.
     """
 
     chroma_dir: Path = field(default_factory=lambda: _DATA / "chroma")
     collection_name: str = "speasy_catalog"
     catalogs_collection_name: str = "speasy_catalogs"
     embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    rerank_enabled: bool = False
-    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    rerank_fetch_k: int = 20
     hybrid_enabled: bool = True
     hybrid_fetch_k: int = 50
     rrf_k: int = 60
@@ -193,15 +265,26 @@ class RAGConfig:
 
 @dataclass
 class WorkspaceConfig:
-    """Per-session working directories, cleaned up after `ttl_seconds`."""
+    """Retention of per-session working directories.
 
-    workspace_dir: Path = field(default_factory=lambda: _DATA / "workspace")
+    Their location is not a setting: `workspace.user_home` derives it from `data_dir`
+    per user. A `workspace_dir` field (and `HELIOAI_WORKSPACE`) used to sit here, read
+    from the environment and consumed by nothing since storage became per-user.
+    """
+
     ttl_seconds: int = 86400 * 7  # 7 days
 
 
 @dataclass
 class ProfileConfig:
-    """Location of the user profile injected into the system prompt."""
+    """Legacy location of the single-user profile, kept for `helioai migrate-storage`.
+
+    The agent reads `users/<user>/profile.md` (`workspace.user_home`) since storage
+    became per user; `helioai profile`, `%helioai_profile` and the web UI all edit that
+    file. Nothing injects this path any more, so `HELIOAI_PROFILE` — which only moved
+    it — was a knob that did nothing, and is gone. The path stays as the place the
+    migration looks for a profile written by an older install.
+    """
 
     profile_path: Path = field(default_factory=lambda: _DATA / "profile.md")
 
@@ -285,6 +368,12 @@ class WebAuthConfig:
     # ponytail: env-driven map, fine for a handful of researchers; move to a DB
     # table if tokens must be added/revoked at runtime.
     users: dict[str, str] = field(default_factory=dict)
+    # `serve --web` refuses a non-loopback bind with no users configured, the way the
+    # MCP HTTP server refuses one without a token: run_python is arbitrary code
+    # execution. The one legitimate exception is a container, which must bind 0.0.0.0
+    # inside its own network namespace while the host publishes the port on loopback —
+    # docker-compose.yml sets HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC=1 for exactly that.
+    allow_unauthenticated_public: bool = False
 
 
 @dataclass
@@ -292,8 +381,9 @@ class Settings:
     """Root settings object.
 
     Imported as the module-level `settings` singleton and read everywhere; built
-    once at import by `_load()`, which fails fast when the selected provider has
-    no API key.
+    once at import by `_load()`. Credentials are not checked here — importing must
+    work with no key at all — but in `llm.factory.build_llm_client`, where the
+    selected provider is actually used.
     """
 
     data_dir: Path = field(default_factory=lambda: _DATA)
@@ -323,6 +413,27 @@ def _parse_users(raw: str) -> dict[str, str]:
         if token and user_id:
             users[token] = user_id
     return users
+
+
+def _parse_role_models(raw: str) -> dict[str, tuple[str, str | None]]:
+    """Parse HELIOAI_ROLE_MODELS='role=provider:model,role=provider' → {role: (provider, model)}.
+
+    Provider names are lowercased like `HELIOAI_LLM_PROVIDER`; a model is taken verbatim
+    since providers are case-sensitive about theirs. Malformed pairs are skipped rather
+    than fatal: a typo in an optimisation must not stop the agent from answering.
+    """
+    out: dict[str, tuple[str, str | None]] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        role, target = pair.split("=", 1)
+        role, target = role.strip(), target.strip()
+        if not role or not target:
+            continue
+        provider, _, model = target.partition(":")
+        out[role] = (provider.strip().lower(), model.strip() or None)
+    return out
 
 
 def _parse_headers(raw: str) -> dict[str, str]:
@@ -358,14 +469,12 @@ def _load() -> Settings:
     max_out = os.environ.get("HELIOAI_MAX_OUTPUT_TOKENS", "")
     out_override = int(max_out) if max_out.strip().isdigit() else None
 
+    # Every derived path hangs off data_dir, read first — not off the module-level
+    # default computed before the variable was. Deriving them from `_DATA` honoured
+    # HELIOAI_DATA_DIR for sessions and user homes only, and left the index, the
+    # catalogues and the profile in the default tree: a Docker volume held two trees.
     data_dir = Path(os.environ.get("HELIOAI_DATA_DIR", str(_DATA)))
-    # Everything below hangs off data_dir, not off the module default. The index used
-    # to be the exception: HELIOAI_DATA_DIR moved sessions and user homes and left
-    # the Chroma index at the default location, so an installed server pointed at a
-    # prepared data directory reported "index not found" beside the index.
-    workspace_dir = Path(os.environ.get("HELIOAI_WORKSPACE", str(data_dir / "workspace")))
     workspace_ttl = int(os.environ.get("HELIOAI_WORKSPACE_TTL_S", str(86400 * 7)))
-    profile_path = Path(os.environ.get("HELIOAI_PROFILE", str(data_dir / "profile.md")))
     recipes_dir = Path(os.environ.get("HELIOAI_RECIPES_DIR", str(_PKG_RECIPES)))
     catalogs_dir = Path(os.environ.get("HELIOAI_CATALOGS_DIR", str(data_dir / "catalogs")))
     hybrid_enabled = os.environ.get("HELIOAI_RAG_HYBRID", "1") != "0"
@@ -375,9 +484,13 @@ def _load() -> Settings:
 
     s = Settings(
         data_dir=data_dir,
-        web_auth=WebAuthConfig(users=web_users),
-        workspace=WorkspaceConfig(workspace_dir=workspace_dir, ttl_seconds=workspace_ttl),
-        profile=ProfileConfig(profile_path=profile_path),
+        web_auth=WebAuthConfig(
+            users=web_users,
+            allow_unauthenticated_public=os.environ.get("HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC", "0")
+            not in ("0", "", "false"),
+        ),
+        workspace=WorkspaceConfig(ttl_seconds=workspace_ttl),
+        profile=ProfileConfig(profile_path=data_dir / "profile.md"),
         recipes=RecipesConfig(recipes_dir=recipes_dir),
         catalogs=CatalogsConfig(catalogs_dir=catalogs_dir),
         literature=LiteratureConfig(ads_token=os.environ.get("ADS_API_TOKEN", "")),
@@ -390,7 +503,7 @@ def _load() -> Settings:
             provider=os.environ.get("HELIOAI_VISION_PROVIDER", "azure").lower(),
             model=os.environ.get("HELIOAI_VISION_MODEL", ""),
         ),
-        rag=RAGConfig(hybrid_enabled=hybrid_enabled, chroma_dir=data_dir / "chroma"),
+        rag=RAGConfig(chroma_dir=data_dir / "chroma", hybrid_enabled=hybrid_enabled),
         dev=DevConfig(token=dev_token),
         llm=LLMConfig(
             provider=provider,
@@ -419,12 +532,17 @@ def _load() -> Settings:
                 headers=_parse_headers(os.environ.get("HELIOAI_OLLAMA_HEADERS", "")),
             ),
         ),
-        agent=AgentConfig(max_iterations=max_iterations),
+        agent=AgentConfig(
+            max_iterations=max_iterations,
+            role_models=_parse_role_models(os.environ.get("HELIOAI_ROLE_MODELS", "")),
+            experiments=_parse_experiments(os.environ.get("HELIOAI_EXPERIMENTS", "")),
+        ),
     )
 
     if out_override:
-        for name in ("azure", "gemini", "groq", "ollama"):
-            getattr(s.llm, name).max_output_tokens = out_override
+        for f in fields(s.llm):
+            if f.name != "provider":
+                getattr(s.llm, f.name).max_output_tokens = out_override
 
     return s
 

@@ -92,6 +92,7 @@ select:focus { border-color: var(--accent); }
 .msg-user, .msg-ai { max-width: 72%; padding: 12px 16px; border-radius: 12px; line-height: 1.5; word-break: break-word; }
 .msg-user { align-self: flex-end; background: var(--user-bubble); border: 1px solid var(--accent-dim); }
 .msg-ai { align-self: flex-start; background: var(--ai-bubble); border: 1px solid var(--border); }
+.msg-ai-live { white-space: pre-wrap; }
 
 /* Timeline events */
 .tl-event {
@@ -112,6 +113,9 @@ select:focus { border-color: var(--accent); }
 .tl-ok .tl-text { color: var(--green); }
 .tl-issue .tl-icon { color: var(--red); }
 .tl-issue .tl-text { color: var(--red); }
+/* A sub-agent that ran out of turns with findings on the table: finished, not failed. */
+.tl-capped .tl-icon { color: var(--orange); }
+.tl-capped .tl-text { color: var(--orange); }
 .tl-nested { margin-left: 1.25rem; opacity: 0.85; border-left: 2px solid var(--accent-dim); padding-left: 0.5rem; }
 
 /* Artifacts */
@@ -532,3 +536,9 @@ select:focus { border-color: var(--accent); }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Measured values under a finished sub-agent — the evidence, next to the summary. */
+.tl-findings { margin: 2px 0 0 1.6em; padding: 0; list-style: none; font-family: monospace; font-size: 0.85em; opacity: 0.85; }
+
+/* A note HelioAI injected into the conversation (an automated correction): neither bubble. */
+.msg-system { align-self: center; max-width: 80%; margin: 4px 0; padding: 6px 10px; font-size: 0.85em; opacity: 0.8; border-left: 3px solid var(--accent, #888); white-space: pre-wrap; }

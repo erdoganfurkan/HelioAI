@@ -1,0 +1,7 @@
+{
+ "tool": "no_such_tool",
+ "arguments": {
+  "x": 1
+ },
+ "raw": "{\"error\": \"unknown tool 'no_such_tool'\"}"
+}

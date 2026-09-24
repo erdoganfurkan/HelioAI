@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import numpy as np
 import pytest
 
@@ -117,38 +115,17 @@ def _seed_a_log_companion(collection) -> None:
     )
 
 
-class _LogCopyFirstReranker:
-    """The measured failure: the cross-encoder ranks the demoted product first."""
-
-    def predict(self, pairs):
-        return [10.0 if "log scale" in doc else 1.0 for _q, doc in pairs]
-
-
-def test_search_is_ordered_by_penalty_then_score(isolated_rag, monkeypatch) -> None:
-    """The order is lexicographic — penalty ascending, then score descending.
-
-    `score` is written by the cross-encoder and never rewritten by the domain rerank that
-    runs after it, so a demoted product keeps the high score it was handed. Asserting a
-    plain descending order would say the reranking is wrong; it is not, it is what puts
-    the real density above its log copy. Only the pair is invariant.
-    """
-    from helioai.config import settings
-    from helioai.tools.rag import _rerank_penalty
-
-    monkeypatch.setattr(settings.rag, "rerank_enabled", True)
-    monkeypatch.setattr(rag_module, "_reranker", _LogCopyFirstReranker())
-    monkeypatch.setattr(rag_module, "_reranker_loaded", True)
+def test_search_demotes_the_log_scaled_copy_below_the_real_measurement(isolated_rag) -> None:
+    """The domain rerank is the only reordering stage left, and this is what it is for:
+    a query for the density must not rank its log-scaled companion above it."""
     _seed_a_log_companion(isolated_rag)
 
-    query = "Wind proton density"
-    results = search(query, top_k=5)
+    results = search("Wind proton density", top_k=5)
 
-    assert results[-1]["id"] == "cda/WI_H1_SWE/Proton_Np_nonlin_log"
-    keys = [(_rerank_penalty(query, r), -r["score"]) for r in results]
-    assert keys == sorted(keys)
-    scores = [r["score"] for r in results]
-    assert scores != sorted(scores, reverse=True), (
-        "the demoted product keeps its stale score — without that this pins nothing"
+    ids = [r["id"] for r in results]
+    assert "cda/WI_H1_SWE/Proton_Np_nonlin" in ids
+    assert ids.index("cda/WI_H1_SWE/Proton_Np_nonlin") < ids.index(
+        "cda/WI_H1_SWE/Proton_Np_nonlin_log"
     )
 
 
@@ -281,106 +258,6 @@ def test_search_batch_empty_slot(isolated_rag) -> None:
     assert len(groups) == 3
     assert groups[1] == []
     assert groups[0] and groups[2]
-
-
-# ──────────────────────────── reranker composition ──────────────────────────
-
-
-# ─────────────────────────── search cache ──────────────────────────────────
-
-
-def test_search_cache_skips_encode_on_repeat(isolated_rag, monkeypatch) -> None:
-    _seed(isolated_rag)
-    calls = {"n": 0}
-    real_encode = rag_module._model.encode
-
-    def counting_encode(texts, **kwargs):
-        calls["n"] += 1
-        return real_encode(texts, **kwargs)
-
-    monkeypatch.setattr(rag_module._model, "encode", counting_encode)
-    r1 = search("solar wind density", top_k=3)
-    r2 = search("solar wind density", top_k=3)
-
-    assert calls["n"] == 1
-    assert [r["id"] for r in r1] == [r["id"] for r in r2]
-
-
-def test_search_batch_partial_cache(isolated_rag, monkeypatch) -> None:
-    _seed(isolated_rag)
-    encoded_batches: list[list] = []
-    real_encode = rag_module._model.encode
-
-    def tracking_encode(texts, **kwargs):
-        encoded_batches.append(list(texts))
-        return real_encode(texts, **kwargs)
-
-    monkeypatch.setattr(rag_module._model, "encode", tracking_encode)
-
-    search_batch(["q_a", "q_b"], top_k=2)
-    assert encoded_batches[-1] == ["q_a", "q_b"]
-
-    search_batch(["q_a", "q_new"], top_k=2)  # q_a is now cached
-    assert encoded_batches[-1] == ["q_new"]  # only the uncached query was encoded
-
-
-def test_search_catalogs_memoizes_collection(isolated_rag, monkeypatch) -> None:
-    import chromadb
-
-    from helioai.tools.rag import search_catalogs
-
-    fake_col = MagicMock()
-    fake_col.count.return_value = 0
-    fake_col.query.return_value = {
-        "ids": [[]],
-        "documents": [[]],
-        "metadatas": [[]],
-        "distances": [[]],
-    }
-    fake_client = MagicMock()
-    fake_client.get_collection.return_value = fake_col
-    client_call_count = [0]
-
-    def fake_persistent_client(*args, **kwargs):
-        client_call_count[0] += 1
-        return fake_client
-
-    monkeypatch.setattr(chromadb, "PersistentClient", fake_persistent_client)
-
-    search_catalogs("ICME solar wind")
-    search_catalogs("bow shock MMS")
-
-    assert client_call_count[0] == 1
-    assert fake_client.get_collection.call_count == 1
-
-
-# ──────────────────────────── reranker composition ──────────────────────────
-
-
-def test_reranker_composes_with_hybrid_and_batch(isolated_rag, monkeypatch) -> None:
-    """Enabling the cross-encoder reranker must re-rank the fused candidates,
-    per query, in batch mode — and produce absolute sigmoid scores in [0,1]."""
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings.rag, "hybrid_enabled", True)
-    monkeypatch.setattr(settings.rag, "rerank_enabled", True)
-    _seed(isolated_rag, n=8)  # docs "Parameter i: ...", ids param_i
-
-    class FakeReranker:
-        def predict(self, pairs):
-            # Promote the doc that mentions 'Parameter 5' to the top
-            return [10.0 if "Parameter 5:" in doc else -10.0 for _q, doc in pairs]
-
-    monkeypatch.setattr(rag_module, "_reranker", FakeReranker())
-    monkeypatch.setattr(rag_module, "_reranker_loaded", True)
-
-    groups = search_batch(["solar wind", "plasma measurement"], top_k=3)
-    assert len(groups) == 2
-    for g in groups:
-        assert g
-        assert g[0]["id"] == "param_5"  # reranker re-ordered the fused set
-        assert g[0]["score"] > 0.9  # sigmoid(10) ≈ 1.0 (absolute score)
-        assert all(0.0 <= r["score"] <= 1.0 for r in g)
 
 
 # ── additive provider filter ───────────────────────────────────────────────────
@@ -749,3 +626,204 @@ def test_loading_the_encoder_does_not_draw_a_progress_bar(monkeypatch, tmp_path)
         hf_logging.enable_progress_bar()
 
     assert seen["bar_enabled_at_construction"] is False
+
+
+# ── a missing index names its legacy copy ─────────────────────────────────────
+
+
+def test_missing_index_message_points_at_a_legacy_copy(monkeypatch, tmp_path):
+    """Earlier versions ignored HELIOAI_DATA_DIR for the index; after upgrading, an install
+    that sets it sees no index where it now looks — while the old one is a `mv` away.
+    The message must say so rather than send the user into an hour-long rebuild."""
+    import helioai.config as cfg
+    from helioai.tools import rag as rag_module
+
+    legacy_root = tmp_path / "legacy"
+    (legacy_root / "chroma").mkdir(parents=True)
+    monkeypatch.setattr(cfg, "_default_data_dir", lambda: legacy_root)
+    monkeypatch.setattr(rag_module.settings.rag, "chroma_dir", tmp_path / "new" / "chroma")
+
+    msg = rag_module._index_missing_message()
+    assert str(tmp_path / "new" / "chroma") in msg
+    assert str(legacy_root / "chroma") in msg
+    assert "helioai migrate-storage" in msg
+
+
+def test_missing_index_message_is_plain_when_there_is_no_legacy_copy(monkeypatch, tmp_path):
+    import helioai.config as cfg
+    from helioai.tools import rag as rag_module
+
+    monkeypatch.setattr(cfg, "_default_data_dir", lambda: tmp_path / "legacy")
+    monkeypatch.setattr(rag_module.settings.rag, "chroma_dir", tmp_path / "new" / "chroma")
+    msg = rag_module._index_missing_message()
+    assert "helioai index" in msg
+    assert "migrate-storage" not in msg
+
+
+# ── dataset variables ──────────────────────────────────────────────────────────
+
+
+def _seed_swe(collection) -> None:
+    """A slice of WI_H1_SWE as the index holds it, plus a neighbour dataset and an AMDA id."""
+    rng = np.random.default_rng(2)
+    ids = [
+        "cda/WI_H1_SWE/Proton_Np_moment",
+        "cda/WI_H1_SWE/Proton_W_nonlin",
+        "cda/WI_H1_SWE/Proton_VX_nonlin",
+        "cda/WI_H1_SWE/Proton_VY_nonlin",
+        "cda/WI_H1_SWE_RTN/Proton_Np_moment",
+        "amda/wnd_swe_n",
+    ]
+    vecs = rng.random((len(ids), 128)).astype("float32")
+    vecs = vecs / np.maximum(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9)
+    collection.add(
+        ids=ids,
+        embeddings=vecs.tolist(),
+        documents=["Wind SWE proton moment" for _ in ids],
+        metadatas=[{"name": i.rsplit("/", 1)[-1], "provider": i.split("/")[0]} for i in ids],
+    )
+
+
+def test_dataset_variables_lists_the_siblings_of_a_hit_and_nothing_from_next_door(isolated_rag):
+    """`WI_H1_SWE_RTN` shares a prefix string with `WI_H1_SWE`; it is another dataset."""
+    _seed_swe(isolated_rag)
+    out = rag_module.dataset_variables("cda/WI_H1_SWE/Proton_Np_moment")
+    assert out == {
+        "dataset": "cda/WI_H1_SWE",
+        "count": 4,
+        "variables": [
+            "Proton_Np_moment",
+            "Proton_VX_nonlin",
+            "Proton_VY_nonlin",
+            "Proton_W_nonlin",
+        ],
+    }
+
+
+def test_dataset_variables_is_capped_but_reports_the_total(isolated_rag):
+    _seed_swe(isolated_rag)
+    out = rag_module.dataset_variables("cda/WI_H1_SWE/Proton_Np_moment", cap=2)
+    assert out["count"] == 4 and len(out["variables"]) == 2
+
+
+def test_an_amda_id_has_no_dataset_level_to_list(isolated_rag):
+    _seed_swe(isolated_rag)
+    assert rag_module.dataset_variables("amda/wnd_swe_n") is None
+    assert rag_module.dataset_of("amda/wnd_swe_n") is None
+
+
+def test_search_parameters_attaches_the_dataset_variables_to_the_top_hit_only(
+    isolated_rag, monkeypatch
+):
+    """Under the `search_variables` experiment, the model that found `Proton_Np_moment`
+    reads the SWE variable list in the same result and stops guessing names like
+    `Proton_Temp`."""
+    from helioai.config import settings
+    from helioai.tools import speasy_tools
+
+    monkeypatch.setattr(settings.agent, "experiments", frozenset({"search_variables"}))
+    _seed_swe(isolated_rag)
+    hits = [
+        {"id": "cda/WI_H1_SWE/Proton_Np_moment", "name": "nm", "score": 1.0},
+        {"id": "cda/WI_H1_SWE_RTN/Proton_Np_moment", "name": "nm", "score": 0.9},
+    ]
+    monkeypatch.setattr(rag_module, "search", lambda *a, **k: [dict(h) for h in hits])
+    monkeypatch.setattr(
+        rag_module, "search_batch", lambda qs, **k: [[dict(h) for h in hits] for _ in qs]
+    )
+
+    single = speasy_tools._search_parameters_sync(query="wind swe density")
+    assert single["results"][0]["dataset_variables"]["variables"] == [
+        "Proton_Np_moment",
+        "Proton_VX_nonlin",
+        "Proton_VY_nonlin",
+        "Proton_W_nonlin",
+    ]
+    assert "dataset_variables" not in single["results"][1]
+
+    batch = speasy_tools._search_parameters_sync(queries=["density", "velocity"])
+    assert all("dataset_variables" in g["results"][0] for g in batch["groups"])
+
+
+def test_search_results_carry_no_dataset_variables_unless_the_experiment_is_on(
+    isolated_rag, monkeypatch
+):
+    """The default payload is the one the loop always sent: the variable list was added
+    on the strength of one run and is measured before it is kept."""
+    from helioai.config import settings
+    from helioai.tools import speasy_tools
+
+    monkeypatch.setattr(settings.agent, "experiments", frozenset())
+    _seed_swe(isolated_rag)
+    hits = [{"id": "cda/WI_H1_SWE/Proton_Np_moment", "name": "nm", "score": 1.0}]
+    monkeypatch.setattr(rag_module, "search", lambda *a, **k: [dict(h) for h in hits])
+
+    single = speasy_tools._search_parameters_sync(query="wind swe density")
+    assert "dataset_variables" not in single["results"][0]
+
+
+def test_a_filter_on_a_provider_the_index_never_held_says_so(isolated_rag, monkeypatch):
+    """`provider="ssc"` on the live index returned CDA hits marked outside_filter and no
+    word that SSC had zero products; the model read it as "nothing matched"."""
+    from helioai.tools import speasy_tools
+
+    _seed_swe(isolated_rag)
+    hits = [{"id": "cda/WI_H1_SWE/Proton_Np_moment", "name": "nm", "outside_filter": True}]
+    monkeypatch.setattr(rag_module, "search", lambda *a, **k: [dict(h) for h in hits])
+    out = speasy_tools._search_parameters_sync(query="mms1 position", provider="ssc")
+    assert "provider 'ssc' has no product in the index" in out["provider_note"]
+    assert "cda (5)" in out["provider_note"] and "amda (1)" in out["provider_note"]
+    fine = speasy_tools._search_parameters_sync(query="density", provider="cda")
+    assert "provider_note" not in fine
+    assert rag_module.indexed_providers() == {"cda": 5, "amda": 1}
+
+
+# ── position queries ───────────────────────────────────────────────────────────
+
+
+def test_a_position_query_puts_the_position_vector_above_the_model_derived_points():
+    """ "MMS1 spacecraft position": the six `pmin_gsm` variants — the min-B point of the
+    field line, a model quantity — filled the whole top-6 while the position vector sat
+    at rank 165. Same relevance, the derived product is pushed down."""
+    r_gsm = {
+        "id": "cda/MMS1_MEC_SRVY_L2_EPHT89D/mms1_mec_r_gsm",
+        "description": "GSM position vector of mms1 (km).",
+    }
+    pmin = {
+        "id": "cda/MMS1_MEC_SRVY_L2_EPHT89D/mms1_mec_pmin_gsm",
+        "description": "GSM position of min-B point of field threading the mms1 spacecraft.",
+    }
+    assert rag_module._rerank_penalty(
+        "MMS1 spacecraft position", pmin
+    ) > rag_module._rerank_penalty("MMS1 spacecraft position", r_gsm)
+    assert rag_module._rerank_penalty(
+        "MMS1 min-B point position", pmin
+    ) == rag_module._rerank_penalty("MMS1 min-B point position", r_gsm), "asked for, not penalised"
+    assert rag_module._rerank_penalty("MMS1 magnetic field", pmin) == rag_module._rerank_penalty(
+        "MMS1 magnetic field", r_gsm
+    ), "not a position query"
+
+
+def test_variants_of_one_product_cost_one_slot_and_list_the_others():
+    ids = [
+        "cda/MMS1_MEC_BRST_L2_EPHT89D/mms1_mec_pmin_gsm",
+        "cda/MMS1_MEC_BRST_L2_EPHT89Q/mms1_mec_pmin_gsm",
+        "cda/MMS1_MEC_SRVY_L2_EPHTS04D/mms1_mec_pmin_gsm",
+        "cda/MMS1_MEC_SRVY_L2_EPHT89D/mms1_mec_r_gsm",
+        "cda/MMS1_FPI_FAST_L2_DIS-MOMS/mms1_dis_numberdensity_fast",
+        "cda/MMS1_FPI_BRST_L2_DIS-MOMS/mms1_dis_numberdensity_brst",
+        "amda/mms1_b_gsm",
+    ]
+    out = rag_module._collapse_variants([{"id": i} for i in ids])
+    assert [c["id"] for c in out] == [
+        "cda/MMS1_MEC_BRST_L2_EPHT89D/mms1_mec_pmin_gsm",
+        "cda/MMS1_MEC_SRVY_L2_EPHT89D/mms1_mec_r_gsm",
+        "cda/MMS1_FPI_FAST_L2_DIS-MOMS/mms1_dis_numberdensity_fast",
+        "cda/MMS1_FPI_BRST_L2_DIS-MOMS/mms1_dis_numberdensity_brst",
+        "amda/mms1_b_gsm",
+    ]
+    assert out[0]["also_in"] == [
+        "cda/MMS1_MEC_BRST_L2_EPHT89Q/mms1_mec_pmin_gsm",
+        "cda/MMS1_MEC_SRVY_L2_EPHTS04D/mms1_mec_pmin_gsm",
+    ]
+    assert "also_in" not in out[1], "a different variable name is a different product"

@@ -24,8 +24,11 @@ from helioai.config import settings
 
 
 async def test_list_tools_count():
+    """Every registered tool, no more, no fewer — `>= 10` let a tool silently vanish."""
+    from helioai.tools.registry import registry
+
     result = await ms._list_tools(None, None)
-    assert len(result.tools) >= 10
+    assert len(result.tools) == len(registry.list_tool_defs())
 
 
 async def test_list_tools_contains_core():
@@ -80,6 +83,21 @@ async def test_call_tool_plasma_beta_correct_value():
     assert "beta" in body
     assert isinstance(body["beta"], float)
     assert body["beta"] > 0
+
+
+async def test_call_tool_carries_the_payload_as_structured_content():
+    """A client that supports `structuredContent` reads the object instead of parsing
+    the text; the two must be the same result, and a failure has `isError` set."""
+    params = CallToolRequestParams(
+        name="plasma_beta", arguments={"B_nT": 5.0, "n_cm3": 10.0, "T_eV": 10.0}
+    )
+    result = await ms._call_tool(None, params)
+    assert result.structured_content == json.loads(result.content[0].text)
+    assert result.is_error is False
+
+    failed = await ms._call_tool(None, CallToolRequestParams(name="does_not_exist", arguments={}))
+    assert failed.is_error is True
+    assert failed.structured_content["error"] == json.loads(failed.content[0].text)["error"]
 
 
 async def test_call_tool_gyrofrequency_proton():
@@ -275,7 +293,6 @@ async def test_two_mcp_calls_get_distinct_run_indices(monkeypatch, tmp_path):
     The whole point: without a session bound, `_run_idx` stays 0 and the second call
     silently overwrites the first one's code and figures.
     """
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     ctx = _ctx()
     first = await _run(ctx, "print('first')")
     second = await _run(ctx, "print('second')")
@@ -283,13 +300,11 @@ async def test_two_mcp_calls_get_distinct_run_indices(monkeypatch, tmp_path):
 
 
 async def test_mcp_call_writes_under_its_own_user(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     out = await _run(_ctx(), "print('hello')")
     assert str(tmp_path / "users" / "mcp") in out["code_path"]
 
 
 async def test_two_mcp_connections_do_not_share_a_workspace(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     a = await _run(_ctx(), "print('a')")
     b = await _run(_ctx(), "print('b')")
     assert Path(a["code_path"]).parent != Path(b["code_path"]).parent
@@ -305,7 +320,6 @@ async def test_one_connection_keeps_one_workspace_across_calls(monkeypatch, tmp_
     was pinned: load_data raised "no dataset manifest found" on the call right after
     a successful download.
     """
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     connection = _FakeConnection()
     first = await _run(_ctx(connection), "print('first')")
     second = await _run(_ctx(connection), "print('second')")
@@ -353,17 +367,16 @@ async def test_call_tool_success_is_not_an_error():
 
 
 async def test_sandbox_failure_is_reported_as_an_error(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     result = await ms._call_tool(
         _ctx(), CallToolRequestParams(name="run_python", arguments={"code": "1 / 0"})
     )
     assert result.is_error is True
 
 
-async def test_list_tools_marks_the_two_writers_as_not_read_only():
+async def test_list_tools_marks_the_three_writers_as_not_read_only():
     result = await ms._list_tools(None, None)
     writers = {t.name for t in result.tools if not t.annotations.read_only_hint}
-    assert writers == {"run_python", "save_catalog"}
+    assert writers == {"run_python", "run_recipe", "save_catalog"}
 
 
 async def test_list_tools_annotates_every_tool():
@@ -418,7 +431,6 @@ async def test_resource_templates_declare_both_schemes():
 
 
 async def test_run_python_returns_the_figure_as_image_content(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     result = await ms._call_tool(
         _ctx(),
         CallToolRequestParams(
@@ -438,7 +450,6 @@ async def test_returned_figure_is_downscaled(monkeypatch, tmp_path):
 
     from PIL import Image
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     code = (
         "import matplotlib.pyplot as plt\n"
         "fig = plt.figure(figsize=(30, 20), dpi=100)\n"
@@ -460,8 +471,8 @@ async def test_tool_without_a_figure_returns_text_only():
 
 def test_unreadable_figure_is_skipped_not_raised():
     """A figure that cannot be read must not fail a call that already succeeded."""
-    assert ms._figure_content(json.dumps({"figure_paths": ["/nope/missing.png"]})) == []
+    assert ms._figure_content({"figure_paths": ["/nope/missing.png"]}) == []
 
 
-def test_figure_content_ignores_non_json_results():
-    assert ms._figure_content("not json at all") == []
+def test_figure_content_ignores_non_dict_payloads():
+    assert ms._figure_content("a remote tool's plain text") == []

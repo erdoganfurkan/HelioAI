@@ -97,7 +97,7 @@ def _run_async(coro):
         return pool.submit(asyncio.run, coro).result()
 
 
-def _get_llm():
+def _get_llm(provider: str | None = None):
     """Build a fresh client for this cell.
 
     Deliberately not cached. `_run_async` gives every cell its own event loop via
@@ -111,15 +111,23 @@ def _get_llm():
     """
     from helioai.core.llm.factory import build_llm_client
 
-    return build_llm_client()
+    return build_llm_client(provider)
 
 
 def _render_jupyter_event(ev: dict) -> None:
+    from helioai.core.event_display import describe_findings
+
     name, data = ev["event"], ev["data"]
     nested = "sub_agent_ctx" in data
     pad = "    " if nested else ""
 
-    if name == "tool_call":
+    if name == "user":
+        pass  # the cell that asked is right above; journaled for replay
+
+    elif name == "reply_delta":
+        pass  # the notebook renders the whole reply once, as Markdown, on `reply`
+
+    elif name == "tool_call":
         detail = data.get("display")
         if detail is None:
             detail = ", ".join(
@@ -136,10 +144,14 @@ def _render_jupyter_event(ev: dict) -> None:
         print(f"\n⚡ spawning {role} — {desc}…")
 
     elif name == "sub_agent_end":
-        role = data.get("role", "")
-        summary = (data.get("summary") or "")[:100]
-        icon = "✗" if data.get("error") else "✓"
-        print(f"{icon} {role}: {data.get('error') or summary}\n")
+        from helioai.core.event_display import describe_sub_agent_end
+
+        text, tone = describe_sub_agent_end(data)
+        icon = {"ok": "✓", "capped": "◔", "error": "✗"}[tone]
+        print(f"{icon} {text}")
+        for line in describe_findings(data.get("findings")):
+            print(f"    {line}")
+        print()
 
     elif name == "skill_loaded":
         print(f"{pad}  📖 skill: {data['name']}")
@@ -153,12 +165,6 @@ def _render_jupyter_event(ev: dict) -> None:
             display(HTML(_param_card_html(data)))
         elif kind == "catalog_preview":
             display(HTML(_catalog_card_html(data)))
-        elif kind == "data_preview":
-            param = data.get("param_id", "")
-            n = data.get("n_points", 0)
-            print(f"  📈 {param} — {n} points")
-            if data.get("preview"):
-                print(data["preview"])
 
     elif name == "plan":
         steps = data.get("steps") or []
@@ -168,6 +174,11 @@ def _render_jupyter_event(ev: dict) -> None:
             suffix = f" · `{tool}`" if tool else ""
             lines.append(f"{n}. {step.get('description', '')}{suffix}")
         display(Markdown("\n".join(lines)))
+
+    elif name == "plan_report":
+        from helioai.core.event_display import describe_plan_report
+
+        display(Markdown(f"**📋 {describe_plan_report(data)}**"))
 
     elif name == "figure_review":
         display(Markdown(f"**🔍 figure review** — {data.get('text', '')}"))
@@ -182,6 +193,16 @@ def _render_jupyter_event(ev: dict) -> None:
             origin = f" — the session computed `{d['name']}`" if d.get("name") else ""
             lines.append(f"- {d['status']}: `{d['text']}`{origin}")
         display(Markdown("\n".join(lines)))
+
+    elif name == "verdict":
+        from helioai.core.event_display import describe_verdict
+
+        summary, lines = describe_verdict(data)
+        display(Markdown("\n".join([f"**⚖ {summary}**", *(f"- {line}" for line in lines)])))
+
+    elif name == "correction":
+        ids = ", ".join(f"`{i}`" for i in data.get("ids") or [])
+        display(Markdown(f"_↩ correction sent to the model — ids not in the catalogue: {ids}_"))
 
     elif name == "invalid_ids":
         ids = "\n".join(f"- `{i}`" for i in data.get("ids") or [])
@@ -226,6 +247,14 @@ def _render_jupyter_event(ev: dict) -> None:
 class HelioAIMagics(Magics):
     """IPython magics exposing the agent inside a notebook."""
 
+    def __init__(self, shell=None, **kwargs) -> None:
+        super().__init__(shell, **kwargs)
+        # The provider chosen with %helioai_provider, None until the user picks one.
+        # Held on the instance and passed to the factory explicitly — the web UI does
+        # the same with its request field. Writing HELIOAI_LLM_PROVIDER into the
+        # environment, as this used to, changed nothing: settings reads it once, at import.
+        self._provider: str | None = None
+
     @cell_magic
     def helioai(self, line: str, cell: str) -> None:
         """`%%helioai` — send a natural-language query to the agent.
@@ -246,7 +275,7 @@ class HelioAIMagics(Magics):
         setup_logging("WARNING")
 
         async def _run():
-            llm = _get_llm()
+            llm = _get_llm(self._provider)
             try:
                 async for ev in stream_chat(
                     llm, _USER_ID, _SESSION_ID, cell.strip(), restricted=_dev_restricted
@@ -312,14 +341,26 @@ class HelioAIMagics(Magics):
 
     @line_magic
     def helioai_provider(self, line: str) -> None:
-        """`%helioai_provider [name]` — show or switch the LLM provider."""
-        provider = line.strip().lower()
-        if provider not in ("groq", "gemini", "azure", "opencode", "ollama"):
-            print(f"Unknown provider {provider!r}. Use: groq | gemini | azure | opencode | ollama")
-            return
-        import os
+        """`%helioai_provider [name]` — show or switch the LLM provider for the next cells.
 
-        os.environ["HELIOAI_LLM_PROVIDER"] = provider
+        The choice lives on this magics instance, so it lasts for the kernel and is
+        handed to `build_llm_client` on every cell. The provider names come from the
+        factory rather than a list kept here, which is how ollama went missing once.
+        """
+        from helioai.config import settings
+        from helioai.core.llm.factory import OPENAI_COMPAT
+
+        known = ["azure", "gemini", *OPENAI_COMPAT]
+        provider = line.strip().lower()
+        if not provider:
+            print(
+                f"Provider: {self._provider or settings.llm.provider!r}. Known: {' | '.join(known)}"
+            )
+            return
+        if provider not in known:
+            print(f"Unknown provider {provider!r}. Use: {' | '.join(known)}")
+            return
+        self._provider = provider
         print(f"Provider switched to {provider!r}.")
 
     @line_magic
@@ -434,8 +475,14 @@ class HelioAIMagics(Magics):
 def load_ipython_extension(ipython: Any) -> None:
     """Register the HelioAI magics. Called by `%load_ext`.
 
+    Also sweeps expired session workspaces: a notebook kernel is the one HelioAI
+    process the CLI's startup sweep never runs in.
+
     Args:
         ipython: The active InteractiveShell, supplied by IPython itself. This
             hook name and signature are IPython's contract, not ours.
     """
+    from helioai.workspace import cleanup_old_runs
+
     ipython.register_magics(HelioAIMagics)
+    cleanup_old_runs()

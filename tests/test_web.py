@@ -109,6 +109,27 @@ def test_chat_stream_events(web_client):
     assert "done" in event_types
 
 
+def test_chat_stream_refuses_a_session_that_is_already_streaming(web_client, monkeypatch):
+    """A second tab on a busy session gets a 409 at once, not a stream that seems hung
+    while it waits for the first turn's lock."""
+    import helioai.interfaces.web.app as web_app
+
+    monkeypatch.setattr(web_app.store, "is_busy", lambda user_id, session_id: True)
+    resp = web_client.post("/chat/stream", json={"message": "hello", "session_id": "busy-session"})
+    assert resp.status_code == 409
+    assert "already streaming" in resp.json()["detail"]
+
+
+def test_chat_stream_proceeds_when_the_session_is_idle(web_client, monkeypatch):
+    import helioai.interfaces.web.app as web_app
+
+    monkeypatch.setattr(web_app.store, "is_busy", lambda user_id, session_id: False)
+    with web_client.stream(
+        "POST", "/chat/stream", json={"message": "hello", "session_id": "idle-session"}
+    ) as resp:
+        assert resp.status_code == 200
+
+
 def test_chat_stream_reply_content(web_client):
     with web_client.stream(
         "POST",
@@ -234,19 +255,12 @@ def test_figure_path_outside_workspace(web_client):
 
 
 def test_figure_path_traversal(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     # path traversal attempt
     r = web_client.get(f"/figure?path={tmp_path}/../etc/passwd")
     assert r.status_code == 404
 
 
 def test_figure_valid(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-
     fig_dir = tmp_path / "users" / "web" / "workspace" / "sess123" / "run001"
     fig_dir.mkdir(parents=True)
     fig = fig_dir / "fig_0.png"
@@ -258,10 +272,6 @@ def test_figure_valid(web_client, tmp_path, monkeypatch):
 
 
 def test_figure_pdf_served(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-
     fig_dir = tmp_path / "users" / "web" / "workspace" / "sess123" / "run001"
     fig_dir.mkdir(parents=True)
     pdf = fig_dir / "fig_0.pdf"
@@ -273,10 +283,6 @@ def test_figure_pdf_served(web_client, tmp_path, monkeypatch):
 
 
 def test_figure_unsupported_type_rejected(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-
     fig_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
     fig_dir.mkdir(parents=True)
     txt = fig_dir / "data.txt"
@@ -295,17 +301,11 @@ def test_code_outside_workspace(web_client):
 
 
 def test_code_path_traversal(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     r = web_client.get(f"/code?path={tmp_path}/../etc/passwd")
     assert r.status_code == 404
 
 
 def test_code_not_py(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     txt_file = tmp_path / "users" / "web" / "workspace" / "sess" / "data.txt"
     txt_file.parent.mkdir(parents=True)
     txt_file.write_text("not python")
@@ -314,9 +314,6 @@ def test_code_not_py(web_client, tmp_path, monkeypatch):
 
 
 def test_code_valid(web_client, tmp_path, monkeypatch):
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     code_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
     code_dir.mkdir(parents=True)
     code_file = code_dir / "code_0.py"
@@ -390,11 +387,17 @@ def test_factory_unknown_provider():
         build_llm_client("unknown_provider_xyz")
 
 
-def test_factory_default_returns_client():
-    """Factory with no override returns a valid LLMClient instance."""
-    from helioai.core.llm.base import LLMClient
-    from helioai.core.llm.factory import build_llm_client
+def test_factory_default_returns_client(monkeypatch):
+    """Factory with no override returns a client for the configured provider.
 
+    Pinned to ollama, the one provider that needs no key: with the default (azure)
+    this test only passed when a `.env` or CI-injected key happened to be present,
+    so the documented `python -m pytest` failed on a clean clone.
+    """
+    from helioai.core.llm.base import LLMClient
+    from helioai.core.llm.factory import build_llm_client, settings
+
+    monkeypatch.setattr(settings.llm, "provider", "ollama")
     client = build_llm_client()
     assert isinstance(client, LLMClient)
 
@@ -643,11 +646,9 @@ def test_delete_session_cannot_escape_the_user_workspace(web_client, tmp_path, m
     delete out of the user's home. Sanitising the id closes the front door; this pins
     the back one, where the label is already-persisted data from an older build.
     """
-    from helioai.config import settings
     from helioai.core.llm.base import Message
     from helioai.interfaces.web.app import store
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
     sentinel = tmp_path / "users" / "web" / "catalogs"
     sentinel.mkdir(parents=True)
     (sentinel / "keepme.json").write_text("{}", encoding="utf-8")
@@ -821,3 +822,256 @@ def test_streams_stay_bound_to_their_session_in_the_real_app_js():
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     assert "OK web session streams" in proc.stdout
+
+
+# ── an injected correction replays as a system note, not as the user's question ──
+
+
+def test_session_messages_show_an_automated_correction_as_a_system_note(monkeypatch, tmp_path):
+    from helioai.core.llm.base import Message
+    from helioai.core.session import SessionStore
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    test_store.save(
+        "web",
+        "sess-corr",
+        [
+            Message(role="user", content="MMS1 FGM in GSM?"),
+            Message(role="assistant", content="Use cda/BOGUS/id."),
+            Message(
+                role="user",
+                content="⚠️ AUTOMATED CORRECTION — not in the catalogue",
+                origin="correction",
+            ),
+            Message(role="assistant", content="Use cda/MMS1_FGM_SRVY_L2/b_gsm."),
+        ],
+    )
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+    from helioai.interfaces.web.app import app
+
+    msgs = TestClient(app).get("/api/sessions/sess-corr/messages").json()["messages"]
+    assert [m["role"] for m in msgs] == ["user", "assistant", "system", "assistant"]
+    assert msgs[2]["origin"] == "correction"
+    assert all("AUTOMATED CORRECTION" not in m["content"] for m in msgs if m["role"] == "user")
+
+
+# ── hardening that used to be untestable ───────────────────────────────────────
+
+
+def test_valid_token_resolves_its_user_and_a_prefix_does_not(auth_client):
+    assert auth_client.get("/api/sessions", headers={"X-Helio-Token": "tok-v"}).status_code == 200
+    assert auth_client.get("/api/sessions", headers={"X-Helio-Token": "tok-"}).status_code == 401
+    assert auth_client.get("/api/sessions", headers={"X-Helio-Token": "tok-vv"}).status_code == 401
+
+
+def test_tokens_are_compared_in_constant_time(auth_client, monkeypatch):
+    """`token in users` is a dict lookup whose timing depends on the match; the check
+    goes through hmac.compare_digest like the dev token and the MCP bearer."""
+    import hmac as hmac_module
+
+    import helioai.interfaces.web.app as web_app
+
+    seen: list[tuple[str, str]] = []
+    real = hmac_module.compare_digest
+
+    def spy(a, b):
+        seen.append((a, b))
+        return real(a, b)
+
+    monkeypatch.setattr(web_app.hmac, "compare_digest", spy)
+    auth_client.get("/api/sessions", headers={"X-Helio-Token": "tok-a"})
+    assert ("tok-a", "tok-a") in seen
+
+
+def test_every_response_carries_a_content_security_policy(web_client):
+    r = web_client.get("/health")
+    assert "default-src 'self'" in r.headers["content-security-policy"]
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
+def test_loopback_bind_pins_the_host_header(monkeypatch):
+    """The DNS-rebinding guard was added inside serve_web, on an app the TestClient
+    never saw; harden_for_host builds exactly what uvicorn serves."""
+    from fastapi import FastAPI
+
+    from helioai.interfaces.web.app import harden_for_host
+
+    probe = FastAPI()
+
+    @probe.get("/ping")
+    async def ping():
+        return {"ok": True}
+
+    client = TestClient(harden_for_host(probe, "127.0.0.1"), raise_server_exceptions=False)
+    assert client.get("/ping", headers={"Host": "localhost"}).status_code == 200
+    assert client.get("/ping", headers={"Host": "evil.example"}).status_code == 400
+
+
+def test_public_bind_does_not_pin_the_host(monkeypatch):
+    from fastapi import FastAPI
+
+    from helioai.interfaces.web.app import harden_for_host
+
+    probe = FastAPI()
+
+    @probe.get("/ping")
+    async def ping():
+        return {"ok": True}
+
+    client = TestClient(harden_for_host(probe, "0.0.0.0"), raise_server_exceptions=False)
+    assert client.get("/ping", headers={"Host": "helio.lab.example"}).status_code == 200
+
+
+# ── a public bind without anyone authenticated is a deployment error ───────────
+
+
+def test_public_bind_without_users_refuses_to_start(monkeypatch):
+    from helioai.config import settings
+    from helioai.interfaces.web.app import refuse_unauthenticated_public_bind
+
+    monkeypatch.setattr(settings.web_auth, "users", {})
+    monkeypatch.setattr(settings.web_auth, "allow_unauthenticated_public", False)
+    with pytest.raises(SystemExit):
+        refuse_unauthenticated_public_bind("0.0.0.0")
+
+
+def test_public_bind_with_users_or_the_explicit_opt_out_starts(monkeypatch):
+    from helioai.config import settings
+    from helioai.interfaces.web.app import refuse_unauthenticated_public_bind
+
+    monkeypatch.setattr(settings.web_auth, "users", {"t": "u"})
+    refuse_unauthenticated_public_bind("0.0.0.0")
+
+    monkeypatch.setattr(settings.web_auth, "users", {})
+    monkeypatch.setattr(settings.web_auth, "allow_unauthenticated_public", True)
+    refuse_unauthenticated_public_bind("0.0.0.0")
+
+
+def test_loopback_bind_never_needs_users(monkeypatch):
+    from helioai.config import settings
+    from helioai.interfaces.web.app import refuse_unauthenticated_public_bind
+
+    monkeypatch.setattr(settings.web_auth, "users", {})
+    monkeypatch.setattr(settings.web_auth, "allow_unauthenticated_public", False)
+    for host in ("127.0.0.1", "localhost", "::1"):
+        refuse_unauthenticated_public_bind(host)
+
+
+def test_api_me_reports_the_callers_usage(web_client):
+    import helioai.interfaces.web.app as web_app
+
+    web_app.store.record_usage(
+        "web", "s", turn=1, agent="lead", provider="groq", prompt_tokens=100, completion_tokens=20
+    )
+    body = web_client.get("/api/me").json()
+    assert body["user_id"] == "web"
+    assert body["usage"]["total"]["prompt_tokens"] == 100
+    assert body["usage"]["day"]["n_calls"] == 1
+
+
+# ── the journal: what the stream showed is what a reload replays ─────────────────
+
+
+def _scripted_turn(tmp_path):
+    """A lead turn that exercises most kinds: plan, skill, sandbox figure + exports, reply."""
+    from support.scripted import ScriptedLLM, ScriptedRegistry, assistant_calls, assistant_text
+
+    fig = tmp_path / "fig_0_0.png"
+    fig.write_bytes(b"\x89PNG\r\n")
+    llm = ScriptedLLM(
+        [
+            assistant_calls("present_plan", arguments={"title": "Plan", "steps": []}),
+            assistant_calls("run_python", arguments={"code": "export('theta_bn', 57.5, 'deg')"}),
+            assistant_text("θ_Bn = 57.5°."),
+        ]
+    )
+    reg = ScriptedRegistry(
+        {
+            "run_python": {
+                "stdout": "",
+                "figure_paths": [str(fig)],
+                "exports": {"theta_bn": {"mean": 57.5, "min": 57.5, "max": 57.5, "units": "deg"}},
+                "cards": [],
+                "code_path": str(tmp_path / "code_0.py"),
+                "n_lines": 1,
+            }
+        }
+    )
+    return llm, reg
+
+
+def test_the_journal_is_the_stream_and_the_endpoint_serves_it(monkeypatch, tmp_path):
+    """The golden behind the Runner extraction: the events `stream_chat` yields, the
+    rows `store.events()` returns and the body of `/api/sessions/{id}/events` are one
+    and the same list — opened by the question, closed by `done`. A reload renders it
+    with the very code that rendered the live stream."""
+    import asyncio
+
+    from helioai.core import agent_loop
+    from helioai.core.session import SessionStore
+    from helioai.interfaces.web.app import app
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr(agent_loop, "store", test_store)
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+    llm, reg = _scripted_turn(tmp_path)
+    monkeypatch.setattr(agent_loop.registry, "call_tool", reg.call_tool)
+
+    async def run():
+        return [ev async for ev in agent_loop.stream_chat(llm, "web", "sess-journal", "θ_Bn?")]
+
+    streamed = asyncio.run(run())
+    kinds = [e["event"] for e in streamed]
+    assert kinds[0] == "user" and kinds[-1] == "done"
+    assert {"plan", "tool_call", "tool_result", "artifact", "reply"} <= set(kinds)
+
+    journaled = test_store.events("web", "sess-journal")
+    served = TestClient(app).get("/api/sessions/sess-journal/events").json()["events"]
+    assert journaled == json.loads(json.dumps(streamed, default=str))
+    assert served == journaled
+
+
+def test_a_second_turn_appends_to_the_journal_and_a_reset_empties_it(monkeypatch, tmp_path):
+    import asyncio
+
+    from support.scripted import ScriptedLLM, assistant_text
+
+    from helioai.core import agent_loop
+    from helioai.core.session import SessionStore
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr(agent_loop, "store", test_store)
+
+    async def turn(text):
+        llm = ScriptedLLM([assistant_text(f"answer to {text}")])
+        return [ev async for ev in agent_loop.stream_chat(llm, "web", "s2", text)]
+
+    asyncio.run(turn("one"))
+    asyncio.run(turn("two"))
+    texts = [e["data"]["text"] for e in test_store.events("web", "s2") if e["event"] == "user"]
+    assert texts == ["one", "two"]
+    test_store.reset("web", "s2")
+    assert test_store.events("web", "s2") == []
+
+
+def test_a_session_without_a_journal_is_served_empty_so_the_browser_falls_back(
+    monkeypatch, tmp_path
+):
+    """Sessions recorded before the journal existed have messages and no events; the
+    browser asks `/messages` only in that case (see tests/web/test_session_streams.js)."""
+    from helioai.core.llm.base import Message
+    from helioai.core.session import SessionStore
+    from helioai.interfaces.web.app import app
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    test_store.save(
+        "web", "old", [Message(role="user", content="q"), Message(role="assistant", content="a")]
+    )
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+
+    client = TestClient(app)
+    assert client.get("/api/sessions/old/events").json() == {"events": []}
+    assert [m["role"] for m in client.get("/api/sessions/old/messages").json()["messages"]] == [
+        "user",
+        "assistant",
+    ]

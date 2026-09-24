@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC
 from pathlib import Path
 
@@ -35,15 +37,51 @@ CREATE TABLE IF NOT EXISTS messages (
     content      TEXT NOT NULL DEFAULT '',
     tool_calls   TEXT,
     tool_call_id TEXT,
+    origin       TEXT,
+    name         TEXT,
     FOREIGN KEY (user_id, session_id)
         REFERENCES sessions(user_id, session_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_session_seq
     ON messages(user_id, session_id, seq);
+
+CREATE TABLE IF NOT EXISTS usage (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           TEXT NOT NULL,
+    session_id        TEXT NOT NULL,
+    recorded_at       REAL NOT NULL DEFAULT (julianday('now')),
+    turn              INTEGER,
+    agent             TEXT NOT NULL DEFAULT 'lead',
+    provider          TEXT NOT NULL DEFAULT '',
+    prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cached_tokens     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_user_time ON usage(user_id, recorded_at);
+
+CREATE TABLE IF NOT EXISTS events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    seq        INTEGER NOT NULL,
+    ts         REAL NOT NULL DEFAULT (julianday('now')),
+    kind       TEXT NOT NULL,
+    data       TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_session_seq
+    ON events(user_id, session_id, seq);
 """
 
-_MIGRATE = "ALTER TABLE sessions ADD COLUMN workspace_dir TEXT"
+# Additive only, each one tried on its own: a column that already exists raises and
+# is skipped, so an old database gains what it lacks and a new one is left alone.
+_MIGRATIONS = (
+    "ALTER TABLE sessions ADD COLUMN workspace_dir TEXT",
+    "ALTER TABLE messages ADD COLUMN origin TEXT",
+    "ALTER TABLE messages ADD COLUMN name TEXT",
+)
 
 
 def _dump_tool_calls(tcs: list[ToolCall] | None) -> str | None:
@@ -82,20 +120,36 @@ class SessionStore:
         self._db_path = db_path
         self._cache: dict[SessionKey, list[Message]] = {}
         self._lock = threading.Lock()
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_schema()
+        self._turn_locks: dict[SessionKey, asyncio.Lock] = {}
+        # Nothing touches the disk until the first query: the module-level `store`
+        # is built at import, and creating directories on `import helioai` is the
+        # kind of side effect a packager, a linter run or a docs build trips over.
+        self._schema_ready = False
+        # Its own lock: `save` already holds `_lock` when it connects, and `_lock` is
+        # not re-entrant — taking it again here would deadlock the first save.
+        self._schema_lock = threading.Lock()
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        try:
             conn.executescript(_SCHEMA)
-            try:
-                conn.execute(_MIGRATE)
-            except Exception:
-                pass
+            for statement in _MIGRATIONS:
+                try:
+                    conn.execute(statement)
+                except Exception:
+                    pass
             conn.commit()
+        finally:
+            conn.close()
+        self._schema_ready = True
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
+        if not self._schema_ready:
+            with self._schema_lock:
+                if not self._schema_ready:
+                    self._init_schema()
         conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
@@ -104,6 +158,44 @@ class SessionStore:
             yield conn
         finally:
             conn.close()
+
+    def turn_lock(self, user_id: str, session_id: str) -> asyncio.Lock:
+        """The lock a caller must hold for the whole of one conversational turn.
+
+        `get_or_create` hands every caller the same list, and a turn is a
+        read-modify-write of it that spans several awaits: without this, two turns on
+        one session — two browser tabs, two MCP calls — interleave their appends and
+        `save` persists the mix. `_lock` only serialises the SQL, never the turn.
+
+        One `asyncio.Lock` per key, created on first use. A lock in Python ≥ 3.10 binds
+        to an event loop only on its first *contended* acquisition, so the CLI and the
+        Jupyter magic — a fresh `asyncio.run` per question, never two turns on one
+        session at once — reuse it across loops safely, while the web and MCP servers
+        run one loop. If that assumption ever breaks, asyncio raises a `RuntimeError`
+        naming the loop mismatch instead of silently corrupting anything.
+
+        Args:
+            user_id: Owner of the session.
+            session_id: Session identifier.
+
+        Returns:
+            The same lock object for the same key, for the life of the store.
+        """
+        key: SessionKey = (user_id, session_id)
+        with self._lock:
+            lock = self._turn_locks.get(key)
+            if lock is None:
+                lock = self._turn_locks[key] = asyncio.Lock()
+            return lock
+
+    def is_busy(self, user_id: str, session_id: str) -> bool:
+        """Whether a turn is currently running for this session.
+
+        Read without taking the lock — this is the web layer's fast refusal (409), not
+        a guarantee; the guarantee is `turn_lock` itself.
+        """
+        lock = self._turn_locks.get((user_id, session_id))
+        return bool(lock and lock.locked())
 
     def get_or_create(self, user_id: str, session_id: str) -> list[Message]:
         """Return the cached history for a session, loading it from disk if needed."""
@@ -118,7 +210,7 @@ class SessionStore:
     def _load(self, user_id: str, session_id: str) -> list[Message]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT role, content, tool_calls, tool_call_id "
+                "SELECT role, content, tool_calls, tool_call_id, origin, name "
                 "FROM messages WHERE user_id = ? AND session_id = ? ORDER BY seq",
                 (user_id, session_id),
             ).fetchall()
@@ -128,8 +220,10 @@ class SessionStore:
                 content=content or "",
                 tool_calls=_load_tool_calls(tool_calls),
                 tool_call_id=tool_call_id,
+                origin=origin,
+                name=name,
             )
-            for role, content, tool_calls, tool_call_id in rows
+            for role, content, tool_calls, tool_call_id, origin, name in rows
         ]
 
     def save(self, user_id: str, session_id: str, history: list[Message]) -> None:
@@ -150,8 +244,8 @@ class SessionStore:
                 "DELETE FROM messages WHERE user_id = ? AND session_id = ?", (user_id, session_id)
             )
             conn.executemany(
-                "INSERT INTO messages(user_id, session_id, seq, role, content, tool_calls, tool_call_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages(user_id, session_id, seq, role, content, tool_calls, "
+                "tool_call_id, origin, name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         user_id,
@@ -161,21 +255,170 @@ class SessionStore:
                         m.content or "",
                         _dump_tool_calls(m.tool_calls),
                         m.tool_call_id,
+                        m.origin,
+                        m.name,
                     )
                     for i, m in enumerate(history)
                 ],
             )
             conn.commit()
 
+    def record_usage(
+        self,
+        user_id: str,
+        session_id: str,
+        *,
+        turn: int | None,
+        agent: str,
+        provider: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cached_tokens: int = 0,
+    ) -> None:
+        """Append what one LLM call cost, as the provider reported it.
+
+        The counts have ridden on `Message` for a while and were dropped at save time,
+        so a session reloaded from disk reported no cost and nothing could say what a
+        user had spent. Kept apart from `messages` on purpose: one row per call, never
+        rewritten by `save`, so a compacted or reset history does not erase the bill.
+        Zero counts are skipped — a provider that reports none leaves no row rather
+        than a misleading zero.
+
+        Args:
+            user_id: Owner of the session.
+            session_id: The conversation the call belonged to; a sub-agent's calls
+                are charged to its parent session.
+            turn: Turn index within the run, for ordering.
+            agent: `"lead"` or the sub-agent role.
+            provider: Provider name, since a session may switch providers.
+            prompt_tokens: Input tokens billed.
+            completion_tokens: Output tokens billed.
+            cached_tokens: The part of the prompt served from the provider's cache.
+        """
+        if not (prompt_tokens or completion_tokens):
+            return
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "INSERT INTO usage(user_id, session_id, turn, agent, provider, "
+                "prompt_tokens, completion_tokens, cached_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    user_id,
+                    session_id,
+                    turn,
+                    agent,
+                    provider,
+                    int(prompt_tokens),
+                    int(completion_tokens),
+                    int(cached_tokens),
+                ),
+            )
+            conn.commit()
+
+    def usage_totals(
+        self, user_id: str, session_id: str | None = None, since_days: float | None = None
+    ) -> dict:
+        """Sum a user's token usage, optionally for one session or a recent window.
+
+        Args:
+            user_id: Whose usage.
+            session_id: Restrict to one session; None for every session.
+            since_days: Only calls in the last N days; None for all time.
+
+        Returns:
+            `{"prompt_tokens", "completion_tokens", "cached_tokens", "n_calls"}`, zeros
+            when nothing was recorded.
+        """
+        clauses = ["user_id = ?"]
+        params: list = [user_id]
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if since_days is not None:
+            clauses.append("recorded_at >= julianday('now') - ?")
+            params.append(float(since_days))
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), "
+                "COALESCE(SUM(cached_tokens), 0), COUNT(*) FROM usage WHERE "
+                + " AND ".join(clauses),
+                params,
+            ).fetchone()
+        return {
+            "prompt_tokens": int(row[0]),
+            "completion_tokens": int(row[1]),
+            "cached_tokens": int(row[2]),
+            "n_calls": int(row[3]),
+        }
+
+    def append_event(self, user_id: str, session_id: str, event: dict) -> None:
+        """Journal one event of a turn, in the order it was yielded.
+
+        The journal is what a session replays from: the browser used to rebuild a
+        past conversation by re-parsing the JSON of every `tool` message with a
+        hundred lines of shape-sniffing, and lost the plan, the provenance verdict, the
+        figure reviews and everything a sub-agent did on the way. Written *before* the
+        event is handed to the interface, so a stream cut mid-turn still leaves what was
+        shown. Its own table, never rewritten by `save`, so a compacted history does
+        not erase the record.
+
+        Args:
+            user_id: Owner of the session.
+            session_id: The conversation the event belongs to.
+            event: `{"event": kind, "data": {...}}` as `events.make` builds it. Payloads
+                are stored as JSON; unknown types are stringified, as they are for the
+                model.
+        """
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "INSERT INTO events(user_id, session_id, seq, kind, data) VALUES (?, ?, "
+                "(SELECT COALESCE(MAX(seq), -1) + 1 FROM events WHERE user_id = ? AND session_id = ?),"
+                " ?, ?)",
+                (
+                    user_id,
+                    session_id,
+                    user_id,
+                    session_id,
+                    event["event"],
+                    json.dumps(event.get("data") or {}, ensure_ascii=False, default=str),
+                ),
+            )
+            conn.commit()
+
+    def events(self, user_id: str, session_id: str) -> list[dict]:
+        """A session's journal, oldest first, in the shape the loops yield.
+
+        Args:
+            user_id: Owner of the session.
+            session_id: The conversation.
+
+        Returns:
+            `[{"event": kind, "data": {...}}, ...]` — exactly what `stream_chat` yielded,
+            turn after turn, so a replay renders with the same code as the live stream.
+            Empty for a session recorded before the journal existed.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT kind, data FROM events WHERE user_id = ? AND session_id = ? ORDER BY seq",
+                (user_id, session_id),
+            ).fetchall()
+        return [{"event": kind, "data": json.loads(data)} for kind, data in rows]
+
     def reset(self, user_id: str, session_id: str) -> None:
-        """Delete a session and its messages, and drop it from the cache."""
+        """Delete a session, its messages, its usage rows and its journal, and drop it
+        from the cache."""
         with self._lock, self._connect() as conn:
             conn.execute(
                 "DELETE FROM sessions WHERE user_id = ? AND session_id = ?",
                 (user_id, session_id),
             )
+            for table in ("usage", "events"):
+                conn.execute(
+                    f"DELETE FROM {table} WHERE user_id = ? AND session_id = ?",  # noqa: S608
+                    (user_id, session_id),
+                )
             conn.commit()
         self._cache.pop((user_id, session_id), None)
+        self._turn_locks.pop((user_id, session_id), None)
 
     def set_workspace_dir(self, user_id: str, session_id: str, workspace_dir: str) -> None:
         """Record which workspace directory a session's artifacts live in."""
@@ -223,8 +466,8 @@ class SessionStore:
             limit: Maximum number of sessions to return.
 
         Returns:
-            Dicts with session_id, updated_at, first_message, n_messages and
-            workspace_dir, most recent first.
+            Dicts with session_id, updated_at, first_message, n_messages,
+            workspace_dir and tokens (prompt + completion, all calls), most recent first.
         """
         from datetime import datetime
 
@@ -237,7 +480,9 @@ class SessionStore:
                           ORDER BY seq LIMIT 1) AS first_user,
                        (SELECT COUNT(*) FROM messages WHERE user_id = s.user_id
                           AND session_id = s.session_id) AS n_messages,
-                       s.workspace_dir
+                       s.workspace_dir,
+                       (SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM usage
+                          WHERE user_id = s.user_id AND session_id = s.session_id) AS tokens
                 FROM sessions s
                 WHERE s.user_id = ?
                 ORDER BY s.updated_at DESC, s.rowid DESC LIMIT ?
@@ -245,7 +490,7 @@ class SessionStore:
                 (user_id, limit),
             ).fetchall()
         out: list[dict] = []
-        for session_id, jd, first_user, n_messages, workspace_dir in rows:
+        for session_id, jd, first_user, n_messages, workspace_dir, tokens in rows:
             preview = (first_user or "").strip().replace("\n", " ")
             if len(preview) > 80:
                 preview = preview[:77] + "..."
@@ -258,6 +503,7 @@ class SessionStore:
                     "n_messages": n_messages,
                     "updated_at": iso,
                     "workspace_dir": workspace_dir,
+                    "tokens": int(tokens),
                 }
             )
         return out
@@ -293,9 +539,9 @@ def strip_orphan_tool_calls(history: list[Message]) -> list[Message]:
         if len(live_tcs) == len(m.tool_calls):
             cleaned.append(m)
         elif live_tcs:
-            cleaned.append(Message(role=m.role, content=m.content, tool_calls=live_tcs))
+            cleaned.append(replace(m, tool_calls=live_tcs))
         elif m.content:
-            cleaned.append(Message(role=m.role, content=m.content))
+            cleaned.append(replace(m, tool_calls=None))
         # else: drop the message entirely (no content, no answered tool_calls)
     return cleaned
 

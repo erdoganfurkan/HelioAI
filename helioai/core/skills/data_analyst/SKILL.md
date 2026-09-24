@@ -2,7 +2,7 @@
 name: data_analyst
 description: Download and analyze heliophysics time series — statistics, FFT, multi-mission comparison, event detection, plotting.
 when_to_use: The user wants to retrieve data, compute statistics, plot a time series, compare multiple missions, detect plasma events (shocks, reconnection, CME, SIR), or run any numerical analysis on speasy parameters.
-allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_recipe, run_python]
+allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_recipe, run_recipe, run_python]
 ---
 
 # Procedure — analyze a time series
@@ -32,7 +32,7 @@ using one also gives you provenance.
 
 | Task | Recipe |
 |---|---|
-| Shock normal angle θ_Bn | `theta_bn` |
+| Shock normal angle θ_Bn | `theta_bn` — bind `B` (the downloaded series) and `shock_time`; the recipe derives its windows, refuses one that contains the ramp, and exports `theta_bn_window_spread_deg`, the half-range of the angle over neighbouring window conventions: **that is the ± to report**, not `theta_bn_sampling_std_deg` (a bootstrap inside fixed windows, thirty times smaller on a sheath-bound shock). Bind `B_up`/`B_dn` yourself only when the user gives the windows. In your report, print the upstream and downstream intervals and the mean vectors the recipe printed — a reader re-derives your angle from them in a minute, and cannot without them. |
 | Discontinuity / current-sheet normal (minimum variance) | `mvab` |
 | Shock jump conditions, compression ratio, shock speed | `rankine_hugoniot` — **also picks the upstream/downstream averaging windows**; call `upstream_downstream(t, values, shock_time)` per quantity and never pass averages you computed yourself. Choosing those windows by hand is where this analysis goes wrong: a generous guard band with a long window sounds careful, lands in the decaying sheath, and returns a compression of 1.89 instead of 2.59 with every downstream number wrong. |
 | Rotational vs tangential discontinuity | `walen_test` |
@@ -120,8 +120,17 @@ If `get_timeseries` returns a `quality` block with `notable: true`, report it (m
    set `component` (0/1/2 for Bx/By/Bz, scalar handled too), paste the recipe. Never re-fetch — events are already persisted.
 
 ## Event detection
-Implement threshold / derivative / boundary criteria in run_python; report event times and key
-signature values (ΔP/P, ΔB/B…).
+For an interplanetary shock whose time you do not know yet: download B **and** the proton density and
+speed for the whole UT day, then `run_recipe("theta_bn", inputs={"B": "load_data('<b>')", "density":
+"load_data('<n>')", "speed": "load_data('<v>')"})` with no `shock_time` — the recipe lists the |B| rises
+of the interval and says for each whether density and speed jump with it (a fast forward shock steps in
+all three at once; a sheath compression steps in |B| alone, and on 2004-11-07 four of those out-jumped
+both real shocks). Name the crossing you take and the ones you did not, and why; then run the recipe
+again with `shock_time` set to the time it printed. Do not hunt the ramp with hand-written `run_python`
+cells: one run spent nine turns doing that.
+
+For other events, implement threshold / derivative / boundary criteria in run_python; report event
+times and key signature values (ΔP/P, ΔB/B…).
 
 | Event | Signatures | Parameters |
 |---|---|---|

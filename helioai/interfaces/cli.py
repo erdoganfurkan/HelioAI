@@ -13,6 +13,7 @@ Usage:
     helioai serve --web           # web UI on :7890 (--host, --port)
     helioai serve                 # MCP server on stdio
     helioai migrate-storage       # move legacy data into the per-user layout
+    helioai doctor [--online]     # check this install: index, sandbox, keys, .env (--json)
 
 Options:
     --session <id>                # continue a specific session
@@ -22,7 +23,9 @@ Options:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import re
 import sys
 import uuid
 from typing import TYPE_CHECKING
@@ -62,12 +65,22 @@ def _show_history() -> None:
     if not summaries:
         print("No sessions found.")
         return
-    print(f"{'Session':<10}  {'Updated':<16}  {'Msgs':>4}  First message")
-    print("-" * 72)
+    print(f"{'Session':<10}  {'Updated':<16}  {'Msgs':>4}  {'Tokens':>7}  First message")
+    print("-" * 80)
     for s in summaries:
         sid = s["session_id"][:8]
         ts = s["updated_at"][:16].replace("T", " ")
-        print(f"{sid:<10}  {ts:<16}  {s['n_messages']:>4}  {s['first_message']}")
+        tokens = _fmt_tokens(s.get("tokens", 0))
+        print(f"{sid:<10}  {ts:<16}  {s['n_messages']:>4}  {tokens:>7}  {s['first_message']}")
+
+
+def _fmt_tokens(n: int) -> str:
+    """`12.3k` rather than `12345`: a column, not a bill."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n) if n else "-"
 
 
 def _pick_session() -> str | None:
@@ -153,13 +166,55 @@ def _capped_output(text: str, pad: str, max_lines: int = 6) -> str:
     return body
 
 
+# The text of the reply printed so far from `reply_delta` events, so the final `reply`
+# prints only what the stream did not — an appended correction — instead of the whole
+# answer a second time.
+_streamed: list[str] = []
+
+_MARKUP = re.compile(r"[*_`#>|\-]+|\s+")
+
+
+def _same_words(a: str, b: str) -> bool:
+    """Whether two renderings of a reply say the same thing.
+
+    A live run streamed its answer as text with `**n̂ = …**` in bold, then delivered the
+    same answer through `final_answer` without the bold; the CLI, seeing a `reply` that
+    was not a prefix of the stream, printed the whole answer twice. Markdown and
+    whitespace are not words.
+    """
+    return _MARKUP.sub("", a) == _MARKUP.sub("", b)
+
+
 def _render_event(ev: dict) -> None:
+    from helioai.core.event_display import describe_findings
+
     name, data = ev["event"], ev["data"]
     nested = "sub_agent_ctx" in data
     pad = "    " if nested else "  "
 
-    if name == "reply":
-        print(f"\n\033[92m{data['text']}\033[0m\n")
+    if name == "user":
+        pass  # the person who typed the question is looking at it; journaled for replay
+
+    elif name == "reply_delta":
+        if not _streamed:
+            print("\n\033[92m", end="")
+        print(data["text"], end="", flush=True)
+        _streamed.append(data["text"])
+
+    elif name == "reply":
+        streamed = "".join(_streamed)
+        _streamed.clear()
+        text = data["text"]
+        if streamed and text.startswith(streamed):
+            print(f"{text[len(streamed) :]}\033[0m\n")
+        elif streamed and _same_words(streamed, text):
+            # The model wrote its answer as text, then called final_answer with the
+            # same words minus some markdown: one answer, already on screen.
+            print("\033[0m\n")
+        elif streamed:
+            print(f"\033[0m\n\n\033[92m{text}\033[0m\n")
+        else:
+            print(f"\n\033[92m{text}\033[0m\n")
 
     elif name == "tool_call":
         tool = data["name"]
@@ -177,10 +232,13 @@ def _render_event(ev: dict) -> None:
         print(f"  \033[94m⚡ spawning {data['role']}...\033[0m")
 
     elif name == "sub_agent_end":
-        role = data.get("role", "")
-        summary = (data.get("summary") or "")[:80]
-        icon = "✗" if data.get("error") else "✓"
-        print(f"  \033[94m{icon} {role}: {data.get('error') or summary}\033[0m")
+        from helioai.core.event_display import describe_sub_agent_end
+
+        text, tone = describe_sub_agent_end(data)
+        icon, colour = {"ok": ("✓", "94"), "capped": ("◔", "93"), "error": ("✗", "91")}[tone]
+        print(f"  \033[{colour}m{icon} {text}\033[0m")
+        for line in describe_findings(data.get("findings")):
+            print(f"      \033[94m{line}\033[0m")
 
     elif name == "skill_loaded":
         print(f"{pad}\033[95m📖 skill: {data['name']}\033[0m")
@@ -198,13 +256,6 @@ def _render_event(ev: dict) -> None:
             for path in paths:
                 print(f"{pad}\033[93m  → {_tilde(path)}\033[0m")
                 _open_file(path)
-        elif kind == "data_preview":
-            param = data.get("param_id", "")
-            n = data.get("n_points", 0)
-            print(f"{pad}\033[93m📈 {param} — {n} points\033[0m")
-            if data.get("preview"):
-                for line in (data["preview"] or "").split("\n")[:5]:
-                    print(f"{pad}\033[90m  {line}\033[0m")
 
     elif name == "plan":
         print(f"\n{pad}\033[96m📋 {data.get('title', 'Plan')}\033[0m")
@@ -213,6 +264,14 @@ def _render_event(ev: dict) -> None:
             suffix = f"  \033[90m[{tool}]\033[0m" if tool else ""
             print(f"{pad}  \033[96m{n}.\033[0m {step.get('description', '')}{suffix}")
         print()
+
+    elif name == "plan_report":
+        from helioai.core.event_display import describe_plan_report
+
+        capped = any(d.get("capped") for d in data.get("delegations") or [])
+        flagged = data.get("missed_tools") or data.get("unplanned_tools") or capped
+        colour = "93" if flagged else "90"
+        print(f"{pad}\033[{colour}m📋 {describe_plan_report(data)}\033[0m")
 
     elif name == "figure_review":
         print(f"{pad}\033[95m🔍 figure review: {data.get('text', '')}\033[0m")
@@ -227,6 +286,21 @@ def _render_event(ev: dict) -> None:
         for d in data.get("details") or []:
             origin = f" (session computed {d['name']})" if d.get("name") else ""
             print(f"{pad}  \033[{colour}m{d['status']}: {d['text']}{origin}\033[0m")
+
+    elif name == "verdict":
+        from helioai.core.event_display import describe_verdict
+
+        summary, lines = describe_verdict(data)
+        colour = "91" if data.get("contradicted") else "90"
+        print(f"{pad}\033[{colour}m⚖ {summary}\033[0m")
+        for line in lines:
+            print(f"{pad}  \033[{colour}m{line}\033[0m")
+
+    elif name == "correction":
+        ids = ", ".join(data.get("ids") or [])
+        print(
+            f"{pad}\033[90m↩ correction sent to the model — ids not in the catalogue: {ids}\033[0m"
+        )
 
     elif name == "invalid_ids":
         print(f"\n{pad}\033[91m⚠ ids not in the catalogue — do not use:\033[0m")
@@ -350,14 +424,21 @@ def _interactive(*, restricted: bool = True) -> None:
 
 
 def _run_migrate_storage() -> None:
-    """One-shot, idempotent migration of legacy flat storage into per-user homes."""
+    """One-shot, idempotent migration of legacy storage layouts.
+
+    Two layouts are folded in. Flat storage (`data/catalogs`, `data/profiles/*.md`,
+    `data/profile.md`) moves into per-user homes. And for an install that sets
+    `HELIOAI_DATA_DIR`: the index, catalogues and profile that older versions kept
+    deriving from the *default* data directory move under the configured one — see
+    `_migrate_split_data_dir`.
+    """
     import shutil
     from pathlib import Path
 
     from helioai.config import settings
     from helioai.workspace import DEFAULT_USER, user_home
 
-    moved = 0
+    moved = _migrate_split_data_dir()
 
     legacy_catalogs = Path(settings.catalogs.catalogs_dir)
     if legacy_catalogs.is_dir():
@@ -387,6 +468,39 @@ def _run_migrate_storage() -> None:
             moved += 1
 
     print(f"migrate-storage: moved {moved} file(s) into data/users/")
+
+
+def _migrate_split_data_dir() -> int:
+    """Move `chroma/`, `catalogs/` and `profile.md` from the default data directory to
+    the configured one, when `HELIOAI_DATA_DIR` points elsewhere.
+
+    Earlier versions derived those three from the default directory whatever the variable
+    said, so a Docker volume held sessions under `/app/data` and the index under
+    `/app/data/helioai`. Each item moves only when the destination does not exist yet,
+    which keeps the command re-runnable and never overwrites a rebuilt index.
+
+    Returns:
+        How many items moved.
+    """
+    import shutil
+
+    from helioai.config import _default_data_dir, settings
+
+    legacy_root = _default_data_dir()
+    if legacy_root.resolve() == settings.data_dir.resolve():
+        return 0
+    moved = 0
+    for src, dst in (
+        (legacy_root / "chroma", settings.rag.chroma_dir),
+        (legacy_root / "catalogs", settings.catalogs.catalogs_dir),
+        (legacy_root / "profile.md", settings.profile.profile_path),
+    ):
+        if src.exists() and not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))
+            print(f"migrate-storage: {src} -> {dst}")
+            moved += 1
+    return moved
 
 
 _MCP_CLIENTS = ("claude-code", "claude-code-project", "claude-desktop", "codex")
@@ -533,10 +647,87 @@ def _run_mcp_install(args: list[str]) -> None:
             print(f"\nwritten to {path}")
 
 
+_COMMANDS = (
+    "history",
+    "index",
+    "profile",
+    "export",
+    "migrate-storage",
+    "mcp-install",
+    "serve",
+    "doctor",
+)
+
+
+def _global_options(args: list[str]) -> tuple[argparse.Namespace, list[str]]:
+    """Pull `--session`, `--dev` and `--resume` out of argv, wherever they appear.
+
+    `parse_known_args` so that everything else — a subcommand and its own flags, or the
+    words of a question — comes back untouched for the router. A flag with its value
+    missing is an argparse error (exit 2), not the `IndexError` the hand-rolled
+    `args.index()` parsing raised on `helioai --session`.
+    """
+    p = argparse.ArgumentParser(prog="helioai", add_help=False)
+    p.add_argument("--session")
+    p.add_argument("--dev", action="store_true")
+    p.add_argument("--resume", action="store_true")
+    return p.parse_known_args(args)
+
+
+def _run_command(command: str, argv: list[str]) -> None:
+    p = argparse.ArgumentParser(prog=f"helioai {command}", add_help=False)
+    if command == "history":
+        p.add_argument("action", nargs="?", choices=("delete",))
+        p.add_argument("session_id", nargs="?")
+        ns = p.parse_args(argv)
+        if ns.action == "delete":
+            if not ns.session_id:
+                p.error("history delete needs a session id prefix")
+            _delete_session(ns.session_id)
+        else:
+            _show_history()
+    elif command == "index":
+        p.add_argument("--rebuild", action="store_true")
+        _run_index(rebuild=p.parse_args(argv).rebuild)
+    elif command == "profile":
+        p.parse_args(argv)
+        _run_profile()
+    elif command == "export":
+        p.add_argument("session_id", nargs="?")
+        _run_export(p.parse_args(argv).session_id)
+    elif command == "migrate-storage":
+        p.parse_args(argv)
+        _run_migrate_storage()
+    elif command == "mcp-install":
+        _run_mcp_install(argv)
+    elif command == "doctor":
+        from helioai.doctor import run_doctor
+
+        p.add_argument("--online", action="store_true")
+        p.add_argument("--json", action="store_true", dest="as_json")
+        ns = p.parse_args(argv)
+        raise SystemExit(run_doctor(online=ns.online, as_json=ns.as_json))
+    elif command == "serve":
+        if "--web" in argv:
+            p.add_argument("--web", action="store_true")
+            p.add_argument("--host", default="127.0.0.1")
+            p.add_argument("--port", type=int, default=7890)
+            ns = p.parse_args(argv)
+            from helioai.interfaces.web.app import serve_web
+
+            serve_web(host=ns.host, port=ns.port)
+        else:
+            # The MCP server parses its own flags (--http, --host, --port, ...).
+            from helioai.mcp_server import main as mcp_main
+
+            sys.argv = [sys.argv[0]] + argv
+            mcp_main()
+
+
 def main() -> None:
     """Entry point for the `helioai` command.
 
-    Routes subcommands (index, export, history, profile, serve, ...) and
+    Routes subcommands (index, export, history, profile, serve, doctor, ...) and
     otherwise runs either a one-shot query or the interactive prompt.
 
     `--help` is answered before anything else runs. The default branch of this
@@ -544,7 +735,8 @@ def main() -> None:
     handled, `helioai --help` created a workspace and billed an LLM call to ask
     the model what `--help` meant — the first thing anyone types after
     `pip install`. Printing `__doc__` keeps the help and the module's own
-    documentation as one string.
+    documentation as one string. Only a standalone `--help` token counts: a quoted
+    question that happens to contain the words is still a question.
     """
     global _SESSION_ID
 
@@ -553,85 +745,40 @@ def main() -> None:
         print(__doc__)
         return
 
+    options, rest = _global_options(args)
+
+    if rest and rest[0] in _COMMANDS and rest[0] != "doctor":
+        # Storage commands need the user bound; doctor must not touch the workspace.
+        from helioai.workspace import set_user
+
+        set_user(_USER_ID)
+        _run_command(rest[0], rest[1:])
+        return
+    if rest and rest[0] == "doctor":
+        _run_command("doctor", rest[1:])
+        return
+
     from helioai.config import dev_unlock, settings
     from helioai.workspace import cleanup_old_runs, set_user
 
     set_user(_USER_ID)
     cleanup_old_runs()
+    restricted = not dev_unlock(settings.dev.token if options.dev else None)
+    if options.session:
+        _SESSION_ID = options.session
 
-    # --dev: supply the configured dev token to bypass the scope guardrail
-    dev_flag = "--dev" in args
-    if dev_flag:
-        args = [a for a in args if a != "--dev"]
-    restricted = not dev_unlock(settings.dev.token if dev_flag else None)
-
-    if "--session" in args:
-        idx = args.index("--session")
-        if idx + 1 < len(args):
-            _SESSION_ID = args[idx + 1]
-            args = [a for i, a in enumerate(args) if i not in (idx, idx + 1)]
-
-    if not args:
-        _interactive(restricted=restricted)
-        return
-
-    if args[0] == "history":
-        if len(args) >= 3 and args[1] == "delete":
-            _delete_session(args[2])
-        else:
-            _show_history()
-        return
-
-    if args[0] == "index":
-        _run_index(rebuild="--rebuild" in args)
-        return
-
-    if args[0] == "profile":
-        _run_profile()
-        return
-
-    if args[0] == "export":
-        _run_export(args[1] if len(args) > 1 else None)
-        return
-
-    if args[0] == "migrate-storage":
-        _run_migrate_storage()
-        return
-
-    if args[0] == "mcp-install":
-        _run_mcp_install(args[1:])
-        return
-
-    if args[0] == "serve":
-        if "--web" in args:
-            serve_args = args[1:]
-            host = "127.0.0.1"
-            port = 7890
-            if "--host" in serve_args:
-                idx = serve_args.index("--host")
-                host = serve_args[idx + 1]
-            if "--port" in serve_args:
-                idx = serve_args.index("--port")
-                port = int(serve_args[idx + 1])
-            from helioai.interfaces.web.app import serve_web
-
-            serve_web(host=host, port=port)
-        else:
-            from helioai.mcp_server import main as mcp_main
-
-            sys.argv = [sys.argv[0]] + args[1:]
-            mcp_main()
-        return
-
-    if "--resume" in args:
+    if options.resume:
         session_id = _pick_session()
         if session_id:
             _SESSION_ID = session_id
         _interactive(restricted=restricted)
         return
 
-    query = " ".join(args)
-    asyncio.run(_run_query(query, restricted=restricted))
+    if not rest:
+        _interactive(restricted=restricted)
+        return
+
+    asyncio.run(_run_query(" ".join(rest), restricted=restricted))
 
 
 if __name__ == "__main__":

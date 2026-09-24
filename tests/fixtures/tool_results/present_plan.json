@@ -1,0 +1,5 @@
+{
+ "tool": "present_plan",
+ "arguments": {},
+ "raw": "{\"status\": \"presented\", \"title\": \"Wind shock 2015-03-17 ~04:00 UT \\u2014 |B|/Bz plot + theta_Bn + literature\", \"steps\": [{\"description\": \"Resolve Wind 3-second MFI magnetic field in GSM and download 03:30\\u201304:30 UT.\", \"tool\": \"search_parameters + get_timeseries\"}, {\"description\": \"Plot |B| and Bz (GSM), locate and mark the shock ramp near 04:00 UT.\", \"tool\": \"run_python\"}, {\"description\": \"Compute theta_Bn via the theta_bn recipe (coplanarity) from 8-min upstream/downstream averages clear of the ramp; derive normal and compression ratio.\", \"tool\": \"load_recipe + run_python\"}, {\"description\": \"Find two peer-reviewed papers on the shock/storm, with bibcodes.\", \"tool\": \"find_papers\"}]}"
+}

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import helioai.core.tool_exec as te
 from helioai.core.llm.base import Message
 from helioai.core.tool_exec import (
@@ -12,10 +14,11 @@ from helioai.core.tool_exec import (
     _summarize_tool_result,
     compact_history,
     emit_post_tool_events,
-    inject_run_python_args,
+    trusted_args,
 )
+from helioai.tools.results import ToolResult
 
-# ──────────────────────────────── inject_run_python_args ────────────────────
+# ──────────────────────────────── trusted_args ────────────────────
 
 
 def test_inject_only_for_run_python(monkeypatch) -> None:
@@ -28,12 +31,47 @@ def test_inject_only_for_run_python(monkeypatch) -> None:
     monkeypatch.setattr(ws, "get_next_run_idx", lambda d: 3)
 
     # Returns only the trusted args, passed to call_tool(..., trusted=...).
-    out = inject_run_python_args("run_python")
+    out = trusted_args("run_python")
     assert out == {"_plot_dir": str(ws_dir), "_run_idx": 3}
 
 
-def test_inject_noop_for_other_tools() -> None:
-    assert inject_run_python_args("get_timeseries") == {}
+def test_inject_noop_for_tools_that_write_nothing() -> None:
+    assert trusted_args("list_missions") == {}
+    assert trusted_args("search_parameters") == {}
+
+
+def test_trusted_args_come_from_the_run_context_for_every_writing_tool(tmp_path) -> None:
+    """The four tools that write receive their directories from the context the runner
+    was given, not from whatever the workspace contextvars happen to point at — a tool
+    called from a test or over MCP writes where its caller said and nowhere else."""
+    from helioai.runtime.context import RunContext
+
+    ctx = RunContext.for_session("alice", "s1", label="shock_s1", no_network=True)
+    assert trusted_args("run_python", ctx) == {
+        "_plot_dir": str(ctx.session_dir),
+        "_run_idx": 0,
+        "_no_net": True,
+    }
+    assert trusted_args("get_timeseries", ctx) == {"_data_dir": str(ctx.session_dir / "data")}
+    assert trusted_args("get_events_timeseries", ctx) == {
+        "_data_dir": str(ctx.session_dir / "data")
+    }
+    assert trusted_args("save_catalog", ctx) == {"_catalogs_dir": str(ctx.catalogs_dir)}
+    assert trusted_args("list_missions", ctx) == {}
+    assert ctx.session_dir.is_relative_to(tmp_path / "users" / "alice" / "workspace")
+    assert ctx.catalogs_dir == tmp_path / "users" / "alice" / "catalogs"
+
+
+def test_trusted_args_without_a_context_read_the_bound_one_or_stay_empty() -> None:
+    """Callers that predate contexts still get the bound session's directories; with
+    nothing bound the data tools get nothing and fall back inside the datastore."""
+    from helioai.runtime.context import RunContext
+
+    assert trusted_args("get_timeseries") == {}
+    ctx = RunContext.for_session("bob", "s2")
+    with ctx.bound():
+        assert trusted_args("get_timeseries") == {"_data_dir": str(ctx.data_dir)}
+        assert trusted_args("save_catalog") == {"_catalogs_dir": str(ctx.catalogs_dir)}
 
 
 # ──────────────────────────────── emit_post_tool_events ─────────────────────
@@ -41,7 +79,13 @@ def test_inject_noop_for_other_tools() -> None:
 
 def test_emit_tool_result_carries_extra() -> None:
     result = json.dumps({"results": [1, 2, 3]})
-    events = list(emit_post_tool_events("search_parameters", result, tool_result_extra={"turn": 2}))
+    events = list(
+        emit_post_tool_events(
+            "search_parameters",
+            ToolResult.from_raw("search_parameters", result),
+            tool_result_extra={"turn": 2},
+        )
+    )
     assert events[0]["event"] == "tool_result"
     assert events[0]["data"]["turn"] == 2
     assert events[0]["data"]["name"] == "search_parameters"
@@ -55,7 +99,11 @@ def test_emit_run_python_image_artifact() -> None:
             "exports": {},
         }
     )
-    events = list(emit_post_tool_events("run_python", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "run_python", ToolResult.from_raw("run_python", result), tool_result_extra={"turn": 1}
+        )
+    )
     artifacts = [e for e in events if e["event"] == "artifact"]
     assert len(artifacts) == 1
     assert artifacts[0]["data"]["kind"] == "image"
@@ -67,7 +115,11 @@ def test_emit_run_python_exports_artifact() -> None:
     # values never leave run_python's own result and the lead has no numbers to quote.
     exports = {"compression_ratio_density": {"shape": [], "mean": 2.37, "sample": [2.37]}}
     result = json.dumps({"stdout": "", "figure_paths": [], "exports": exports})
-    events = list(emit_post_tool_events("run_python", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "run_python", ToolResult.from_raw("run_python", result), tool_result_extra={"turn": 1}
+        )
+    )
     artifacts = [e["data"] for e in events if e["event"] == "artifact"]
     assert [a["kind"] for a in artifacts] == ["exports"]
     assert artifacts[0]["values"] == exports
@@ -79,7 +131,7 @@ def test_emit_common_extra_on_artifact() -> None:
     events = list(
         emit_post_tool_events(
             "run_python",
-            result,
+            ToolResult.from_raw("run_python", result),
             tool_result_extra={"turn": 1, "sub_agent_ctx": ctx},
             common_extra={"sub_agent_ctx": ctx},
         )
@@ -90,7 +142,11 @@ def test_emit_common_extra_on_artifact() -> None:
 
 def test_emit_skill_loaded_for_load_skill() -> None:
     result = json.dumps({"name": "plotting", "body": "# procedure"})
-    events = list(emit_post_tool_events("load_skill", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "load_skill", ToolResult.from_raw("load_skill", result), tool_result_extra={"turn": 1}
+        )
+    )
     skill_events = [e for e in events if e["event"] == "skill_loaded"]
     assert len(skill_events) == 1
     assert skill_events[0]["data"]["name"] == "plotting"
@@ -104,7 +160,11 @@ def test_emit_recipe_used_artifact() -> None:
             "metadata": {"reference": "Schwartz 1998", "description": "Shock normal angle."},
         }
     )
-    events = list(emit_post_tool_events("load_recipe", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "load_recipe", ToolResult.from_raw("load_recipe", result), tool_result_extra={"turn": 1}
+        )
+    )
     artifacts = [e for e in events if e["event"] == "artifact"]
     assert len(artifacts) == 1
     assert artifacts[0]["data"]["kind"] == "recipe_used"
@@ -127,7 +187,11 @@ def test_emit_method_used_card_becomes_recipe_artifact() -> None:
             ],
         }
     )
-    events = list(emit_post_tool_events("run_python", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "run_python", ToolResult.from_raw("run_python", result), tool_result_extra={"turn": 1}
+        )
+    )
     recipes = [
         e for e in events if e["event"] == "artifact" and e["data"].get("kind") == "recipe_used"
     ]
@@ -138,7 +202,11 @@ def test_emit_method_used_card_becomes_recipe_artifact() -> None:
 
 def test_emit_no_skill_loaded_on_error() -> None:
     result = json.dumps({"error": "no such skill"})
-    events = list(emit_post_tool_events("load_skill", result, tool_result_extra={"turn": 1}))
+    events = list(
+        emit_post_tool_events(
+            "load_skill", ToolResult.from_raw("load_skill", result), tool_result_extra={"turn": 1}
+        )
+    )
     assert not [e for e in events if e["event"] == "skill_loaded"]
 
 
@@ -146,7 +214,9 @@ def test_emit_event_order() -> None:
     result = json.dumps({"name": "plotting", "body": "x", "figure_paths": ["/tmp/f.png"]})
     events = [
         e["event"]
-        for e in emit_post_tool_events("load_skill", result, tool_result_extra={"turn": 1})
+        for e in emit_post_tool_events(
+            "load_skill", ToolResult.from_raw("load_skill", result), tool_result_extra={"turn": 1}
+        )
     ]
     assert events[0] == "tool_result"
     assert events.index("tool_result") < events.index("skill_loaded")
@@ -204,6 +274,53 @@ def test_a_loaded_recipe_survives_compaction():
     assert out[1].content == recipe
 
 
+def test_a_recipe_is_recognised_by_its_tool_name_first():
+    """Tool messages now carry the tool's name; a recipe is `name == "load_recipe"`,
+    whatever its payload looks like. Histories persisted before the field existed have
+    no name and still fall back to the shape (the test above)."""
+    named_recipe = Message(role="tool", tool_call_id="1", name="load_recipe", content="{}")
+    named_other = Message(
+        role="tool",
+        tool_call_id="2",
+        name="run_python",
+        content=json.dumps({"name": "x", "code": "y", "metadata": {}}),
+    )
+    assert te._is_recipe_source(named_recipe)
+    assert not te._is_recipe_source(named_other)
+
+
+def test_both_loops_record_the_tool_name_on_history_messages(monkeypatch, tmp_path):
+    import asyncio
+
+    from helioai.core import agent_loop
+    from helioai.core.llm.base import ToolCall
+    from helioai.core.session import SessionStore
+
+    store = SessionStore(tmp_path / "sessions.db")
+    monkeypatch.setattr(agent_loop, "store", store)
+    responses = [
+        Message(
+            role="assistant", tool_calls=[ToolCall(id="c1", name="list_recipes", arguments={})]
+        ),
+        Message(role="assistant", content="done"),
+    ]
+
+    class _LLM:
+        async def chat(self, messages, tools, **k):
+            return responses.pop(0)
+
+    async def run():
+        async for _ in agent_loop.stream_chat(_LLM(), "web", "s1", "go", restricted=False):
+            pass
+
+    asyncio.run(run())
+    tool_messages = [m for m in store.get_or_create("web", "s1") if m.role == "tool"]
+    assert [m.name for m in tool_messages] == ["list_recipes"]
+    assert (
+        SessionStore(tmp_path / "sessions.db").get_or_create("web", "s1")[2].name == "list_recipes"
+    )
+
+
 def test_compaction_keeps_the_traceback_of_a_failed_run():
     """Losing stderr two turns later is why one typo was retried three times."""
     payload = json.dumps(
@@ -221,9 +338,11 @@ def test_compaction_keeps_the_traceback_of_a_failed_run():
 
 
 def test_failed_run_python_still_yields_the_code_artifact():
-    payload = json.dumps(
-        {"error": "ZeroDivisionError: division by zero", "code_path": "/w/code_1.py", "n_lines": 12}
-    )
+    payload = {
+        "error": "ZeroDivisionError: division by zero",
+        "code_path": "/w/code_1.py",
+        "n_lines": 12,
+    }
     arts = _extract_artifact("run_python", payload)
     assert [a["kind"] for a in arts] == ["code"]
     assert arts[0]["failed"] is True
@@ -231,20 +350,20 @@ def test_failed_run_python_still_yields_the_code_artifact():
 
 
 def test_other_tools_emit_nothing_on_error():
-    arts = _extract_artifact("get_timeseries", json.dumps({"error": "no data"}))
+    arts = _extract_artifact("get_timeseries", {"error": "no data"})
     assert arts == []
 
 
-def test_inject_run_python_args_no_network() -> None:
-    from helioai.core.tool_exec import inject_run_python_args
+def test_trusted_args_no_network() -> None:
+    from helioai.core.tool_exec import trusted_args
 
-    args_default = inject_run_python_args("run_python")
+    args_default = trusted_args("run_python")
     assert "_no_net" not in args_default
 
-    args_no_net = inject_run_python_args("run_python", no_network=True)
+    args_no_net = trusted_args("run_python", no_network=True)
     assert args_no_net.get("_no_net") is True
 
-    assert inject_run_python_args("other_tool", no_network=True) == {}
+    assert trusted_args("other_tool", no_network=True) == {}
 
 
 # ── host paths must not reach the model ────────────────────────────────────────
@@ -389,3 +508,145 @@ def test_compaction_shrinks_text_to_fit_rather_than_cutting_the_json():
     data = json.loads(summary)
     assert data["findings"]["Bd"] == "14.5 nT"
     assert len(summary) <= 300
+
+
+# ── a turn's tool calls overlap, and their results keep the model's order ──────
+
+
+@pytest.fixture
+def three_slow_tools(monkeypatch):
+    """Three registry tools that each take 0.2 s and record when they ran."""
+    import asyncio
+    import time
+
+    from helioai.tools.registry import Tool, registry
+
+    log: list[tuple[str, float]] = []
+
+    def make(name):
+        async def tool(**kwargs):
+            log.append((name, time.monotonic()))
+            await asyncio.sleep(0.2)
+            return {"tool": name}
+
+        return tool
+
+    for name in ("slow_a", "slow_b", "slow_c"):
+        monkeypatch.setitem(
+            registry._tools,
+            name,
+            Tool(name=name, description="slow", parameters={"type": "object"}, func=make(name)),
+        )
+    return log
+
+
+async def test_start_tool_calls_overlaps_registry_tools(three_slow_tools):
+    import asyncio
+    import time
+
+    from helioai.core.llm.base import ToolCall
+    from helioai.core.tool_exec import start_tool_calls
+
+    calls = [
+        ToolCall(id=f"c{i}", name=n, arguments={})
+        for i, n in enumerate(("slow_a", "slow_b", "slow_c"))
+    ]
+    t0 = time.monotonic()
+    started = start_tool_calls(calls)
+    results = [await started[tc.id] for tc in calls]
+    elapsed = time.monotonic() - t0
+
+    assert [r.for_llm() for r in results] == [
+        '{"tool": "slow_a"}',
+        '{"tool": "slow_b"}',
+        '{"tool": "slow_c"}',
+    ]
+    assert elapsed < 0.45, f"three 0.2 s tools took {elapsed:.2f} s — they ran one after another"
+    await asyncio.sleep(0)
+
+
+def test_start_tool_calls_leaves_the_sequential_and_unknown_calls_alone():
+    import asyncio
+
+    import helioai.tools.setup  # noqa: F401 — the registry is empty until this import
+    from helioai.core.llm.base import ToolCall
+    from helioai.core.tool_exec import start_tool_calls
+
+    async def run():
+        calls = [
+            ToolCall(id="a", name="run_python", arguments={"code": "1"}),
+            ToolCall(id="b", name="task", arguments={}),
+            ToolCall(id="c", name="present_plan", arguments={}),
+            ToolCall(id="d", name="no_such_tool", arguments={}),
+            ToolCall(id="e", name="list_recipes", arguments={}),
+        ]
+        started = start_tool_calls(calls)
+        assert set(started) == {"e"}
+        await started["e"]
+
+    asyncio.run(run())
+
+
+def test_start_tool_calls_respects_a_sub_agents_whitelist():
+    import asyncio
+
+    import helioai.tools.setup  # noqa: F401
+    from helioai.core.llm.base import ToolCall
+    from helioai.core.tool_exec import start_tool_calls
+
+    async def run():
+        calls = [
+            ToolCall(id="a", name="list_recipes", arguments={}),
+            ToolCall(id="b", name="list_missions", arguments={}),
+        ]
+        started = start_tool_calls(calls, allowed={"list_recipes"})
+        assert set(started) == {"a"}
+        await started["a"]
+
+    asyncio.run(run())
+
+
+async def test_the_lead_keeps_event_order_when_calls_overlap(
+    three_slow_tools, monkeypatch, tmp_path
+):
+    """Overlap must be invisible to the interfaces: tool_call/tool_result pairs and the
+    `tool` messages stay in the order the model issued the calls."""
+    from helioai.core import agent_loop
+    from helioai.core.llm.base import Message, ToolCall
+    from helioai.core.session import SessionStore
+
+    monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
+    responses = [
+        Message(
+            role="assistant",
+            tool_calls=[
+                ToolCall(id="c1", name="slow_c", arguments={}),
+                ToolCall(id="c2", name="slow_a", arguments={}),
+                ToolCall(id="c3", name="slow_b", arguments={}),
+            ],
+        ),
+        Message(role="assistant", content="done"),
+    ]
+
+    class _LLM:
+        async def chat(self, messages, tools, **k):
+            return responses.pop(0)
+
+    events = [
+        ev async for ev in agent_loop.stream_chat(_LLM(), "web", "s1", "go", restricted=False)
+    ]
+    names = [
+        (e["event"], e["data"]["name"])
+        for e in events
+        if e["event"] in ("tool_call", "tool_result")
+    ]
+    assert names == [
+        ("tool_call", "slow_c"),
+        ("tool_result", "slow_c"),
+        ("tool_call", "slow_a"),
+        ("tool_result", "slow_a"),
+        ("tool_call", "slow_b"),
+        ("tool_result", "slow_b"),
+    ]
+    history = agent_loop.store.get_or_create("web", "s1")
+    assert [m.tool_call_id for m in history if m.role == "tool"] == ["c1", "c2", "c3"]

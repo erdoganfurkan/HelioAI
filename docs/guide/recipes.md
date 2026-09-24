@@ -16,9 +16,15 @@ A plain Python module in `helioai/data/recipes/`, with a comment header:
 # reference: Sonnerup & Scheible (1998), ISSI SR-001, Ch. 8
 ```
 
-The agent calls `load_recipe("mvab")`, gets the source *and* the metadata, and runs it in
-the sandbox. Because the recipe is a real script rather than a prompt instruction, the
-model cannot quietly reimplement the method its own way.
+The agent calls `load_recipe("mvab")` to read the source *and* the metadata, and
+`run_recipe("theta_bn", inputs={...})` to run one as shipped: the inputs are bound first —
+each value a Python expression evaluated in the sandbox, `load_data()` included — then the
+recipe's source follows verbatim, and for a recipe that is a library of functions rather
+than a script (`rankine_hugoniot`, `pressure_balance`, `shock_timing_2sc`) one `call`
+applies its function to the inputs. The recipe's own `export()` calls produce the numbers,
+and the run is recorded as a use of the recipe with its reference. Because the recipe is a
+real script rather than a prompt instruction, the model cannot quietly reimplement the
+method its own way — and through `run_recipe` it does not get the chance to.
 
 ## The shipped recipes
 
@@ -33,6 +39,7 @@ model cannot quietly reimplement the method its own way.
 | `pitch_angle_dist` | Pitch angle distribution |
 | `superposed_epoch` | Superposed epoch (Chree) analysis |
 | `sep_onset_poisson_cusum` | SEP onset via Poisson-CUSUM |
+| `fill_values` | Fill-value blanking for scripts that run outside HelioAI, where `load_data()` has not done it |
 | `solar_mach` | Parker spiral connectivity (needs the `solarmach` extra) |
 
 ## Why "recipe-first" is enforced
@@ -58,7 +65,9 @@ The rule is checked, not trusted. When a run exports values, the answer gets a
   averaging window, and exported the result as `theta_bn` — right name, wrong number.
 
 The note annotates; it never blocks, and it is not proof either way. Read it as "check
-these numbers against the recipe before quoting them".
+these numbers against the recipe before quoting them". A recipe the turn ran through
+`run_recipe` is exempt from all three: the shipped source ran, verbatim, on the inputs the
+tool bound — the very thing the three signals try to establish from the outside.
 
 ## Methods you write inline
 
@@ -98,6 +107,14 @@ same number to the checker:
 ```python
 export("B_downstream", Bd, units="nT")
 ```
+
+When the agent closes with `final_answer` and names its numbers — the export each one was
+computed as, or `literature` / `asserted` for a value it did not compute — a second line,
+`⚖ claims`, judges them **by name** rather than by finding them in the prose: `57.2 deg`
+states a recorded `57.16 deg`, `0.0101 uT` states `10.077 nT`, and any run of the session
+that produced the value sources it. A named scalar the session computed that holds another
+value is reported as *contradicted*, with both numbers; a claim marked `literature` or
+`asserted` is listed as *unsourced* and never contradicted.
 
 Three things it deliberately does not do:
 

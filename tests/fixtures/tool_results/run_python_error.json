@@ -1,0 +1,7 @@
+{
+ "tool": "run_python",
+ "arguments": {
+  "code": "x = [1, 2]\nprint(x[nope])\n"
+ },
+ "raw": "{\"error\": \"NameError: name 'nope' is not defined. Did you mean: 'None'?\", \"stdout\": \"\", \"stderr\": \"Traceback (most recent call last):\\n  File \\\"your code\\\", line 2, in <module>\\n    print(x[nope])\\n            ^^^^\\nNameError: name 'nope' is not defined. Did you mean: 'None'?\", \"figure_paths\": [], \"exports\": {}, \"cards\": [], \"code_path\": \"/tmp/scratch/users/capture/workspace/fixtures/code_1.py\", \"n_lines\": 2}"
+}

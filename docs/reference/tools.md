@@ -3,6 +3,10 @@
 The functions behind the agent's tool calls. See [Agent tools](../guide/tools.md) for what
 each one is *for*.
 
+## Results
+
+::: helioai.tools.results
+
 ## Parameter search
 
 ::: helioai.tools.rag

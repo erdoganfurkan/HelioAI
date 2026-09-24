@@ -67,7 +67,7 @@ helioai serve --web
 A three-panel layout: conversation, artifact viewer (figures with a PDF download and
 lightbox, parameter cards, catalog previews), and a code panel showing the scripts the
 agent generated. An activity dock streams tool calls, sub-agent spawns and figure reviews
-live over SSE.
+live over SSE, and the answer itself appears as the model writes it.
 
 ![One question answered end to end in the web UI: the plan, the parameter card, the
 activity dock filling with tool calls, the figure, and the generated script opened in the

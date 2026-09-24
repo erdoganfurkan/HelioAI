@@ -8,6 +8,467 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
+### Fixed
+
+- **A sandbox program has no size limit anymore; `run_recipe` works on Windows.** The
+  assembled script — a 14 576-character preamble, then the agent's code — travelled to the
+  interpreter as the argument of `python -c`, and an argument has a size: 32 767 characters
+  for the whole command line on Windows, 131 072 for one argument on Linux. So on Windows
+  about 18 000 characters were left for the agent's code, and `run_recipe` of any recipe
+  above that — `theta_bn` is 28 763, `superposed_epoch`, `rankine_hugoniot`, `walen_test`
+  and the CUSUM recipe likewise — failed before it started with `WinError 206`; on Linux a
+  140 000-character program failed with `E2BIG`. Found by the first Windows CI run of this
+  branch. The program is now written to the interpreter's stdin (`python -`) on both spawn
+  paths; the bubblewrap flags are unchanged, traceback frames are renumbered as before, and
+  the program text no longer appears in the process list. The same run showed the second
+  Windows defect: the server decodes the program's output as UTF-8, but the child wrote
+  cp1252, so a recipe that printed `→` or `λ` — `rankine_hugoniot`, `mvab` — died with a
+  `UnicodeEncodeError`. The program now runs in UTF-8 mode (`PYTHONUTF8=1`) on every
+  platform, which also makes its own `open()` default to the encoding the recipes are
+  written in.
+- **`superposed_epoch` no longer refuses `nT (1min)` against `nT`.** CDAWeb labels some
+  products with their cadence in parentheses after the unit; a live composite of Wind
+  `BF1` events was refused three times as "incompatible units" until the caller dropped
+  `units` altogether. Only a cadence-shaped annotation — whitespace, then a digit — is
+  dropped before units are compared or converted; a parenthesised denominator such as
+  `1/(cm2 s sr MeV)` or `W/(m^2 Hz)` is part of the unit and is kept, and so is `(nT)`.
+- **`theta_bn` says what its uncertainty is, and lists shock candidates that are shocks.**
+  Measured on the real Wind 92 ms field of 2004-11-07: at a fixed crossing and a fixed
+  method, the averaging windows alone moved θ_Bn from 41.5° to 68.0° over 49 guard/span
+  conventions, while the exported bootstrap read `± 0.19°` — it resamples rows inside two
+  fixed windows and measures only that. The recipe now exports
+  `theta_bn_window_spread_deg`, the half-range of θ_Bn over a grid of conventions around
+  the one it uses (6.2° on that shock, 1.2° on 2015-03-17 04:00 UT, where the CfA shock
+  database's own methods span 58.8–66.1°), prints the ensemble, and renames the bootstrap
+  `theta_bn_sampling_std_deg` so neither can be read as the other. Windows chosen by the
+  caller (`B_up`/`B_dn`) carry no spread and the recipe says so. `find_shock_candidates`
+  ranked four ICME-sheath compressions above both real shocks of that day and cut the list
+  at five, so the second shock (10:03 UT) was never shown: it now returns every |B| rise
+  above a ratio of 1.2, up to ten, screens each against `density` and `speed` when they
+  are bound (a fast forward shock steps in all three at once), lists the screened ones
+  first, and reports the steepest single-sample rise as the time to pass back as
+  `shock_time`. On the same data both real shocks now head the list, at 17:59:12 and
+  10:03:43 UT.
+- **Two sessions whose ids share their first six characters no longer share a workspace.**
+  `make_session_label` keyed the directory on `session_id[:6]`; the web API lets a client
+  choose its ids, and a benchmark that named its runs `bench-<question>-<hex>` gave every
+  run of a question one directory, so from the second run on the sub-agent's inventory
+  handed it the first run's downloads. The loop now passes the user's existing labels and
+  the suffix grows until the label is new.
+- **The recipe check no longer accuses a run that used the sandbox's Shue or Jelínek
+  model.** `mp_shue1998` and `bs_jelinek2012` are published boundary models shipped with
+  their reference; a run that called one and exported `magnetopause_r_at_mms_Re` was
+  flagged for never loading `pressure_balance`, whose signature contains "magnetopause".
+  Choosing another published model is not a hand-written copy of the recipe; a formula
+  typed by hand for the same export still is.
+- **The CLI no longer prints an answer twice when the model streams it, then delivers it
+  through `final_answer` without its markdown.** The final `reply` was not a prefix of
+  the streamed text (the bold was gone), so the whole answer was printed again; two
+  renderings that say the same words are one answer.
+- **`HELIOAI_MAX_OUTPUT_TOKENS` now reaches the `opencode` provider.** The override
+  iterated a hand-written list of providers that predated opencode, so the exact
+  setting the "model returned neither text nor a tool call" error tells you to raise
+  did nothing for the provider the README recommends. Every provider declared on
+  `LLMConfig` is now covered, including ones added later.
+- **`run_python` advertised a 30 s default timeout while its signature said 60 s.**
+  The signature was raised in 0.2.0 for cold Python starts; the schema the model reads
+  was not. The registration tests now check that every schema default, `required`
+  list and public parameter agrees with the function it describes, so the two cannot
+  drift apart again.
+- **`%helioai_provider` did nothing.** It wrote `HELIOAI_LLM_PROVIDER` into the
+  environment, which `settings` reads exactly once, at import — so the confirmation
+  printed and the next cell kept the configured provider. The choice is now held by
+  the magic and handed to the client factory on every cell; `%helioai_provider` with
+  no argument shows the current one, and the accepted names come from the factory.
+- **Two turns on one session could corrupt its transcript.** The session store hands
+  every caller the same in-memory history, and nothing stopped two requests — two
+  browser tabs, two MCP calls — from appending to it at once and persisting the
+  interleaved result. A turn now holds a per-session lock from its first read to its
+  last save; the web UI answers `409 Conflict` to a second request instead of leaving a
+  tab that looks hung while it waits.
+- **A session's manifest and provenance ledger could lose entries or be left
+  half-written.** Both are read-modify-write JSON files with no lock, so two
+  downloads persisted at once kept only one of them; and both were rewritten in place,
+  so a crash mid-write left an unreadable session. Writers now hold a per-directory
+  lock and swap a complete file in atomically — the pattern the HELIO4CAST cache
+  already used.
+- **`HELIOAI_DATA_DIR` now relocates everything.** It moved the session store and the
+  per-user homes, but the index, the saved catalogues and the profile kept deriving
+  from the default directory computed before the variable was read — so the Docker
+  volume held two trees. The dead `HELIOAI_WORKSPACE` / `workspace_dir` setting, read
+  and consumed by nothing since storage became per-user, is gone.
+- **A sub-agent's measured values never reached the screen.** The `sub_agent_end`
+  event the lead re-emits carried the prose summary but dropped `findings` — the table
+  of values the run actually computed, the one part of the report with an origin. The
+  CLI, the notebook and the browser now list them under the sub-agent's line.
+- **The automated "these ids are not in the catalogue" correction replayed as a
+  question the user had asked.** The loop injects it as a `user` message because that
+  is the only role the provider clients forward from history; the persisted copy now
+  carries `origin="correction"`, the web replay shows it as a system note, and the
+  exported notebook writes it as HelioAI's note rather than under **You:**. What the
+  model sees is byte-for-byte unchanged.
+- **The two catalog tools now state, and share, one window rule.** Both select events
+  by where they *begin* — the convention for a superposed-epoch analysis and for "every
+  ICME of 2015" — but `get_events_timeseries` described its window as "events in this
+  window", which reads as overlap, and each tool carried its own copy of the filter.
+  One helper, one wording, and tests on the edge events.
+- `import helioai` no longer creates directories: the session store now creates its
+  database and schema on first use rather than at import.
+- `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the
+  MCP SDK's streamable-HTTP client is typed on it) but only received it as a transitive
+  dependency of `mcp`.
+- **Documentation drift, swept and then pinned.** `.env.example` gains
+  `HELIOAI_CATALOGS_DIR`, `HELIOAI_OLLAMA_HEADERS` and `HELIOAI_LOG_LEVEL`, which the code
+  read and nothing documented; a test now fails when any environment variable read
+  under `helioai/` is missing from it — or listed there and read nowhere. The pull
+  request template no longer recommends `uv run pytest`, which the contributing guide
+  forbids; the recipes guide lists `fill_values`; the installation guide lists
+  `opencode`; README and AGENTS.md stop quoting a test count that is stale the week
+  after it is written.
+- **Web hygiene.** Nominative tokens are compared in constant time (`hmac.compare_digest`,
+  as the dev token and the MCP bearer already were); every response carries a
+  `Content-Security-Policy` restricted to the server's own origin and
+  `X-Content-Type-Options: nosniff`; the Host-header guard against DNS rebinding is
+  built by `harden_for_host`, so the test client exercises what uvicorn serves; the
+  browser console no longer receives every artifact's absolute server path.
+- **The CLI parses its arguments with `argparse`.** `helioai --session` (value missing)
+  crashed with an `IndexError`; `serve --web --port` likewise. Both are now argument
+  errors, subcommand flags may come in any order, and `--session`/`--dev`/`--resume` may
+  follow the question. `--help` still prints the module documentation and a quoted
+  question containing the words is still a question.
+- **`serve --web` on a non-loopback address with no users configured now refuses to
+  start**, as `helioai-mcp --http` already did without a token: a bare
+  `docker run -p 7890:7890` published an unauthenticated `run_python` on every host
+  interface. `docker-compose.yml`, which publishes on loopback, carries the explicit
+  opt-out (`HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC=1`) a container needs to bind `0.0.0.0`.
+- **A download no longer freezes every other user.** The data tools are `async def`
+  because the registry awaits them, but speasy, ChromaDB, the embedding model and
+  `numpy.savez_compressed` are synchronous — called inline, a 60-second download stalled
+  the event loop, and with it every stream on the web and MCP servers. The seven data
+  tools now run their bodies in a worker thread (`asyncio.to_thread`, which carries the
+  session context with it), at most four speasy downloads at a time; the figure review
+  encodes its PNGs there too.
+- **The tool calls of one turn overlap.** The prompt asks the model to batch its
+  downloads in a single turn; both loops then ran them one after another, so a
+  data_analyst's first turn took the sum of three or four downloads. Registry tools are
+  now started together and their results consumed in the model's order, so every event
+  and every `tool` message keeps the sequence it had. `run_python` stays sequential (it
+  numbers its scripts from the disk), as do `task` and the internal tools.
+- **The test suite no longer writes into the real `data/` directory.** `settings` is a
+  singleton built at import, and any test that forgot to repoint it left sessions,
+  workspaces and a 300 MB speasy seed under `data/users` of whoever ran `pytest` — found
+  twice by `ls`, months apart. Every test now gets its own data directory and session
+  database, and the run fails, naming the paths, if anything under the real one changed.
+- **A cancelled `run_python` kills its sandbox.** Closing the browser tab cancels the
+  stream and, with it, the tool call — but only a timeout used to kill the subprocess, so
+  the bubblewrap tree kept running until its own 300 s ceiling, one orphan per abandoned
+  question. Cancellation now kills the whole process group before propagating.
+- **A session no longer costs 300 MB of disk before its first line of code runs.** The
+  speasy inventory the sandbox needs was copied into *every* session directory (269 MB
+  on the demo machine, 304 MB here, 76 sessions deep); it is now copied once per user, to
+  `users/<user>/.speasy/`, and bind-mounted into each sandbox. A new session weighs
+  200 KB. The seed sits beside the workspaces, never inside one, so an export never
+  ships it. Expired workspaces are also swept hourly by the web server and when the
+  notebook magic or the MCP server loads, not only at CLI startup.
+
+### Added
+
+- **Spacecraft positions are searchable: the 314 SSCWeb trajectories are indexed.** An
+  SSC inventory node has neither `xmlid` nor `description`, so the indexer skipped every
+  one of them and the index held no spacecraft position at all — "where was MMS1" could
+  only be answered from an instrument's own ephemeris variable, and the `provider="ssc"`
+  the prompt offered returned other providers' hits with no word that SSC was empty.
+  Each trajectory is now `ssc/<id>` (the id `spz.get_data` downloads: GSE km by default),
+  described the way a position question is asked; and a search filtered on a provider the
+  index does not hold says so, with the providers it does. **Run `helioai index` once to
+  pick them up.**
+- **A position question gets the position, once.** For "MMS1 spacecraft position" the
+  six variants of `mms1_mec_pmin_gsm` — the min-B point of the field line, computed with
+  a model, under two cadences and three field models — were the whole top-6, and the
+  position vector `mms1_mec_r_gsm` ranked 165th. A product whose description says it is
+  a model-derived point (min-B, footpoint, field line, apex…) is pushed down on a
+  position query unless the query asks for it, and the variants of one product (same
+  provider, instrument and variable across BRST/SRVY and field models) cost one slot,
+  the others listed under `also_in`. Measured on the live index: `ssc/mms1` then
+  `mms1_mec_r_gsm` for the query that used to return six `pmin_gsm`.
+- **A search result lists the variables of the dataset it found.** The top hit of each
+  `search_parameters` query carries `dataset_variables`: every indexed variable of its
+  dataset by name (`cda/WI_H1_SWE` → `Proton_Np_moment`, `Proton_VX_nonlin`,
+  `Proton_W_nonlin`, … 41 in all, capped at 40 with the total). One search then shows
+  what the dataset holds, and a name that is not in the list does not exist under it —
+  the model that found `Proton_Np_moment` no longer asks eleven more times for a
+  `Proton_Temp` SWE never had.
+- **A role that keeps searching instead of downloading is told to stop.** A
+  `data_analyst` spent all twelve of its turns on `search_parameters`, re-asking for
+  `Proton_Temp` and `Proton_V_GSE_moment` — names it imagined, which SWE does not have —
+  while `Proton_W_nonlin` and `Proton_VX_nonlin` sat in the results of its first call; the
+  run ended with nothing downloaded and the lead had to start over. Each role now has a
+  search budget (`data_analyst` 3, `plasma_physicist` 2; none for the roles whose job is
+  to search): past it, with no data tool called yet, the loop appends one correction that
+  lists the product ids the searches already returned and says to download — the same
+  `correction` event a replay shows for invented ids.
+- **A recipe runs as shipped: `run_recipe(name, inputs)`.** `load_recipe` handed the model
+  the source and the model then pasted a part of it into `run_python` — or read its
+  constants and rewrote the computation by hand, which is what the recipe check keeps
+  catching. The new tool binds the inputs first (`{"B_up": "load_data('b3gsm').values[m_up]"}`,
+  each a Python expression evaluated in the sandbox, or a literal), inserts the recipe's
+  source verbatim, and — for a recipe that is a library of functions rather than a script,
+  such as `rankine_hugoniot` — applies one `call` to the inputs. The numbers come from the
+  recipe's own `export()` calls, the script written to the workspace is the one the
+  notebook export reproduces, and the run is recorded as a use of the recipe with its
+  reference. A recipe whose demo is guarded by `if __name__ == "__main__":` runs its
+  functions, not its demo. `data_analyst` and `plasma_physicist` may call it; a recipe run
+  this way is exempt from the recipe check. Tested in the real sandbox on the shapes the
+  data actually has — a Wind SWE scalar is `(N, 1)`. The `data_analyst` and
+  `plasma_physicist` instructions now say to run a recipe this way and to use
+  `load_recipe` only to read one; the lead's closing instruction says what a claim's
+  `source` is (the exact `export()` name, or `asserted` for a number that was only
+  printed) and that a time, a date or an id is not a claim — the first live runs filed a
+  normal's components under the angle's export and a timestamp as a number.
+- **One agent loop.** `stream_chat` (the lead) and `stream_subagent` (a delegated role)
+  were two copies of the same loop — call the model, start the tool calls, review the
+  figures, emit the events, append the results — and drifted the way copies do. The loop
+  now exists once, `runtime.Runner`, driven by a `runtime.Policy` that says what makes a
+  run the lead or a role: the prompt, the tools shown and the tools allowed, the turn
+  budget, whether the first turn must call a tool. The two public generators are thin
+  wrappers around it and every interface sees exactly the events it saw, in the same
+  order — the loop tests and the journal golden did not change.
+- **The answer can carry its numbers.** The lead may close an analysis with
+  `final_answer(answer, claims)`: the reply as prose, plus one entry per number it states
+  — name, value, units and where it comes from (the export it was computed as, a
+  published value, or a plain assertion). The history keeps the answer as an ordinary
+  assistant message, so the export, the replay and the next turn see nothing new; the
+  claims ride on the `reply` event and into the journal, ready to be judged by name
+  rather than found by regex. A plain text reply remains accepted. The lead's prompt
+  gains one paragraph saying when to use it.
+- **The plan is held to.** `present_plan` was a display: the loop forwarded the steps to
+  the interfaces and forgot them, so a plan that promised the `theta_bn` recipe and ran
+  hand-written arithmetic instead looked exactly like one that was followed. The plan is
+  now kept as data (`runtime.plan.Plan`) and, when the turn ends, compared with the tools
+  the lead actually called: one `plan_report` event names the planned tools that were
+  used, the ones that were not, and the ones used without being planned, with the share
+  followed. It describes and never blocks — a capped turn reports how far the plan got
+  before its error — and it is journaled and rendered as one line by the three
+  interfaces. A step's `tool` field is read word by word against the tools the lead
+  knows (the model writes "search_parameters + get_timeseries"), and a planned tool a
+  sub-agent ran for the lead is a step done, not a deviation — on the first live run the
+  lead delegated every step and the report said `0/4 used, unplanned: task`. What a
+  sub-agent does with its delegation is its whitelist's business, never "unplanned"; only
+  the lead's own improvised calls are. Since a plan written in delegations alone is
+  always "followed", the report also says how each delegation ended — role, turns, and
+  whether it hit its cap (`sub_agent_end` now carries `capped`): "3 delegations,
+  librarian capped" is the line the run after the Runner extraction needed, when the
+  librarian ran out of turns and was re-delegated. The scaffolding calls (the plan
+  itself, the skills, `search_tools`, `final_answer`) count for nothing on either side.
+- **One verdict on the answer.** The lead's reply was judged from four places — the
+  catalogue ids, the recipe bypass, the numbers in the prose, the figures — each with its
+  own event and none aware of the others. `runtime.validator` runs them in one call, and
+  adds the judgement the claims make possible: each number `final_answer` named is placed
+  against the provenance ledger **by name**, with a unit-aware tolerance (`57.2 deg`
+  states a recorded `57.16 deg`, `0.0101 uT` states `10.077 nT`, a mean quoted within one
+  standard deviation of a series is not a different number), the prose checker's own
+  tolerance so one answer is held to one rule, and the rule that any run which produced
+  the value sources it. A named scalar the session computed that holds another value is
+  `contradicted`; a claim the model marked `literature` or `asserted` never is, nor is a
+  claim that gives no units — on the first live run the model filed a normal's
+  components under the angle's export, and "n_x stated −0.509, the session computed
+  54.85 deg" accuses nothing a reader can act on. The result is a `verdict` event — counts up front, every claim behind them —
+  journaled and rendered by the CLI, the notebook and the browser; it is emitted only when
+  the answer named its numbers, and the existing `invalid_ids`, `recipe_bypassed` and
+  `provenance` events keep flowing for the prose.
+- **The answer streams.** The lead's text is shown as the model writes it — token by
+  token in the CLI and in the browser, where a live bubble is re-rendered as Markdown
+  once the reply is complete; the notebook keeps rendering the finished answer. Every
+  OpenAI-compatible provider (Groq, OpenCode, Ollama, Azure) streams; Gemini and any
+  client without streaming support hand the reply over whole, so nothing breaks behind
+  a caller that streams. An inline `<think>` block is held back until it closes. The
+  deltas are not journaled — the `reply` that follows is — so a replay shows the answer
+  once. Sub-agents do not stream: their text goes to the lead, whole.
+- **Fewer tool definitions per model call.** Twenty-one tool schemas — about 3 800
+  tokens — rode on every call of a lead turn. The six plasma-physics tools and the four
+  catalog tools are used in a minority of sessions; their definitions are now withheld
+  until the agent asks for them with `search_tools` or calls one by name, which leaves
+  eleven schemas (about 2 100 tokens) on an ordinary turn. The lead's prompt gains one
+  sentence saying so.
+- **A delegated role can run on its own model.** `HELIOAI_ROLE_MODELS=parameter_hunter=
+  groq:llama-3.3-70b-versatile,librarian=groq` gives a role a provider and a model of its
+  own; a `parameter_hunter` resolving ids from search results does not need the lead's
+  frontier model, and a `data_analyst` writing the physics does. The role's client is
+  built for the run and closed after it, and its tokens are billed to its own provider in
+  the `usage` table. Roles not listed keep running on the lead's client, as before.
+- **A run knows where it writes.** Who is running, in which session and into which
+  directory used to live in three contextvars set by each loop, by the MCP server and by
+  nobody in a test, and read back from inside the tools — a sub-agent worked only because
+  the lead had bound the label first, and a tool called directly wrote under the default
+  user. `runtime.RunContext` carries those facts; the runner binds them in one place, and
+  the four tools that write (`run_python`, `get_timeseries`, `get_events_timeseries`,
+  `save_catalog`) receive their directories from it as trusted arguments the model cannot
+  supply. Each MCP connection gets a context of its own.
+- **A session replays from its journal.** Every event a turn yields — the question that
+  opened it, each tool call and result, the plan, the figures, the provenance verdict,
+  the sub-agent trace — is appended to an `events` table before it reaches the screen.
+  Reloading a session in the browser renders that journal with the same code as the live
+  stream, so nothing that was shown is lost: the previous replay re-parsed the JSON of
+  every tool message and guessed the figures from its shape, and lost the plan, the
+  verdicts and everything a sub-agent did. Sessions recorded before the journal existed
+  keep the old view (`legacy_replay.py`), used only when there is no journal. The stream
+  now opens with a `user` event carrying the question; the CLI and the notebook leave it
+  unrendered. The automated correction the loop sends the model when an answer quotes
+  ids that exist in no catalogue is a `correction` event too, so a replay shows what the
+  model was told as a system note rather than losing it — the one thing the journal did
+  not carry.
+- **A tool call returns a typed result.** `registry.call_tool` used to serialise every
+  tool's dict to JSON on the spot, and five readers downstream — the history, the artifact
+  extractor, the figure review, the MCP server, the event display — each parsed that text
+  back to learn what the tool had returned. `ToolResult` (`tools/results.py`) carries the
+  payload once and `for_llm()`, the text the model reads, once; sixteen results captured
+  from live calls pin that text byte for byte, so the model reads exactly what it read
+  before. MCP clients now also receive a dict payload as `structuredContent`.
+- **The eleven shipped recipes have tests.** `tests/recipes/` rebuilds the sandbox
+  namespace from the same helper source the notebook export ships, runs every recipe
+  (its placeholders, demos and own `assert`s included), and checks each method on a
+  synthetic input whose answer is known: a constructed shock normal for `theta_bn`, a
+  cloud of known variances for `mvab`, a pure rotational discontinuity for the Walén
+  slope, mass conservation for the Rankine–Hugoniot speed, scaled copies for the
+  superposed-epoch median, a planar front for two-spacecraft timing. Until now a
+  regression in a recipe was invisible before a demo. Marked `recipes`; skip them with
+  `-m "not recipes"`.
+- **`helioai doctor`** answers the questions every support request starts with: which
+  `.env` was read, is the provider key there, is the index built and how old is it, is
+  `run_python` really sandboxed or on the fallback path (and why), how big the speasy
+  inventory and the workspaces have grown. Offline by default, `--online` probes the
+  provider once, `--json` for bug reports and CI; exit code 1 when a check fails.
+- **The event contract lives in one place, and is enforced as events are made.**
+  `core/events.py` lists every kind the agent loops emit with its payload keys and every
+  artifact kind; a static test holds the emitters, the CLI, the notebook magic and the
+  browser to that list, so a kind added to a loop and forgotten in one interface — or
+  documented and never emitted — fails in CI. Three docstrings used to carry their own,
+  disagreeing copies. Every emission now goes through `events.make` / `events.artifact`,
+  which refuse an unknown kind or a payload missing a key the interfaces rely on — the
+  `sub_agent_end` of a failed delegation lacked `findings` and `usage`, and the loop
+  tests that exercise the branch now say so.
+- **Token usage is kept.** Every provider reports what a call cost and every count was
+  dropped at save time, so nothing could say what a session — or a user — had spent.
+  Each lead call is now a row in a `usage` table (turn, agent, provider, prompt /
+  completion / cached tokens); a sub-agent reports its total on `sub_agent_end` and is
+  charged to the parent session under its role. `helioai history` shows a tokens column,
+  `GET /api/me` returns the caller's totals for the day, the month and all time — the
+  number a per-user quota compares against.
+- **A configuration reference** (`docs/configuration.md`): every environment variable,
+  its default and its effect, grouped by provider / agent / storage / serving. A test
+  fails when the code reads a variable the page does not list.
+- **CI builds the Docker image** and runs `helioai doctor --json` inside it, printing
+  whether bubblewrap is functional in the container — the claim `SECURITY.md` makes and
+  nothing verified. Stale CI runs of a pull request are cancelled; Dependabot watches
+  the lock, the actions and the base image weekly.
+
+### Removed
+
+- The cross-encoder reranking stage of parameter search — measured to degrade results
+  and disabled for a year (`RAGConfig` keeps the measurement in its docstring); the
+  `rerank_*` settings go with it. Also gone: `run_subagent` (no callers) and the
+  `data_preview` artifact renderers in the three interfaces (no emitter).
+- **`HELIOAI_PROFILE`.** It moved a file the agent stopped reading when storage became
+  per user: the profile injected into the prompt is `users/<user>/profile.md`, which
+  `helioai profile`, `%helioai_profile` and the web UI all edit. The variable was
+  documented as "injected into the system prompt" and did nothing. A profile written
+  by an older install is still picked up by `helioai migrate-storage`.
+
+### Changed
+
+- **Behaviours that change what the model sees or is told are named experiments, off by
+  default, and go on by measurement: `HELIOAI_EXPERIMENTS=deferred_tools,search_budget,
+  search_variables`.** Each shipped on the strength of a single live run and none was ever
+  measured against the loop it replaced; when the same question came out differently on
+  `main` and on this branch, nothing could say which one cost what — and the nineteen
+  recorded runs of that question since June spread θ_Bn from 44° to 80°, so one run per
+  branch is noise, not a comparison. With the variable unset the lead's prompt, its tool
+  set, the roles' prompts and skills, the search budgets and the search payload are the
+  reference loop's; naming an experiment changes exactly its prompt text and its `Policy`
+  field (`tests/test_experiments.py`). The default is not `main`: `run_recipe` and the
+  corrected recipes are in, and so is **`final_answer`**, which graduated on the third
+  benchmark — 34 clean runs, one workspace each, four configurations interleaved: no cost
+  on any of the five questions, the claim verdict back (zero contradictions over nine),
+  rejected candidates named as often as by the reference loop. The two search experiments
+  showed no value there (eight id-resolution runs correct without them) and stay off until
+  a question that fails without them is recorded; `deferred_tools` was not isolated. An
+  unknown experiment name is refused where the API key is checked (`build_llm_client`,
+  `helioai doctor`), not at import: the MCP server and the web app must still start.
+  `scripts/bench_live.py` runs a fixed question set N times per configuration and scores
+  the sessions from the journal against a truth block per question — shock time, θ_Bn
+  bands, valid ids, whether the answer states its windows and names what it rejected.
+- **Two prompt sentences the third benchmark asked for.** The lead reads "around <date>"
+  as the whole UT day (a window centred on midnight put the day's main shock at its edge,
+  with no downstream to average, and the analyst — correctly — analysed the other one);
+  the `data_analyst` skill screens shock candidates against density and speed through
+  `theta_bn`, reports `theta_bn_window_spread_deg` as the ±, binds `B` + `shock_time`
+  rather than hand windows, and prints the windows and mean vectors it used.
+- **The recipes were reviewed by a heliophysicist and corrected; their numbers change.**
+  Each correction shipped with a synthetic test whose answer is known, red before the
+  fix, and the shelf now has one contract: a recipe reads its inputs with
+  `globals().get` and exports nothing when none is bound, its demo lives under
+  `if __name__ == "__main__":`, and every `export()` carries a unit — the provenance
+  validator compares unit-aware, and a speed recorded bare could not vouch for
+  "V_shock = 579 km/s". Recipe by recipe:
+    - `theta_bn`: the upstream/downstream windows can be derived from the shock time
+      (`shock_time` + the series `B`; guard 2 min, span 8 min; a window with a step or a
+      trend that looks like the ramp is refused) instead of chosen by the model — three
+      live runs on the same shock had given 54.85°, 59.95° and 64.27°. Exports gain the
+      normal, the magnetic compression ratio, the two window means, a bootstrap spread of
+      the angle and the normal, and the std of B·n̂. The naive "coplanarity residual" is
+      identically zero for this estimator and is documented as such rather than exported.
+      The placeholder demo no longer runs under `run_recipe`. Run with the series alone,
+      the recipe lists the largest |B| jumps of the interval (`find_shock_candidates`:
+      time, jump, ratio) and stops, so the crossing time is picked from a list rather
+      than hunted with hand-written cells — a live run spent nine of its twelve turns on
+      that hunt.
+    - `mvab`: the Sonnerup & Scheible (1998, eq. 8.23–8.24) angular uncertainties of the
+      normal and Δ⟨B·n⟩, on the covariance convention of the reference (÷N); λ_min ≈ 0
+      is now "planar — normal unique, uncertainty undefined", λ_int ≈ λ_min "degenerate",
+      neither "well-determined"; a warning under 30 samples; NaN input is an error, not a
+      traceback.
+    - `walen_test`: a real de Hoffmann-Teller frame (Sonnerup et al. 1987, the 3×3 normal
+      equations) replaces the mean subtraction the docstring called one; the HT quality
+      (residual electric field, E-field correlation) is reported and a poor frame is said
+      to make the slope meaningless; the RD verdict needs 0.7 ≤ |slope| ≤ 1.3 and R² ≥ 0.8
+      (Paschmann & Sonnerup 2008) — a slope of 10 with R² = 1 used to be "consistent with
+      a rotational discontinuity". `frame="mean"` keeps the previous behaviour.
+    - `superposed_epoch`: a gap stays a gap — neither an explicit NaN nor a missing
+      timestamp is bridged (`np.interp` bridged both), an epoch with fewer than
+      `min_events` contributors is NaN, and the new bootstrap CI on the median is masked
+      where the median is; τ is normalised on the event's `start`/`stop`, not on its first
+      and last surviving samples; the units come from the events themselves.
+    - `pressure_balance`: the reference field is derived from the dipole (IGRF-13 B₀ =
+      29 806 nT, Chapman–Ferraro factor 2 → 59.6 nT at 10 R_E) instead of a round 50 nT;
+      `P_dyn_nPa` is the standard ρV² and the 0.88 stagnation coefficient (Spreiter et al.
+      1966) is exported apart as `P_applied_nPa`; the result says it ignores Bz and points
+      to `mp_shue1998`. **`mp_standoff` returns a dict** (`result["r_mp_RE"]` is the former
+      float).
+    - `sep_onset_poisson_cusum`: the CUSUM runs on the intensities with the Poisson
+      reference value of Huttunen-Heikinmaa et al. (2005) — the previous z-score form is
+      the same detector divided by σ, and stays as `method="zscore"`; the background is
+      median/MAD; detection starts after the background window and its first sample
+      counts; a missing sample no longer confirms an onset; units follow the flux.
+    - `pitch_angle_dist`: equal-solid-angle bins (in cos α) replace the 1/sin α
+      normalisation that amplified Poisson noise at the poles; `bins="deg"` keeps the old
+      histogram; the distribution and an anisotropy ratio are exported; the recipe no
+      longer switches matplotlib to `dark_background` for the whole session.
+    - `rankine_hugoniot`: its eleven exports carry their units.
+- **If you set `HELIOAI_DATA_DIR` (the Docker image does), run `helioai migrate-storage`
+  once after upgrading.** It moves the index, the catalogues and the profile from the
+  default directory to the configured one, never overwrites, and can be re-run. The
+  `search_parameters` error names the legacy copy when it exists, so an upgraded
+  install is not sent into an hour-long rebuild.
+- `plasmapy>=2026.2` (the version the lock already resolved); classifiers now say
+  `Development Status :: 4 - Beta`, `Python :: 3 :: Only`, the three operating systems
+  (the sandbox is only real on Linux), `Framework :: Jupyter` and `Typing :: Typed`, and
+  the wheel ships a `py.typed` marker.
+- The session database gains `messages.origin` and `messages.name` columns, added
+  automatically the first time an existing database is opened. `name` records which
+  tool produced a `tool` message; readers no longer have to recognise a tool by the
+  shape of its JSON (a loaded recipe was identified by having `name`, `code` and
+  `metadata` keys at once).
+
 ## [0.3.0] — 2026-09-21
 
 Two things changed in this release. **HelioAI is now a complete MCP tool provider**: an

@@ -12,14 +12,23 @@ This module imports neither agent_loop nor sub_agents, so there is no cycle.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from helioai import provenance
-from helioai.core.event_display import describe_tool_result
+from helioai.core.event_display import describe_tool_result, finding_str
+from helioai.core.events import artifact, make
+from helioai.core.llm.base import ToolCall
+from helioai.tools.registry import ToolRegistry
+from helioai.tools.results import ToolResult
+
+if TYPE_CHECKING:
+    from helioai.runtime.context import RunContext
 
 # Tools whose results contain large lists (per_event_stats, sample rows) that would
 # flood the LLM context. All other tools pass through untouched so the LLM can reason
@@ -58,15 +67,6 @@ def _history_tool_result(tool_name: str, result_text: str) -> str:
     if tool_name in _HEAVY_TOOLS:
         return _redact_host_paths(_summarize_tool_result(result_text, max_chars=600))
     return _redact_host_paths(result_text)
-
-
-def _finding_str(entry) -> str:
-    if not isinstance(entry, dict):
-        return str(entry)[:60]
-    out = f"{entry.get('value')} {entry.get('units') or ''}".strip()
-    if entry.get("min") is not None:
-        out += f" [{entry['min']}, {entry['max']}]"
-    return out
 
 
 def _export_str(stats) -> str | None:
@@ -135,7 +135,7 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
         if isinstance(data.get("findings"), dict) and data["findings"]:
             # A run that hit its turn cap still measured things on the way there, and
             # dropping them here is how a lead ends up with nothing to report but prose.
-            measured = ", ".join(f"{n}={_finding_str(d)}" for n, d in data["findings"].items())
+            measured = ", ".join(f"{n}={finding_str(d)}" for n, d in data["findings"].items())
             summary += f"\nmeasured before failing: {measured}"
         return summary
 
@@ -143,7 +143,7 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
     text_fields: list[str] = []
     for k, v in data.items():
         if k == "findings" and isinstance(v, dict):
-            keep[k] = {n: _finding_str(d) for n, d in v.items()}
+            keep[k] = {n: finding_str(d) for n, d in v.items()}
         elif k == "exports" and isinstance(v, dict):
             lines = {n: _export_str(s) for n, s in v.items()}
             keep[k] = {n: s for n, s in lines.items() if s is not None}
@@ -177,14 +177,18 @@ def _summarize_tool_result(result_text: str, max_chars: int = 400) -> str:
     return out[:max_chars]
 
 
-def _is_recipe_source(result_text: str) -> bool:
-    """Whether a tool result is the payload `load_recipe` returns.
+def _is_recipe_source(message) -> bool:
+    """Whether a tool message is the payload `load_recipe` returns.
 
-    Tool messages do not carry the tool's name, so the shape identifies it: `name`,
-    `code` and `metadata` together are produced by no other tool.
+    Asked of the message's `name` first. Histories persisted before that field existed
+    carry none, so for them the shape still identifies it: `name`, `code` and `metadata`
+    together are produced by no other tool.
     """
+    name = getattr(message, "name", None)
+    if name is not None:
+        return name == "load_recipe"
     try:
-        data = json.loads(result_text)
+        data = json.loads(message.content)
     except (ValueError, TypeError):
         return False
     return isinstance(data, dict) and all(k in data for k in ("name", "code", "metadata"))
@@ -227,131 +231,136 @@ def compact_history(messages: list, keep_full: int = 2) -> list:
     stale = set(tool_idx[:-keep_full])
     return [
         replace(m, content=_summarize_tool_result(m.content, max_chars=_STALE_RESULT_CHARS))
-        if i in stale and m.content and not _is_recipe_source(m.content)
+        if i in stale and m.content and not _is_recipe_source(m)
         else m
         for i, m in enumerate(messages)
     ]
 
 
-def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
-    """Extract renderable artifacts from tool results (plots, parameter cards)."""
-    try:
-        data = json.loads(result_text)
-    except (ValueError, TypeError):
+def _extract_artifact(tool_name: str, payload: object) -> list[dict]:
+    """Extract renderable artifacts from a tool's payload (plots, parameter cards).
+
+    Args:
+        tool_name: The tool that produced it.
+        payload: `ToolResult.payload` — read as the dict it is; anything else has no
+            artifacts. The JSON text used to be parsed here, a second time.
+    """
+    if not isinstance(payload, dict):
         return []
-    if not isinstance(data, dict):
-        return []
+    data = payload
     if "error" in data:
         # A failed run leaves the offending script on disk. Surfacing it is the whole
         # point when something broke — hiding it left the user watching a bare
         # "exited with code 1" with no way to see what ran.
-        if tool_name == "run_python" and data.get("code_path"):
+        if tool_name in _SANDBOX_TOOLS and data.get("code_path"):
             return [
-                {
-                    "tool": tool_name,
-                    "kind": "code",
-                    "code_path": data["code_path"],
-                    "name": Path(data["code_path"]).name,
-                    "n_lines": data.get("n_lines"),
-                    "failed": True,
-                }
+                artifact(
+                    "code",
+                    tool=tool_name,
+                    code_path=data["code_path"],
+                    name=Path(data["code_path"]).name,
+                    n_lines=data.get("n_lines"),
+                    failed=True,
+                )
             ]
         return []
 
     artifacts: list[dict] = []
 
-    # Python sandbox: figures + parameter cards emitted via param_card()
-    if tool_name == "run_python":
+    # Python sandbox: figures + parameter cards emitted via param_card(). A recipe run
+    # is a sandbox run whose `method_used` card names the recipe.
+    if tool_name in _SANDBOX_TOOLS:
         if data.get("figure_paths"):
             artifacts.append(
-                {
-                    "tool": tool_name,
-                    "kind": "image",
-                    "figure_paths": data["figure_paths"],
-                    "stdout": data.get("stdout", ""),
-                }
+                artifact(
+                    "image",
+                    tool=tool_name,
+                    figure_paths=data["figure_paths"],
+                    stdout=data.get("stdout", ""),
+                )
             )
         if data.get("exports"):
             artifacts.append(
-                {
-                    "tool": tool_name,
-                    "kind": "exports",
-                    "values": data["exports"],
-                    "code_path": data.get("code_path"),
-                }
+                artifact(
+                    "exports",
+                    tool=tool_name,
+                    values=data["exports"],
+                    code_path=data.get("code_path"),
+                )
             )
         for card in data.get("cards", []):
             if not isinstance(card, dict):
                 continue
             if card.get("kind") == "parameter_card":
-                artifacts.append({"tool": tool_name, **card})
+                fields = {k: v for k, v in card.items() if k != "kind"}
+                artifacts.append(artifact("parameter_card", tool=tool_name, **fields))
             elif card.get("kind") == "method_used":
                 artifacts.append(
-                    {
-                        "tool": tool_name,
-                        "kind": "recipe_used",
-                        "name": card.get("name", ""),
-                        "reference": card.get("reference", ""),
-                        "description": card.get("method", ""),
-                    }
+                    artifact(
+                        "recipe_used",
+                        tool=tool_name,
+                        name=card.get("name", ""),
+                        reference=card.get("reference", ""),
+                        description=card.get("method", ""),
+                    )
                 )
         if data.get("code_path"):
             artifacts.append(
-                {
-                    "tool": tool_name,
-                    "kind": "code",
-                    "code_path": data["code_path"],
-                    "name": Path(data["code_path"]).name,
-                    "n_lines": data.get("n_lines"),
-                }
+                artifact(
+                    "code",
+                    tool=tool_name,
+                    code_path=data["code_path"],
+                    name=Path(data["code_path"]).name,
+                    n_lines=data.get("n_lines"),
+                )
             )
 
     # load_recipe: surface the recipe + its scientific reference for provenance
     if tool_name == "load_recipe" and data.get("name"):
         meta = data.get("metadata") or {}
         artifacts.append(
-            {
-                "tool": tool_name,
-                "kind": "recipe_used",
-                "name": data["name"],
-                "reference": meta.get("reference", ""),
-                "description": meta.get("description", ""),
-            }
+            artifact(
+                "recipe_used",
+                tool=tool_name,
+                name=data["name"],
+                reference=meta.get("reference", ""),
+                description=meta.get("description", ""),
+            )
         )
 
     # get_catalog result
     if tool_name == "get_catalog" and data.get("_kind") == "catalog_preview":
         artifacts.append(
-            {
-                "tool": tool_name,
-                "kind": "catalog_preview",
-                "catalog_id": data.get("catalog_id"),
-                "name": data.get("name"),
-                "type": data.get("type"),
-                "nb_events_total": data.get("nb_events_total"),
-                "columns": data.get("columns", []),
-                "sample": (data.get("sample") or [])[:5],
-                "survey_start": data.get("survey_start"),
-                "survey_stop": data.get("survey_stop"),
-            }
+            artifact(
+                "catalog_preview",
+                tool=tool_name,
+                catalog_id=data.get("catalog_id"),
+                name=data.get("name"),
+                type=data.get("type"),
+                nb_events_total=data.get("nb_events_total"),
+                columns=data.get("columns", []),
+                sample=(data.get("sample") or [])[:5],
+                survey_start=data.get("survey_start"),
+                survey_stop=data.get("survey_stop"),
+            )
         )
 
     # get_timeseries called directly by main agent
     if tool_name == "get_timeseries" and "preview" in data:
-        card = {
-            "tool": tool_name,
-            "kind": "parameter_card",
-            "param_id": data.get("param_id"),
-            "name": data.get("name"),
-            "mission": data.get("mission"),
-            "instrument": data.get("instrument"),
-            "units": data.get("units"),
-            "cadence": data.get("cadence"),
-            "components": data.get("components"),
-            "n_points": data.get("n_points"),
-            "start": data.get("start"),
-            "stop": data.get("stop"),
-        }
+        card = artifact(
+            "parameter_card",
+            tool=tool_name,
+            param_id=data.get("param_id"),
+            name=data.get("name"),
+            mission=data.get("mission"),
+            instrument=data.get("instrument"),
+            units=data.get("units"),
+            cadence=data.get("cadence"),
+            components=data.get("components"),
+            n_points=data.get("n_points"),
+            start=data.get("start"),
+            stop=data.get("stop"),
+        )
         if (data.get("quality") or {}).get("notable"):
             card["quality"] = data["quality"]
         artifacts.append(card)
@@ -359,42 +368,122 @@ def _extract_artifact(tool_name: str, result_text: str) -> list[dict]:
     return artifacts
 
 
-def _code_path(result_text: str) -> str:
-    try:
-        data = json.loads(result_text)
-        return data.get("code_path") or "" if isinstance(data, dict) else ""
-    except (ValueError, TypeError):
-        return ""
+def _code_path(payload: object) -> str:
+    return (payload.get("code_path") or "") if isinstance(payload, dict) else ""
 
 
-def inject_run_python_args(name: str, *, no_network: bool = False) -> dict:
-    """Trusted per-run sandbox args (_plot_dir/_run_idx/_no_net) for run_python.
+def trusted_args(name: str, ctx: RunContext | None = None, *, no_network: bool = False) -> dict:
+    """The framework-injected arguments of the tools that write to disk.
 
-    Passed via `call_tool(..., trusted=...)` so they bypass the private-arg
-    guard that rejects LLM/MCP-supplied `_*` overrides. Empty for any other tool.
+    Passed via `call_tool(..., trusted=...)`, so they bypass the private-argument guard
+    that rejects model- or MCP-supplied `_*` overrides. `run_python` and `run_recipe` get
+    their workspace, run index and network flag; `get_timeseries` and
+    `get_events_timeseries` the session's data directory; `save_catalog` the user's
+    catalogue directory. Every other tool gets nothing. Reading them off the context
+    rather than off the workspace contextvars is what lets a tool called from a test, or
+    over MCP, write where its caller said and nowhere else.
 
     Args:
-        name: Tool about to be called. Anything but `run_python` gets nothing.
-        no_network: Whether to deny the sandbox a network namespace.
+        name: Tool about to be called.
+        ctx: The run's context. None falls back to the bound contextvars, the way the
+            loops resolved the session before contexts existed.
+        no_network: Deny the sandbox a network namespace; `ctx.no_network` also does.
 
     Returns:
-        The trusted argument dict, empty for every other tool.
+        The trusted argument dict, empty for a tool that writes nothing.
     """
-    if name != "run_python":
+    if name not in _WRITING_TOOLS:
         return {}
+    if ctx is None:
+        from helioai.runtime.context import RunContext
+
+        ctx = RunContext.current()
+    if name == "save_catalog":
+        return {"_catalogs_dir": str(ctx.catalogs_dir)} if ctx else {}
+    if name in ("get_timeseries", "get_events_timeseries"):
+        return {"_data_dir": str(ctx.data_dir)} if ctx else {}
     import helioai.workspace as _ws
 
-    sdir = _ws.get_session_dir()
-    ridx = _ws.get_next_run_idx(sdir)
-    args = {"_plot_dir": str(sdir), "_run_idx": ridx}
-    if no_network:
+    sdir = ctx.session_dir if ctx else _ws.get_session_dir()
+    args = {"_plot_dir": str(sdir), "_run_idx": _ws.get_next_run_idx(sdir)}
+    if no_network or (ctx is not None and ctx.no_network):
         args["_no_net"] = True
     return args
 
 
+# The two ways into the sandbox: the model's own code, or a shipped recipe on its inputs.
+_SANDBOX_TOOLS: frozenset[str] = frozenset({"run_python", "run_recipe"})
+
+_WRITING_TOOLS: frozenset[str] = _SANDBOX_TOOLS | frozenset(
+    {"get_timeseries", "get_events_timeseries", "save_catalog"}
+)
+
+
+# Tools that must run one at a time within a turn: a sandbox run numbers its script from
+# what is on disk (`get_next_run_idx`) and writes into the one session directory.
+_SEQUENTIAL_TOOLS: frozenset[str] = _SANDBOX_TOOLS
+
+
+def start_tool_calls(
+    tool_calls: list[ToolCall] | None,
+    *,
+    allowed: set[str] | frozenset[str] | None = None,
+    registry: ToolRegistry | None = None,
+    ctx: RunContext | None = None,
+) -> dict[str, asyncio.Task]:
+    """Start every parallel-safe registry call of a turn at once, keyed by call id.
+
+    The prompt asks the model to batch its downloads in one turn, and the loops then
+    ran them one after the other: a data_analyst's first turn — three or four
+    `get_timeseries` — took the sum of their durations. Started here, they overlap;
+    the caller still awaits each result in the model's order, so every event and
+    every `tool` message keeps the order it had when the calls were sequential.
+
+    Skipped, and left to the caller's sequential path: `run_python` (see
+    `_SEQUENTIAL_TOOLS`), anything not in the registry (the `task` tool, the internal
+    tools), and — for a sub-agent — anything outside its whitelist, which the caller
+    refuses without dispatching.
+
+    Args:
+        tool_calls: The assistant's tool calls for this turn.
+        allowed: A sub-agent's whitelist; None for the lead, who may call anything.
+        registry: Where the calls are dispatched; the process-wide registry by default.
+        ctx: The run's context, from which the data tools get their directory as a
+            trusted argument — the same `trusted_args` the sequential path passes.
+
+    Returns:
+        `{tool_call.id: task}` for the calls that were started; each task resolves to
+        a `ToolResult`. `registry.call_tool` never raises — a failure is a failed
+        result — so awaiting a task is safe.
+    """
+    if registry is None:
+        from helioai.tools.registry import registry as _default
+
+        registry = _default
+
+    started: dict[str, asyncio.Task] = {}
+    for tc in tool_calls or []:
+        if tc.name in _SEQUENTIAL_TOOLS or tc.name not in registry:
+            continue
+        if allowed is not None and tc.name not in allowed:
+            continue
+        started[tc.id] = asyncio.create_task(
+            registry.call_tool(tc.name, tc.arguments, trusted=trusted_args(tc.name, ctx))
+        )
+    return started
+
+
+def cancel_pending(started: dict[str, asyncio.Task]) -> None:
+    """Cancel the calls a turn started and never awaited — a cancelled turn must not
+    leave downloads running for nobody."""
+    for task in started.values():
+        if not task.done():
+            task.cancel()
+
+
 def emit_post_tool_events(
     name: str,
-    result: str,
+    result: ToolResult,
     *,
     tool_result_extra: dict | None = None,
     common_extra: dict | None = None,
@@ -406,7 +495,8 @@ def emit_post_tool_events(
 
     Args:
         name: The tool that just ran.
-        result: Its raw result string, parsed here for artifacts.
+        result: Its result; the payload is read for artifacts, the model's text for
+            the summary the event carries.
         tool_result_extra: Merged into the `tool_result` event data, e.g. `{turn}`.
         common_extra: Merged into `skill_loaded` and `artifact` event data, e.g.
             `{sub_agent_ctx}` when a sub-agent is the caller.
@@ -417,45 +507,35 @@ def emit_post_tool_events(
     """
     tool_result_extra = tool_result_extra or {}
     common_extra = common_extra or {}
+    text = result.for_llm()
+    payload = result.payload
 
-    yield {
-        "event": "tool_result",
-        "data": {
-            "name": name,
-            "summary": _summarize_tool_result(result),
-            # `summary` is written for the model and stays untouched. `display` is the
-            # same event told to a person, computed here so the CLI, the Jupyter magic
-            # and the browser show identical words without three copies of the logic.
-            "display": describe_tool_result(name, result),
-            **tool_result_extra,
-        },
-    }
+    # `summary` is written for the model and stays untouched. `display` is the same
+    # event told to a person, computed here so the CLI, the Jupyter magic and the
+    # browser show identical words without three copies of the logic.
+    yield make(
+        "tool_result",
+        name=name,
+        summary=_summarize_tool_result(text),
+        display=describe_tool_result(name, text),
+        **tool_result_extra,
+    )
 
-    if name == "load_skill":
-        try:
-            payload = json.loads(result)
-            if payload.get("body") and not payload.get("error"):
-                yield {
-                    "event": "skill_loaded",
-                    "data": {
-                        "name": payload.get("name", ""),
-                        **common_extra,
-                    },
-                }
-        except (ValueError, TypeError):
-            pass
+    if name == "load_skill" and isinstance(payload, dict):
+        if payload.get("body") and not payload.get("error"):
+            yield make("skill_loaded", name=payload.get("name", ""), **common_extra)
 
-    for art in _extract_artifact(name, result):
+    for art in _extract_artifact(name, payload):
         if art.get("kind") == "exports":
             ctx = common_extra.get("sub_agent_ctx") or {}
             provenance.record(
                 art.get("values") or {},
-                code_path=_code_path(result),
+                code_path=_code_path(payload),
                 agent=ctx.get("role") or "lead",
                 task_id=ctx.get("task_id"),
                 turn=tool_result_extra.get("turn"),
             )
-        yield {"event": "artifact", "data": {**art, **common_extra}}
+        yield make("artifact", **art, **common_extra)
 
 
 def unknown_id_correction(bogus: list[str]) -> str:
@@ -589,6 +669,10 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
     textual: a run that redefines a function under the recipe's own name passes it.
     One flag per recipe; "never called" is the more specific finding and wins.
 
+    A recipe the turn ran through `run_recipe` is exempt from all three: the shipped
+    source ran, verbatim, on the inputs the tool bound — which is the very thing the
+    signals try to establish from the outside.
+
     Args:
         text: The finished answer.
         history: The run's message history, to check which recipes were loaded, read
@@ -600,11 +684,12 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
         The text (with a note appended when needed) and the flags raised, each
         `{"recipe": name, "reason": "not_loaded" | "shallow_use" | "not_called"}`.
     """
-    from helioai.tools.recipes import RECIPE_SIGNATURES
+    from helioai.tools.recipes import HELPER_ALTERNATIVES, RECIPE_SIGNATURES
 
     loaded_calls: dict[str, str] = {}  # tool_call_id -> recipe name
     load_positions: dict[str, int] = {}  # tool_call_id -> index in history
     python_calls: list[tuple[int, str]] = []  # (index in history, code)
+    ran: set[str] = set()
     for i, m in enumerate(history):
         for tc in m.tool_calls or []:
             if tc.name == "load_recipe":
@@ -612,9 +697,19 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
                 if name:
                     loaded_calls[tc.id] = name
                     load_positions[tc.id] = i
+            elif tc.name == "run_recipe":
+                name = (tc.arguments or {}).get("name")
+                if name:
+                    ran.add(name)
             elif tc.name == "run_python":
                 python_calls.append((i, str((tc.arguments or {}).get("code") or "")))
-    loaded_names = set(loaded_calls.values())
+    loaded_names = set(loaded_calls.values()) | ran
+    all_code = "\n".join(code for _, code in python_calls)
+    used_helper = {
+        recipe_name
+        for recipe_name, helpers in HELPER_ALTERNATIVES.items()
+        if any(h in all_code for h in helpers)
+    }
 
     exported = _exported_names(artifacts)
     if not exported:
@@ -624,13 +719,14 @@ def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tupl
         {"recipe": recipe_name, "reason": "not_loaded"}
         for recipe_name, signatures in RECIPE_SIGNATURES.items()
         if recipe_name not in loaded_names
+        and recipe_name not in used_helper
         and any(sig in name for name in exported for sig in signatures)
     ]
 
     tool_results = {m.tool_call_id: m.content for m in history if m.role == "tool"}
     for call_id, recipe_name in loaded_calls.items():
         raw = tool_results.get(call_id)
-        if not raw:
+        if not raw or recipe_name in ran:
             continue
         try:
             payload = json.loads(raw)

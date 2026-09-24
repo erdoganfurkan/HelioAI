@@ -1,0 +1,87 @@
+[
+ {
+  "id": "wind_shock_2004",
+  "family": "event_detection",
+  "text": "Find an interplanetary shock in WIND data around 2004-11-07 and compute θ_Bn",
+  "expects": "Several shocks on 2004-11-07 — 10:03 UT (weak, quiet upstream) and 17:59 UT (strong, SSC 18:27 UT driver). A good answer names which one it took and why, states the crossing time, the normal and θ_Bn with an uncertainty, and lists the Wind MFI/SWE ids it used. Across repetitions the key metric is whether the runs agree on the shock (times_utc) and on θ_Bn.",
+  "truth": {
+   "shock_utc": "2004-11-07T17:59",
+   "shock_tolerance_min": 2,
+   "theta_bands": {
+    "cfa": [
+     51,
+     64
+    ],
+    "window": [
+     44,
+     57
+    ]
+   },
+   "param_ids": [
+    "WI_H"
+   ],
+   "note": "CfA Wind shock database event 20043121759 (17:59:05 ± 60 s UT, FF): θ_Bn MC 54.5 ± 3.6, MX1–3 56.9–58.4, RH08 60.9 ± 3.4 → `cfa` = 51–64. 10:03 UT is not catalogued. `window` = the theta_bn recipe's 12-convention grid on the real 92 ms field (44.3–56.8°)."
+  }
+ },
+ {
+  "id": "mms1_position_2019",
+  "family": "position",
+  "text": "Where was MMS1 on 2019-02-27 12:00? Plot its GSM position against the Shue magnetopause and the Jelinek bow shock",
+  "expects": "A GSM position in R_E at 12:00 UT from an MMS1 ephemeris product (MEC), a figure with both model boundaries, and a statement of which region MMS1 was in. No delegation needed beyond one data role; no θ_Bn."
+ },
+ {
+  "id": "sea_icme_2015",
+  "family": "catalog_sea",
+  "text": "Superposed epoch analysis: find an AMDA catalog of interplanetary shocks or ICMEs observed at L1 in 2015 (use list_catalogs), take up to 15 events, download the OMNI or Wind IMF |B| across each event with get_events_timeseries, then run the superposed_epoch recipe on them. Report the median |B| profile and its peak.",
+  "expects": "list_catalogs → a shock/ICME catalogue → get_events_timeseries once (not 15 get_timeseries calls) → superposed_epoch recipe. The answer names the catalogue, the number of events kept, the median |B| peak value and its epoch offset."
+ },
+ {
+  "id": "thetabn_wind_2015",
+  "family": "recipe_thetabn",
+  "text": "For the interplanetary shock seen by Wind around 04:00 UT on 2015-03-17: find the 3-second MFI magnetic field in GSM, download 03:30–04:30 UT, plot |B| and Bz with the shock marked, then compute theta_Bn with the theta_bn recipe using 8-minute upstream and downstream averages clear of the ramp, and report the normal and the magnetic compression ratio.",
+  "expects": "The 2015-03-17 ~04:00 UT (St Patrick's Day storm) shock: a 3 s Wind MFI GSM product (WI_H3-RTN is wrong; H0/H2 GSM is right), a figure, θ_Bn from the theta_bn recipe with 8-min windows, the normal vector and B_down/B_up. Single shock, so θ_Bn should be stable across runs; the spread measures the analysis, not the pick.",
+  "truth": {
+   "shock_utc": "2015-03-17T04:00",
+   "shock_tolerance_min": 3,
+   "theta_bands": {
+    "cfa": [
+     56,
+     70
+    ],
+    "window": [
+     61,
+     64
+    ]
+   },
+   "param_ids": [
+    "WI_H"
+   ],
+   "note": "CfA event wi_00677 (04:00:01.5 ± 80 s UT, FF): MC 58.8 ± 2.7, MX1–3 59.7–60.1, RH08 66.1 ± 3.3 → `cfa` = 56–70. `window` = the recipe grid on the real 3 s field (61.1–63.5°)."
+  }
+ },
+ {
+  "id": "plasma_beta_lead",
+  "family": "lead_only",
+  "text": "Plasma beta for B=5 nT, n=5 cm^-3, T=1e5 K",
+  "expects": "β ≈ 0.69 (n k T / (B²/2μ0), protons only; ≈1.39 counting electrons at the same T). Should be answered by the lead alone in one or two turns with the plasmapy tool or a recipe, no delegation, no download."
+ },
+ {
+  "id": "wind_swe_ids_2004",
+  "family": "id_resolution",
+  "text": "Plot Wind SWE proton density and proton thermal speed for the full day 2004-11-07, and report their mean values before and after 18:00 UT.",
+  "expects": "The right ids resolved from one or two searches — `cda/WI_H1_SWE/Proton_Np_nonlin` and `cda/WI_H1_SWE/Proton_W_nonlin` (or their `_moment` variants) (SWE has no `Proton_Temp`; its temperature is a thermal speed) — downloaded once, plotted, two means each. This is the path that `search_budget` and `search_variables` were written for: a recorded run spent twelve turns searching for ids that do not exist.",
+  "truth": {
+   "param_ids": [
+    "WI_H1_SWE/Proton_Np_",
+    "WI_H1_SWE/Proton_W_"
+   ],
+   "bogus_ids": [
+    "Proton_Temp",
+    "Proton_V_GSE",
+    "Proton_Vth",
+    "Proton_T_"
+   ],
+   "note": "Verified against the CDAWeb WI_H1_SWE variable list: both the `_nonlin` and `_moment` variants are valid, so only the dataset and the variable stem are required."
+  }
+ }
+]

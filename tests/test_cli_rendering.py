@@ -121,25 +121,6 @@ def test_image_artifact_also_prints_stdout(capsys, monkeypatch):
     assert "beta = 1.7" in out
 
 
-def test_data_preview_artifact_shows_parameter_and_point_count(capsys):
-    out = render(
-        capsys,
-        "artifact",
-        {"kind": "data_preview", "param_id": "amda/imf_bz", "n_points": 1440},
-    )
-    assert "amda/imf_bz" in out
-    assert "1440" in out
-
-
-def test_data_preview_truncates_a_long_preview(capsys):
-    out = render(
-        capsys,
-        "artifact",
-        {"kind": "data_preview", "param_id": "p", "n_points": 1, "preview": "\n".join("l" * 20)},
-    )
-    assert out.count("\n") <= 8
-
-
 def test_unknown_event_is_ignored_silently(capsys):
     """Forward compatibility: a new server-side event must not crash an old CLI."""
     assert render(capsys, "some_future_event", {"whatever": 1}) == ""
@@ -233,3 +214,62 @@ def test_long_stdout_is_capped_and_says_how_much_was_hidden(capsys, monkeypatch)
     assert "03:58:00" in out
     assert "03:58:39" not in out
     assert "more lines" in out
+
+
+def test_sub_agent_end_lists_the_measured_values(capsys):
+    out = render(
+        capsys,
+        "sub_agent_end",
+        {
+            "role": "data_analyst",
+            "summary": "theta_Bn by coplanarity",
+            "findings": {"theta_bn_deg": {"value": 47.3, "units": "deg"}},
+        },
+    )
+    assert "theta_bn_deg = 47.3 deg" in out
+
+
+def test_a_streamed_reply_is_printed_once_with_only_the_appended_correction_after(capsys):
+    """Deltas print as they arrive; the final `reply` must not print the answer a second
+    time — only what the stream did not carry, such as an appended id correction."""
+    from helioai.interfaces import cli
+
+    cli._render_event({"event": "reply_delta", "data": {"text": "θ_Bn = "}})
+    cli._render_event({"event": "reply_delta", "data": {"text": "57.5°"}})
+    cli._render_event({"event": "reply", "data": {"text": "θ_Bn = 57.5°\n\n⚠️ note"}})
+    out = capsys.readouterr().out
+    assert out.count("θ_Bn = 57.5°") == 1
+    assert "⚠️ note" in out
+    assert cli._streamed == []
+
+
+def test_a_reply_that_diverges_from_its_stream_is_printed_whole(capsys):
+    from helioai.interfaces import cli
+
+    cli._render_event({"event": "reply_delta", "data": {"text": "first draft"}})
+    cli._render_event({"event": "reply", "data": {"text": "a different final answer"}})
+    out = capsys.readouterr().out
+    assert "first draft" in out and "a different final answer" in out
+
+
+def test_a_reply_that_repeats_the_stream_without_its_markdown_is_not_printed_twice(capsys):
+    """Live: the model streamed its answer with `**n̂ = …**` in bold, then called
+    final_answer with the same words unbolded. Not a prefix of the stream, so the CLI
+    printed the whole answer a second time."""
+    from helioai.interfaces import cli
+
+    cli._render_event(
+        {"event": "reply_delta", "data": {"text": "**θ_Bn = 49.09°** — quasi-perp.\n"}}
+    )
+    cli._render_event(
+        {"event": "reply_delta", "data": {"text": "Normal **n̂ = [−0.97, 0.16, 0.20]**."}}
+    )
+    cli._render_event(
+        {
+            "event": "reply",
+            "data": {"text": "θ_Bn = 49.09° — quasi-perp.\nNormal n̂ = [−0.97, 0.16, 0.20]."},
+        }
+    )
+    out = capsys.readouterr().out
+    assert out.count("49.09°") == 1 and out.count("[−0.97, 0.16, 0.20]") == 1
+    assert cli._streamed == []

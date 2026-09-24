@@ -332,7 +332,14 @@ def _states(entry: dict, value: float, rtol: float) -> bool:
     )
 
 
-def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
+# Relative tolerance for calling a stated number equal to a recorded one: wide enough
+# for the rounding a reply does (2.59 for 2.5848), narrow enough that a different result
+# is a different number. Shared with the claims judged by name (`runtime.validator`), so
+# one answer is held to one rule.
+RTOL = 5e-3
+
+
+def verify(claims: list[Claim], ledger: dict, rtol: float = RTOL) -> Report:
     """Give every claim a provenance status against the ledger.
 
     - `matched` — a recorded value (mean, min, max or std) equals it within `rtol`, from
@@ -404,7 +411,13 @@ def verify(claims: list[Claim], ledger: dict, rtol: float = 5e-3) -> Report:
     flagged = [c for c in claims if c.status in ("contradicted", "unsourced")]
     flagged.sort(key=lambda c: (c.status != "contradicted", not c.units))
     report.details = [
-        {"text": c.text, "status": c.status, "name": c.name, "code_path": c.code_path}
+        {
+            "text": c.text,
+            "value": c.value,
+            "status": c.status,
+            "name": c.name,
+            "code_path": c.code_path,
+        }
         for c in flagged[:12]
     ]
     return report

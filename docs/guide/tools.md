@@ -1,7 +1,13 @@
 # Agent tools
 
-The agent has 17 tools. You never call them directly — you ask a question and it picks —
+The agent has 18 tools. You never call them directly — you ask a question and it picks —
 but knowing what exists tells you what HelioAI can be asked for.
+
+Not all of them are shown to the model on every turn. The six plasma-physics tools and
+the four catalog tools are *deferred*: their definitions are withheld until the agent
+asks for them (`search_tools`) or calls one by name, which cuts the tool schemas re-sent
+with every model call from 22 to 12. Nothing changes for you — the agent still finds them
+when a question needs them.
 
 ## Data access
 
@@ -76,8 +82,12 @@ Needs `ADS_API_TOKEN` (free). Used heavily by the `librarian` sub-agent.
 |---|---|
 | `list_recipes` | Catalogue of the shipped scientific recipes. |
 | `load_recipe` | Load a recipe's source and its citation. |
+| `run_recipe` | Run a recipe as shipped on the session's data: inputs bound first, source verbatim, one optional `call`. |
 
-See [Recipes and provenance](recipes.md).
+`run_recipe` is the one that keeps a recipe's calibration intact: the agent binds the
+inputs (`{"B_up": "load_data('b3gsm').values[m_up]"}`), the recipe's own `export()` calls
+produce the numbers, and the run is recorded as a use of the recipe with its reference.
+`load_recipe` remains the way to *read* one. See [Recipes and provenance](recipes.md).
 
 ## Delegation
 

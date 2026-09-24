@@ -16,29 +16,12 @@ import json
 
 import numpy as np
 import pytest
+from support.scripted import ScriptedLLM
 
 import helioai.tools.setup  # noqa: F401  — populates the registry; without it it is empty
 from helioai.core import sub_agents
 from helioai.core.llm.base import LLMClient, Message, ToolCall
-
-
-class ScriptedLLM(LLMClient):
-    """Replays scripted responses and records how it was called."""
-
-    def __init__(self, responses: list[Message]):
-        self._responses = list(responses)
-        self.calls: list[dict] = []
-
-    async def chat(self, messages, tools, system_prompt=None, tool_choice="auto"):
-        self.calls.append(
-            {
-                "messages": list(messages),
-                "tools": [t.name for t in tools],
-                "system_prompt": system_prompt,
-                "tool_choice": tool_choice,
-            }
-        )
-        return self._responses.pop(0)
+from helioai.tools.results import ToolResult
 
 
 def text(content: str) -> Message:
@@ -61,7 +44,7 @@ def stub_registry(monkeypatch):
 
     async def fake_call_tool(name, arguments, *, trusted=None):
         invoked.append(name)
-        return results.get(name, json.dumps({"ok": True}))
+        return ToolResult.from_raw(name, results.get(name, json.dumps({"ok": True})))
 
     monkeypatch.setattr(sub_agents.registry, "call_tool", fake_call_tool)
     return invoked, results
@@ -214,8 +197,10 @@ async def test_artifacts_are_collected_without_the_sub_agent_context(stub_regist
     Artifacts are re-accumulated with sub_agent_ctx stripped so the persisted
     shape matches what the lead agent produces.
     """
+    from helioai.runtime import runner as runtime_runner
+
     monkeypatch.setattr(
-        sub_agents,
+        runtime_runner,
         "emit_post_tool_events",
         lambda name, result, tool_result_extra=None, common_extra=None: [
             {
@@ -792,12 +777,8 @@ async def test_a_sub_agent_run_python_reads_the_dataset_the_lead_downloaded(tmp_
     on the way into `stream_subagent` breaks it silently, which is why the check runs the
     whole path instead of asserting on `get_session_dir()`.
     """
-    from helioai import datastore
-    from helioai.config import settings
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-
     import helioai.workspace as ws
+    from helioai import datastore
 
     ws.set_user("cli")
     ws.set_session("sess-lead")
@@ -868,3 +849,55 @@ async def test_a_coplanarity_run_exporting_a_field_ratio_is_not_a_rankine_hugoni
     events = await drain(**base(llm, role="data_analyst"))
 
     assert [e for e in events if e["event"] == "recipe_bypassed"] == []
+
+
+# ── a role may run on its own model ─────────────────────────────────────────────
+
+
+async def test_a_role_configured_in_role_models_runs_on_its_own_client(stub_registry, monkeypatch):
+    """The lead's client is the frontier model; a parameter_hunter resolving ids from
+    search results does not need it. The role's client is built for the run, closed after
+    it, and its usage is billed to its own provider."""
+    from helioai.config import settings
+
+    built: list[tuple] = []
+    closed: list[str] = []
+
+    class RoleLLM(ScriptedLLM):
+        async def aclose(self):
+            closed.append("role client closed")
+
+    role_llm = RoleLLM([text("id resolved: cda/AC_H0_MFI/BGSEc")])
+    lead_llm = ScriptedLLM([text("the lead's client must not be used")])
+
+    def fake_build(provider=None, model=None):
+        built.append((provider, model))
+        return role_llm
+
+    monkeypatch.setattr(sub_agents, "build_llm_client", fake_build)
+    monkeypatch.setattr(
+        settings.agent, "role_models", {"parameter_hunter": ("groq", "llama-3.3-70b-versatile")}
+    )
+
+    events = await drain(**base(lead_llm))
+
+    assert built == [("groq", "llama-3.3-70b-versatile")]
+    assert lead_llm.calls == [] and len(role_llm.calls) == 1
+    assert closed == ["role client closed"]
+    assert final(events)["usage"]["provider"] == "groq"
+    assert final(events)["summary"] == "id resolved: cda/AC_H0_MFI/BGSEc"
+
+
+async def test_a_role_without_a_configured_model_keeps_the_leads_client(stub_registry, monkeypatch):
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.agent, "role_models", {"librarian": ("groq", None)})
+    monkeypatch.setattr(
+        sub_agents, "build_llm_client", lambda *a, **k: pytest.fail("no client to build")
+    )
+    lead_llm = ScriptedLLM([text("done")])
+
+    events = await drain(**base(lead_llm))
+
+    assert len(lead_llm.calls) == 1
+    assert final(events)["usage"]["provider"] == settings.llm.provider

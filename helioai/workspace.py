@@ -9,9 +9,11 @@ propagated via a contextvar set by stream_chat at the start of each request.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 import time
+from collections.abc import Collection
 from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
@@ -163,26 +165,65 @@ def safe_id(value: str, fallback: str = "session") -> str:
     return cleaned or fallback
 
 
-def make_session_label(first_message: str, session_id: str) -> str:
+def make_session_label(first_message: str, session_id: str, taken: Collection[str] = ()) -> str:
     """Build a human-readable slug for the session workspace folder.
 
     The session id suffix is what keeps two identical questions from sharing one
-    directory; the words are only there so a human can find it.
+    directory; the words are only there so a human can find it. Six characters of the
+    id are enough when ids are random, and not when a client chooses them: the web API
+    accepts any `^[A-Za-z0-9_-]{1,64}$`, so `session-001` and `session-002` — or a
+    benchmark's `bench-<question>-<hex>` — collapsed onto one directory, and the second
+    session found the first one's downloads in its inventory. `taken` is the set of
+    labels the user already owns; when the six-character label is among them the suffix
+    grows until it is not, and falls back to a digest of the whole id.
 
     Args:
         first_message: The question that opened the session.
-        session_id: Session id, truncated to six characters as a discriminator.
+        session_id: Session id; its first six characters are the usual discriminator.
+        taken: Labels already assigned to this user's other sessions.
 
     Returns:
-        A slug of at most four words plus the id suffix.
+        A slug of at most four words plus the id suffix, distinct from every `taken`.
 
     Example:
         >>> make_session_label("Plot IMF Bz from ACE", "abc123def456")
         'plot-imf-bz-from_abc123'
+        >>> make_session_label("Plot IMF Bz from ACE", "abc123def456", {"plot-imf-bz-from_abc123"})
+        'plot-imf-bz-from_abc123de'
     """
     words = re.sub(r"[^a-z0-9\s]", "", first_message.lower().strip()).split()
     slug = "-".join(words[:4]) if words else "session"
-    return f"{slug[:25]}_{safe_id(session_id)[:6]}"
+    sid = safe_id(session_id)
+    label = f"{slug[:25]}_{sid[:6]}"
+    if label not in taken:
+        return label
+    for n in range(8, len(sid) + 1, 2):
+        candidate = f"{slug[:25]}_{sid[:n]}"
+        if candidate not in taken:
+            return candidate
+    digest = hashlib.blake2b(session_id.encode(), digest_size=3).hexdigest()
+    return f"{slug[:25]}_{sid}-{digest}"
+
+
+def session_dir_for(user: str, session_id: str, label: str | None = None) -> Path:
+    """The workspace directory of a session, from its ids rather than from the ambience.
+
+    The same rule `get_session_dir` applies to the bound contextvars — the label when
+    the session has one, the id otherwise — so a `RunContext` built from ids and a
+    caller reading the contextvars land in the same directory.
+
+    Args:
+        user: Owner of the session.
+        session_id: The conversation.
+        label: Its human-readable directory name, when already minted.
+
+    Returns:
+        The directory, created if missing.
+    """
+    root = user_home(user) / "workspace"
+    d = root / safe_id(label or session_id)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def get_session_dir() -> Path:
@@ -284,9 +325,12 @@ def is_under_workspace(path: str | Path) -> bool:
 def cleanup_old_runs(ttl_seconds: int | None = None) -> int:
     """Purge session directories older than the TTL, for every user.
 
-    Called on CLI startup, so a machine that runs the agent regularly never
-    accumulates workspaces. Removal failures are ignored rather than raised:
-    housekeeping must not stop a user from asking a question.
+    Called on CLI startup, when the notebook magic loads and when the MCP server
+    starts, and every hour by `cleanup_periodically` under the web server — the one
+    process that never restarts, and so never reached this until it did. Removal
+    failures are ignored rather than raised: housekeeping must not stop a user from
+    asking a question. A user's home (profile, catalogs, speasy seed) is never touched;
+    only what is under `workspace/`.
 
     Args:
         ttl_seconds: Age above which a session directory is deleted, measured on
@@ -313,3 +357,29 @@ def cleanup_old_runs(ttl_seconds: int | None = None) -> int:
                 shutil.rmtree(session_dir, ignore_errors=True)
                 removed += 1
     return removed
+
+
+async def cleanup_periodically(period_seconds: float = 3600.0) -> None:
+    """Run `cleanup_old_runs` every `period_seconds` until the task is cancelled.
+
+    The web server used to clean up once, at startup, and then run for weeks: a demo
+    machine had 76 session directories of 269 MB each, every one of them past the
+    TTL. The sweep runs in a worker thread so a slow disk never stalls a stream, and
+    a failing sweep is logged and retried at the next tick rather than ending the task.
+
+    Args:
+        period_seconds: Time between sweeps; the first sweep happens after one period,
+            since the caller already swept at startup.
+    """
+    import asyncio
+
+    from helioai.logging_config import get_logger
+
+    while True:
+        await asyncio.sleep(period_seconds)
+        try:
+            removed = await asyncio.to_thread(cleanup_old_runs)
+            if removed:
+                get_logger(__name__).info("workspace_cleanup", removed=removed)
+        except Exception:
+            get_logger(__name__).warning("workspace_cleanup_failed", exc_info=True)

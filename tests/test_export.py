@@ -584,3 +584,28 @@ def test_methods_section_sees_recipes_loaded_by_a_sub_agent(monkeypatch, tmp_pat
     found = _collect_recipes(history)
     assert [r["name"] for r in found] == ["theta_bn"]
     assert found[0]["reference"] == "Schwartz (1998), ISSI SR-001"
+
+
+def test_narrative_does_not_credit_the_reader_with_an_automated_correction(wired, monkeypatch):
+    """The correction the loop injects rides in a `user` message (the only role the
+    providers forward from history). In the exported conversation it must read as
+    HelioAI's note, not as something the researcher typed."""
+    from helioai import export as export_module
+
+    history = export_module.store.get_or_create(_USER, _SESSION)
+    history.append(Message(role="assistant", content="Use cda/BOGUS/id."))
+    history.append(
+        Message(
+            role="user",
+            content="⚠️ AUTOMATED CORRECTION — not in the catalogue",
+            origin="correction",
+        )
+    )
+    history.append(Message(role="assistant", content="Use the real id."))
+    export_module.store.save(_USER, _SESSION, history)
+
+    nb = nbformat.read(str(export_session_notebook(_USER, _SESSION)), as_version=4)
+    narrative = next(c.source for c in nb.cells if c.source.startswith("## Conversation"))
+    assert "**You:** ⚠️ AUTOMATED CORRECTION" not in narrative
+    assert "_Automated note (correction):_ ⚠️ AUTOMATED CORRECTION" in narrative
+    assert "**You:** Plot IMF Bz from ACE on 2005-01-17" in narrative

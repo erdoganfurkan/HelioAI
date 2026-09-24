@@ -11,11 +11,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
-import json
 
 from helioai.config import settings
 from helioai.core.llm.base import close_sdk_client
 from helioai.logging_config import get_logger
+from helioai.tools.offload import run_blocking
+from helioai.tools.results import ToolResult
 
 log = get_logger(__name__)
 
@@ -34,32 +35,28 @@ _THUMB = 768
 _warned_no_creds = False
 
 
-async def maybe_review(tool_name: str, result: str) -> tuple[str, str | None]:
+async def maybe_review(tool_name: str, result: ToolResult) -> tuple[ToolResult, str | None]:
     """Attach a vision verdict to a run_python result carrying figures.
 
     No-op unless `HELIOAI_VISION_ENABLED` is set and the tool is `run_python`.
 
     Args:
         tool_name: Name of the tool that just ran.
-        result: Its JSON result string (read for `figure_paths`).
+        result: Its result; the payload is read for `figure_paths`.
 
     Returns:
-        (possibly augmented result, verdict text or None) — the verdict is a
+        (possibly amended result, verdict text or None) — the verdict is a
         stateless side-call; only its text enters the history, never the image.
     """
     if not settings.vision.enabled or tool_name != "run_python":
         return result, None
-    try:
-        data = json.loads(result)
-    except (ValueError, TypeError):
-        return result, None
+    data = result.payload
     if not isinstance(data, dict) or data.get("error") or not data.get("figure_paths"):
         return result, None
     verdict = await _review(data["figure_paths"])
     if not verdict:
         return result, None
-    data["figure_review"] = verdict
-    return json.dumps(data, ensure_ascii=False, default=str), verdict
+    return result.with_payload({**data, "figure_review": verdict}), verdict
 
 
 def _creds_ok() -> bool:
@@ -76,7 +73,7 @@ async def _review(figure_paths: list[str]) -> str | None:
             _warned_no_creds = True
         return None
     try:
-        images = [_png_b64(p) for p in figure_paths[:_MAX_FIGS]]
+        images = [await run_blocking(_png_b64, p) for p in figure_paths[:_MAX_FIGS]]
         verdict = await asyncio.wait_for(
             _call_vision(images, _PROMPT), timeout=settings.vision.timeout_s
         )
@@ -87,6 +84,7 @@ async def _review(figure_paths: list[str]) -> str | None:
 
 
 def _png_b64(path: str) -> str:
+    """Downscale and encode one figure. Synchronous PIL work — run through `run_blocking`."""
     from PIL import Image
 
     with Image.open(path) as im:

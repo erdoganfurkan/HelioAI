@@ -1,0 +1,8 @@
+{
+ "tool": "run_python",
+ "arguments": {
+  "code": "print(1)",
+  "_plot_dir": "/tmp"
+ },
+ "raw": "{\"error\": \"rejected private argument(s): ['_plot_dir']\"}"
+}

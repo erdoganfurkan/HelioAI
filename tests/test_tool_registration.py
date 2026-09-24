@@ -10,7 +10,6 @@ module pins the wiring itself.
 from __future__ import annotations
 
 import inspect
-import json
 
 import pytest
 
@@ -34,6 +33,7 @@ EXPECTED_TOOLS = {
     "save_catalog",
     "list_recipes",
     "load_recipe",
+    "run_recipe",
     "find_papers",
 }
 
@@ -95,6 +95,62 @@ def test_required_parameters_are_accepted_by_the_function(name):
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED_TOOLS))
+def test_schema_defaults_match_the_signature_defaults(name):
+    """A `default` in the schema is a promise about what happens when the model omits
+    the argument — and what happens is the *signature's* default. `run_python.timeout`
+    advertised 30 s for months after the signature moved to 60 s, so the model was
+    reasoning about a budget the sandbox did not have.
+    """
+    tool = _tools()[name]
+    sig = inspect.signature(tool.func)
+    for prop, schema in tool.parameters.get("properties", {}).items():
+        if "default" not in schema or prop not in sig.parameters:
+            continue
+        assert schema["default"] == sig.parameters[prop].default, (
+            f"{name}.{prop}: schema default {schema['default']!r} but the function "
+            f"defaults to {sig.parameters[prop].default!r}"
+        )
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED_TOOLS))
+def test_required_and_optional_agree_with_the_signature(name):
+    """A parameter without a default must be `required`, or the model may omit it and
+    the call dies with a TypeError; one with a default must not be, or the model is
+    forced to invent a value it did not need."""
+    tool = _tools()[name]
+    sig = inspect.signature(tool.func)
+    required = set(tool.parameters.get("required", []))
+    for prop in tool.parameters.get("properties", {}):
+        param = sig.parameters.get(prop)
+        if param is None:
+            continue
+        has_default = param.default is not inspect.Parameter.empty
+        assert (prop in required) == (not has_default), (
+            f"{name}.{prop}: required={prop in required} but signature default="
+            f"{'<none>' if not has_default else param.default!r}"
+        )
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED_TOOLS))
+def test_every_public_parameter_is_declared_in_the_schema(name):
+    """The reverse of the property check: a public parameter the schema does not
+    mention is one the model can never use. Underscore-prefixed parameters are the
+    framework's trusted channel and stay hidden on purpose."""
+    tool = _tools()[name]
+    sig = inspect.signature(tool.func)
+    declared = set(tool.parameters.get("properties", {}))
+    public = {
+        p.name
+        for p in sig.parameters.values()
+        if not p.name.startswith("_")
+        and p.kind not in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+    }
+    assert public <= declared, (
+        f"{name}: {public - declared} exist on the function, not in the schema"
+    )
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED_TOOLS))
 def test_every_tool_is_async(name):
     """registry.call_tool always awaits; a sync tool fails silently at dispatch."""
     assert inspect.iscoroutinefunction(_tools()[name].func), f"{name} is not async"
@@ -138,5 +194,6 @@ async def test_an_exception_without_a_message_is_still_reported_as_an_error():
         raise TimeoutError()
 
     result = await reg.call_tool("boom", {})
-    assert json.loads(result)["error"] == "TimeoutError"
-    assert describe_tool_result("boom", result).lower().startswith("error")
+    assert not result.ok
+    assert result.error == "TimeoutError"
+    assert describe_tool_result("boom", result.for_llm()).lower().startswith("error")

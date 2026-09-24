@@ -3,33 +3,37 @@
 Each role declares a tool whitelist, a system addon, and an optional set
 of skills auto-loaded into the sub's system prompt. Sub-agents run in
 isolation with a fresh context — the lead's history is invisible to them.
+
+The events a sub-agent yields are the non-lead-only kinds of `core/events.py`.
 """
 
 from __future__ import annotations
 
-import json
+import functools
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from contextlib import aclosing
+from dataclasses import dataclass
+from pathlib import Path
 
 import structlog
 
-from helioai.core.event_display import describe_tool_call
-from helioai.core.llm.base import LLMClient, Message, ToolDef
+from helioai.config import settings
+from helioai.core.events import make
+from helioai.core.llm.base import LLMClient, Message, ToolCall, ToolDef
+from helioai.core.llm.factory import build_llm_client
 from helioai.core.skills_loader import SkillError
 from helioai.core.skills_loader import load_skill as load_skill_body
 from helioai.core.tool_exec import (
-    _history_tool_result,
     check_answer,
-    compact_history,
-    emit_post_tool_events,
-    inject_run_python_args,
-    unknown_id_correction,
 )
-from helioai.core.vision import maybe_review
 from helioai.logging_config import get_logger
+from helioai.runtime.context import RunContext
+from helioai.runtime.policies import Policy
+from helioai.runtime.runner import RunEnd, Runner, _zero_usage
 from helioai.tools.registry import registry
+from helioai.tools.results import ToolResult
 
 log = get_logger(__name__)
 
@@ -42,6 +46,9 @@ class SubAgentRole:
 
     `allowed_tools` is enforced, not advisory — a role calling outside its set
     gets an error naming what it may use, and the tool is never dispatched.
+
+    `search_budget` is the role's lookup allowance before it must touch data; it only
+    takes effect under the `search_budget` experiment, and is 0 (no limit) otherwise.
     """
 
     name: str
@@ -51,6 +58,7 @@ class SubAgentRole:
     max_turns: int = 5
     auto_load_skills: tuple[str, ...] = ()
     sandbox_no_network: bool = False
+    search_budget: int = 0
 
 
 SUB_SYSTEM_PROMPT_BASE = """You are a focused sub-agent inside HelioAI. The lead agent delegated a narrow task to you.
@@ -115,8 +123,13 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "get_timeseries",
             "get_events_timeseries",
             "load_recipe",
+            "run_recipe",
             "run_python",
         ),
+        # Three lookups, then download (under the `search_budget` experiment): a run spent
+        # all twelve turns on search_parameters re-asking for ids it had been handed on its
+        # first call.
+        search_budget=3,
         # 8 was not enough for a multi-spacecraft job: discovering that a CDA
         # ephemeris does not cover the requested year costs a turn per candidate,
         # and the notebook's Act IV spent four of them before doing any analysis.
@@ -164,22 +177,19 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
         # list_recipes/load_recipe were missing, so this role could not reach the
         # recipes even though several exist for exactly its job. It reinvented the
         # jump conditions each time, unattributably.
-        allowed_tools=("run_python", "search_parameters", "list_recipes", "load_recipe"),
+        allowed_tools=(
+            "run_python",
+            "search_parameters",
+            "list_recipes",
+            "load_recipe",
+            "run_recipe",
+        ),
         max_turns=4,
+        search_budget=2,
         auto_load_skills=("plasma_physicist",),
         sandbox_no_network=True,
     ),
 }
-
-
-@dataclass
-class SubAgentResult:
-    """What a finished sub-agent hands back to the lead agent."""
-
-    summary: str = ""
-    artifacts: list[dict] = field(default_factory=list)
-    n_iterations: int = 0
-    error: str | None = None
 
 
 def task_tool_def() -> ToolDef:
@@ -222,7 +232,7 @@ def task_tool_def() -> ToolDef:
     )
 
 
-def _with_inventory(description: str) -> str:
+def _with_inventory(description: str, session_dir: Path | None = None) -> str:
     """Prepend the session's already-downloaded datasets to a sub-agent's task.
 
     The files are reachable — a sub-agent shares the lead's session directory, so
@@ -232,12 +242,20 @@ def _with_inventory(description: str) -> str:
     reach it with load_data(name)" impossible to follow.
 
     Silent on failure: a missing or unreadable manifest must not stop the task.
+
+    Args:
+        description: The task, in the lead's words.
+        session_dir: The lead's session directory, from its context; None reads the
+            bound session, for callers that predate contexts.
     """
     try:
-        import helioai.workspace as _ws
         from helioai.datastore import read_manifest
 
-        datasets = read_manifest(_ws.get_session_dir()).get("datasets", {})
+        if session_dir is None:
+            import helioai.workspace as _ws
+
+            session_dir = _ws.get_session_dir()
+        datasets = read_manifest(session_dir).get("datasets", {})
     except Exception as e:  # noqa: BLE001 — an inventory is a convenience, never a gate
         log.debug("subagent_inventory_failed", error=str(e))
         return description
@@ -311,12 +329,14 @@ async def stream_subagent(
     user_id: str,
     llm_client: LLMClient,
     task_id: str | None = None,
+    context: RunContext | None = None,
 ) -> AsyncIterator[dict]:
     """Async generator that runs a sub-agent and yields progress events.
 
-    Yields the same event types as stream_chat (tool_call, tool_result,
-    skill_loaded, artifact) enriched with sub_agent_ctx={role, task_id},
-    then a final sub_agent_end event carrying summary/artifacts/n_iterations/error.
+    Yields the kinds of `core/events.py` that are not lead-only (tool_call, tool_result,
+    skill_loaded, artifact, figure_review, invalid_ids, recipe_bypassed), each enriched
+    with sub_agent_ctx={role, task_id}, then a final sub_agent_end carrying
+    findings/summary/artifacts/n_iterations/error.
 
     `summary` is the sub-agent's whole deliverable and is emitted in full: it becomes
     the lead's tool result, so anything cut here is a measurement the lead can no
@@ -335,6 +355,9 @@ async def stream_subagent(
         llm_client: Provider client, shared with the lead.
         task_id: Correlation id echoed in every event, so a caller running
             several sub-agents can tell their streams apart.
+        context: The lead's run context; the sub-agent runs under a child of it, in the
+            same session directory. None derives one from the ids and the bound label,
+            for callers that predate contexts.
 
     Yields:
         Progress events, then a final `sub_agent_end`.
@@ -344,26 +367,25 @@ async def stream_subagent(
     if task_id is None:
         task_id = uuid.uuid4().hex[:8]
     ctx = {"role": role, "task_id": task_id}
-
-    # The user has to be bound too, not just the session: `_root()` resolves the workspace
-    # under `current_user()`, which defaults to "web". It works today only because the lead
-    # already bound it, so a sub-agent started out of band wrote to the wrong user's files.
-    _ws_token = _ws.set_session(parent_session_id)
-    _user_token = _ws.set_user(user_id) if user_id else None
+    if context is None:
+        context = RunContext.for_session(
+            user_id or _ws.current_user(), parent_session_id, label=_ws._current_label.get()
+        )
 
     if role not in AGENT_ROLES:
         known = ", ".join(sorted(AGENT_ROLES))
-        yield {
-            "event": "sub_agent_end",
-            "data": {
-                "task_id": task_id,
-                "role": role,
-                "summary": "",
-                "n_iterations": 0,
-                "error": f"unknown agent_role {role!r}. Known: {known}",
-                "artifacts": [],
-            },
-        }
+        yield make(
+            "sub_agent_end",
+            task_id=task_id,
+            role=role,
+            summary="",
+            n_iterations=0,
+            error=f"unknown agent_role {role!r}. Known: {known}",
+            artifacts=[],
+            findings={},
+            usage={},
+            capped=False,
+        )
         return
 
     role_cfg = AGENT_ROLES[role]
@@ -374,13 +396,22 @@ async def stream_subagent(
         sub_task_id=task_id,
     )
 
+    runner: Runner | None = None
+    own_client: LLMClient | None = None
+    provider = settings.llm.provider
     try:
         system_prompt, skills_loaded = _build_system_prompt(role_cfg)
+        role_model = settings.agent.role_models.get(role)
+        if role_model is not None:
+            provider, model_name = role_model
+            own_client = build_llm_client(provider, model=model_name)
+            llm_client = own_client
+            log.info("subagent_own_model", role=role, provider=provider, model=model_name)
         for skill_name in skills_loaded:
-            yield {"event": "skill_loaded", "data": {"name": skill_name, "sub_agent_ctx": ctx}}
+            yield make("skill_loaded", name=skill_name, sub_agent_ctx=ctx)
 
-        allowed = set(role_cfg.allowed_tools)
-        tools = registry.list_tool_defs(only=allowed)
+        allowed = frozenset(role_cfg.allowed_tools)
+        tools = tuple(registry.list_tool_defs(only=set(allowed)))
 
         log.info(
             "subagent_start",
@@ -390,194 +421,112 @@ async def stream_subagent(
             max_turns=role_cfg.max_turns,
         )
 
-        history: list[Message] = [Message(role="user", content=_with_inventory(description))]
-        artifacts: list[dict] = []
-        final_text = ""
-        n_iters = 0
+        history: list[Message] = [
+            Message(role="user", content=_with_inventory(description, context.session_dir))
+        ]
+        policy = Policy(
+            name=role,
+            system_prompt=system_prompt,
+            tools=tools,
+            max_turns=role_cfg.max_turns,
+            tool_choice_first="required",
+            allowed=allowed,
+            sandbox_no_network=role_cfg.sandbox_no_network,
+            sub_agent_ctx=ctx,
+            provider=provider,
+            model=role_model[1] if role_model else None,
+            search_budget=(
+                role_cfg.search_budget if "search_budget" in settings.agent.experiments else 0
+            ),
+        )
+        runner = Runner(
+            policy,
+            llm_client,
+            registry=registry,
+            ctx=context.child(agent=role, task_id=task_id, no_network=role_cfg.sandbox_no_network),
+            intercept=functools.partial(_deny_outside_whitelist, role=role, allowed=allowed),
+        )
         t0 = time.monotonic()
-        capped = False
-        retried_bogus_ids = False
 
-        for i in range(role_cfg.max_turns):
-            n_iters = i + 1
-            tc_choice = "required" if i == 0 else "auto"
-            response = await llm_client.chat(
-                compact_history(history), tools, system_prompt=system_prompt, tool_choice=tc_choice
-            )
-            history.append(response)
+        end: RunEnd | None = None
+        async with aclosing(runner.run(history)) as run:
+            async for item in run:
+                if isinstance(item, RunEnd):
+                    end = item
+                    break
+                yield item
+        assert end is not None
 
-            if not response.tool_calls:
-                final_text = response.content or ""
-                # Same reasoning as the lead loop: a fabricated id must cost a turn, not
-                # a footnote on an answer that has already been written.
-                if not retried_bogus_ids:
-                    from helioai.tools.rag import extract_ids, unknown_ids
-
-                    bogus_now = unknown_ids(extract_ids(final_text))
-                    if bogus_now:
-                        retried_bogus_ids = True
-                        log.warning("subagent_invented_ids_retry", role=role, ids=bogus_now)
-                        history.append(
-                            Message(role="user", content=unknown_id_correction(bogus_now))
-                        )
-                        continue
-                break
-
-            for tc in response.tool_calls:
-                log.info("tool_call_issued", turn=n_iters, tool=tc.name, sub_role=role)
-                yield {
-                    "event": "tool_call",
-                    "data": {
-                        "turn": n_iters,
-                        "name": tc.name,
-                        "arguments": tc.arguments,
-                        "display": describe_tool_call(tc.name, tc.arguments),
-                        "sub_agent_ctx": ctx,
-                    },
-                }
-
-                if tc.name not in allowed:
-                    log.warning("subagent_tool_denied", role=role, tool=tc.name)
-                    result = json.dumps(
-                        {
-                            "error": f"tool {tc.name!r} not available to {role!r}. Allowed: {sorted(allowed)}"
-                        }
-                    )
-                else:
-                    trusted = inject_run_python_args(
-                        tc.name, no_network=role_cfg.sandbox_no_network
-                    )
-                    result = await registry.call_tool(tc.name, tc.arguments, trusted=trusted)
-
-                result, figure_verdict = await maybe_review(tc.name, result)
-                if figure_verdict:
-                    yield {
-                        "event": "figure_review",
-                        "data": {"turn": n_iters, "text": figure_verdict, "sub_agent_ctx": ctx},
-                    }
-
-                for ev in emit_post_tool_events(
-                    tc.name,
-                    result,
-                    tool_result_extra={"turn": n_iters, "sub_agent_ctx": ctx},
-                    common_extra={"sub_agent_ctx": ctx},
-                ):
-                    if ev["event"] == "artifact":
-                        artifacts.append(
-                            {k: v for k, v in ev["data"].items() if k != "sub_agent_ctx"}
-                        )
-                    yield ev
-
-                history.append(
-                    Message(
-                        role="tool",
-                        tool_call_id=tc.id,
-                        content=_history_tool_result(tc.name, result),
-                    )
-                )
-        else:
-            capped = True
-            final_text = f"(sub-agent {role!r} reached its {role_cfg.max_turns}-turn cap)"
-
+        capped = end.capped
+        final_text = (
+            f"(sub-agent {role!r} reached its {role_cfg.max_turns}-turn cap)"
+            if capped
+            else end.final_text or ""
+        )
         log.info(
             "subagent_end",
             role=role,
-            n_iterations=n_iters,
+            n_iterations=end.turns,
             duration_ms=int((time.monotonic() - t0) * 1000),
             capped=capped,
-            n_artifacts=len(artifacts),
+            n_artifacts=len(end.artifacts),
         )
 
-        final_text, bogus, bypassed_recipes = check_answer(final_text, history, artifacts)
+        final_text, bogus, bypassed_recipes = check_answer(final_text, history, end.artifacts)
         if bogus:
             log.warning("subagent_invented_ids", role=role, ids=bogus)
-            yield {
-                "event": "invalid_ids",
-                "data": {"ids": bogus, "sub_agent_ctx": ctx},
-            }
+            yield make("invalid_ids", ids=bogus, sub_agent_ctx=ctx)
 
         if bypassed_recipes:
             log.warning("subagent_recipe_bypassed", role=role, recipes=bypassed_recipes)
-            yield {
-                "event": "recipe_bypassed",
-                "data": {"recipes": bypassed_recipes, "sub_agent_ctx": ctx},
-            }
+            yield make("recipe_bypassed", recipes=bypassed_recipes, sub_agent_ctx=ctx)
 
-        yield {
-            "event": "sub_agent_end",
-            "data": {
-                "task_id": task_id,
-                "role": role,
-                "findings": _findings(artifacts),
-                "summary": final_text,
-                "n_iterations": n_iters,
-                "error": final_text if capped else None,
-                "artifacts": artifacts,
-            },
-        }
+        yield make(
+            "sub_agent_end",
+            task_id=task_id,
+            role=role,
+            findings=_findings(end.artifacts),
+            summary=final_text,
+            n_iterations=end.turns,
+            error=final_text if capped else None,
+            artifacts=end.artifacts,
+            usage={**end.usage, "provider": provider},
+            capped=capped,
+        )
 
     except Exception as e:
         log.exception("subagent_error", role=role, task_id=task_id)
-        yield {
-            "event": "sub_agent_end",
-            "data": {
-                "task_id": task_id,
-                "role": role,
-                "findings": _findings(artifacts) if "artifacts" in dir() else {},
-                "summary": "",
-                "n_iterations": n_iters if "n_iters" in dir() else 0,
-                "error": str(e),
-                "artifacts": [],
-            },
-        }
+        artifacts = runner.artifacts if runner is not None else []
+        yield make(
+            "sub_agent_end",
+            task_id=task_id,
+            role=role,
+            findings=_findings(artifacts),
+            summary="",
+            n_iterations=runner.turns if runner is not None else 0,
+            error=str(e),
+            artifacts=[],
+            usage={**(runner.usage if runner is not None else _zero_usage()), "provider": provider},
+            capped=False,
+        )
 
     finally:
-        _ws.reset_session(_ws_token)
-        if _user_token is not None:
-            _ws.reset_user(_user_token)
+        if own_client is not None:
+            await own_client.aclose()
         structlog.contextvars.unbind_contextvars("parent_session_id", "sub_role", "sub_task_id")
 
 
-async def run_subagent(
-    role: str,
-    description: str,
-    *,
-    parent_session_id: str,
-    user_id: str,
-    llm_client: LLMClient,
-    task_id: str | None = None,
-) -> SubAgentResult:
-    """Run a sub-agent to completion and return only its outcome.
+def _deny_outside_whitelist(
+    tc: ToolCall, turn: int, *, role: str, allowed: frozenset[str]
+) -> AsyncIterator[dict | ToolResult] | None:
+    """A role's whitelist, applied: a call outside it is answered, never dispatched."""
+    if tc.name in allowed:
+        return None
+    log.warning("subagent_tool_denied", role=role, tool=tc.name)
+    return _denied(tc, role, allowed)
 
-    Non-streaming wrapper over `stream_subagent` — same arguments.
 
-    Args:
-        role: One of the whitelisted roles (parameter_hunter, data_analyst,
-            plasma_physicist, librarian).
-        description: The task handed to the sub-agent, in natural language.
-        parent_session_id: The lead conversation this run belongs to.
-        user_id: Storage namespace of that conversation.
-        llm_client: Provider client shared with the lead.
-        task_id: Optional id echoed in events, for UI correlation.
-
-    Returns:
-        SubAgentResult — `summary` (full final text), `artifacts`,
-        `n_iterations`, and `error` (set when the run failed or hit its cap).
-    """
-    async for ev in stream_subagent(
-        role=role,
-        description=description,
-        parent_session_id=parent_session_id,
-        user_id=user_id,
-        llm_client=llm_client,
-        task_id=task_id,
-    ):
-        if ev["event"] == "sub_agent_end":
-            d = ev["data"]
-            return SubAgentResult(
-                summary=d.get("summary", ""),
-                artifacts=d.get("artifacts", []),
-                n_iterations=d.get("n_iterations", 0),
-                error=d.get("error"),
-            )
-    return SubAgentResult(error="stream_subagent yielded no sub_agent_end")
+async def _denied(tc: ToolCall, role: str, allowed: frozenset[str]) -> AsyncIterator[ToolResult]:
+    yield ToolResult.failure(
+        tc.name, f"tool {tc.name!r} not available to {role!r}. Allowed: {sorted(allowed)}"
+    )

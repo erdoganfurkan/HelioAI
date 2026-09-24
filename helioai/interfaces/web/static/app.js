@@ -303,6 +303,15 @@ function renderEvent(view, ev) {
   } else if (event === 'figure_review') {
     renderFigureReview(view, data.text);
 
+  } else if (event === 'intent') {
+    // What the judge read the question as asking for, then the joins that disagreed with
+    // what the turn produced (core/joins.py) — observation, it decides nothing.
+    const parts = ['deliverable', 'quantity', 'frame', 'date'].filter(k => data[k]).map(k => `${k}: ${data[k]}`)
+      .concat(['event_named', 'uncertainty_required', 'method_named', 'two_spacecraft'].filter(k => data[k] === true).map(k => k.replace(/_/g, ' ')));
+    const mismatches = intentMismatches(data.checks || {});
+    const text = `intent — ${parts.join(' · ') || 'nothing decided'}` + (mismatches.length ? ` ⚠ ${mismatches.join('; ')}` : '');
+    appendTlEvent(view, '🎯', text, mismatches.length ? 'tl-issue' : 'tl-note');
+
   } else if (event === 'recipe_bypassed') {
     // Advisory, not a banner: exports resemble a computation with a calibrated recipe,
     // either never loaded or loaded and not actually called — worth a glance, not an alarm.
@@ -386,6 +395,19 @@ function renderEvent(view, ev) {
     view.chat.append(banner);
     if (isActive(view)) scrollBottom();
   }
+}
+
+// The joins of the intent event that disagreed — the same phrases as the CLI's `_intent_line`.
+function intentMismatches(checks) {
+  const out = [];
+  const f = checks.frame, w = checks.window, q = checks.quantity, r = checks.responsiveness || {};
+  if (f && f.match === false) out.push(`frame ${f.asked} asked, ${(f.loaded || []).join('/')} loaded`);
+  if (w && w.covered === false) out.push(`${w.date} not in any loaded series`);
+  if (w && (w.short || []).length) out.push(`${w.short.length} series short of the window asked`);
+  if (q && q.match === false) out.push(`${q.asked} asked, loaded ${Object.keys(q.loaded || {}).sort().join(', ')}`);
+  if (r.uncertainty && r.uncertainty.required && !r.uncertainty.claimed) out.push('uncertainty asked, none claimed');
+  for (const kind of (r.deliverable && r.deliverable.missing) || []) out.push(`${kind} asked, none produced`);
+  return out;
 }
 
 function renderFigureReview(view, text) {
@@ -520,8 +542,14 @@ function renderArtifact(view, data) {
     if (chips.children.length) card.append(chips);
 
     if (data.start && data.stop) {
-      const period = el('div', 'pc-period', `${data.start}  →  ${data.stop}`);
+      const got = data.obtained_start && data.obtained_stop
+        && (data.obtained_start.slice(0, 19) !== data.start.slice(0, 19)
+            || data.obtained_stop.slice(0, 19) !== data.stop.slice(0, 19));
+      const period = el('div', 'pc-period', got
+        ? `obtained ${data.obtained_start}  →  ${data.obtained_stop}   (asked ${data.start}  →  ${data.stop})`
+        : `${data.start}  →  ${data.stop}`);
       card.append(period);
+      if (data.coverage_note) card.append(el('div', 'pc-period pc-note', data.coverage_note));
     }
 
     view.chat.append(card);

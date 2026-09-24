@@ -124,6 +124,93 @@ async def test_lead_flags_a_recipe_it_loaded_but_never_called(
     assert flagged[0]["data"]["recipes"] == [{"recipe": "theta_bn", "reason": "not_called"}]
     assert "RECIPE CHECK" in next(e for e in events if e["event"] == "reply")["data"]["text"]
 
+    # The same finding reached the model one turn earlier, on the run_python result it
+    # read next — where it could still have called run_recipe instead of answering.
+    run_result = next(
+        e for e in events if e["event"] == "tool_result" and e["data"]["name"] == "run_python"
+    )
+    summary = json.loads(run_result["data"]["summary"])
+    assert "recipe_available" in summary, summary
+
+
+def test_a_recipe_is_offered_on_the_run_python_result_before_the_answer():
+    """The 2026-09-14 case, seen at the moment it happens: `theta_bn` loaded, its formula
+    rewritten inline, its name exported. The end-of-turn check says so to the reader; this
+    says so to the model, on the result it reads next. Same constants, imported."""
+    from helioai.core.llm.base import Message, ToolCall
+    from helioai.core.tool_exec import recipe_available
+    from helioai.tools.results import ToolResult
+
+    recipe_src = "def theta_bn(B_up, B_dn):\n    return {'theta_bn_deg': 62.68}\n"
+    history = [
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c1", name="load_recipe", arguments={"name": "theta_bn"})],
+        ),
+        Message(
+            role="tool",
+            tool_call_id="c1",
+            name="load_recipe",
+            content=json.dumps({"name": "theta_bn", "code": recipe_src, "metadata": {}}),
+        ),
+    ]
+    exports = {"theta_bn": {"mean": 54.85, "min": 54.85, "max": 54.85, "units": "deg"}}
+    result = ToolResult.from_raw("run_python", json.dumps({"stdout": "", "exports": exports}))
+
+    inline = "n = np.cross(np.cross(Bu, Bd), Bd - Bu)\nexport('theta_bn', np.array([th]), 'deg')"
+    out = recipe_available("run_python", {"code": inline}, result, history)
+    (finding,) = out.payload["recipe_available"]
+    assert finding["recipe"] == "theta_bn" and finding["reason"] == "not_called"
+    assert finding["run_with"].startswith("run_recipe('theta_bn'")
+    assert "recipe_available" in out.for_llm(), "the model reads it in the tool message"
+
+    called = "r = theta_bn(Bu, Bd)\nexport('theta_bn', np.array([r['theta_bn_deg']]), 'deg')"
+    assert (
+        "recipe_available"
+        not in recipe_available("run_python", {"code": called}, result, history).payload
+    ), "calling the recipe's own function is using it"
+
+    redefined = "def theta_bn(a, b):\n    return 1\nexport('angle', np.array([1.0]), 'deg')"
+    out = recipe_available("run_python", {"code": redefined}, result, history)
+    assert out.payload["recipe_available"][0]["reason"] == "not_called", "a copy under its name"
+
+    ran = history + [
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c3", name="run_recipe", arguments={"name": "theta_bn"})],
+        )
+    ]
+    assert (
+        "recipe_available"
+        not in recipe_available("run_python", {"code": inline}, result, ran).payload
+    ), "run through run_recipe: the shipped source ran"
+
+    plot_only = ToolResult.from_raw("run_python", json.dumps({"stdout": "", "exports": {}}))
+    assert (
+        "recipe_available"
+        not in recipe_available("run_python", {"code": inline}, plot_only, history).payload
+    ), "nothing exported, nothing to accuse"
+
+    never_loaded = ToolResult.from_raw(
+        "run_python",
+        json.dumps({"stdout": "", "exports": {"alfven_mach": {"mean": 3.1, "units": ""}}}),
+    )
+    (finding,) = recipe_available("run_python", {"code": "..."}, never_loaded, []).payload[
+        "recipe_available"
+    ]
+    assert (
+        finding
+        == {
+            "recipe": "rankine_hugoniot",
+            "reason": "not_loaded",
+            "run_with": finding["run_with"],
+        }
+        and "rh_jump" in finding["run_with"]
+    )
+    assert recipe_available("run_recipe", {"name": "theta_bn"}, result, history) is result
+
 
 @pytest.mark.asyncio
 async def test_lead_says_nothing_when_it_exported_nothing(monkeypatch, tmp_path, fake_llm_factory):

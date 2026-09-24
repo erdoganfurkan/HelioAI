@@ -212,6 +212,40 @@ def test_the_key_is_read_from_the_environment_and_never_required(monkeypatch):
     assert loaded.judgment.api_key == "k" and loaded.judgment.timeout_s == 0.5
 
 
+def test_the_jev_client_is_reopened_when_the_event_loop_changes(monkeypatch):
+    """Live run of 2026-09-23, six questions with the judge on, one `asyncio.run()` per
+    question as the CLI does: the pool opened under the first loop raised
+    `RuntimeError: Event loop is closed` on the second, `_warn_once` said so once, and
+    the judge abstained silently on every question after the first."""
+    import sys
+    from types import ModuleType
+
+    created: list[object] = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            created.append(self)
+
+    sdk = ModuleType("typesafe_sdk")
+    sdk.AsyncTypeSafeClient = FakeClient
+    sdk.RetryPolicy = lambda **kwargs: None
+    monkeypatch.setitem(sys.modules, "typesafe_sdk", sdk)
+    monkeypatch.setattr(settings.judgment, "api_key", "k")
+    backend = judgment._JevBackend()
+
+    async def once():
+        return backend._get_client()
+
+    async def twice():
+        return backend._get_client(), backend._get_client()
+
+    first = asyncio.run(once())
+    same_loop = asyncio.run(twice())
+    assert same_loop[0] is same_loop[1], "one client per loop, not per call"
+    assert same_loop[0] is not first, "a new loop gets a new client, never a closed pool"
+    assert len(created) == 2
+
+
 def test_our_questions_map_onto_the_sdk_types():
     pytest.importorskip("typesafe_sdk")
     sdk = judgment.to_sdk(QUESTIONS)
@@ -225,3 +259,38 @@ def test_the_jev_backend_needs_a_key_before_it_imports_anything(monkeypatch):
     monkeypatch.setattr(settings.judgment, "api_key", "")
     with pytest.raises(RuntimeError, match="TYPESAFE_API_KEY"):
         judgment._JevBackend()._get_client()
+
+
+def test_batch_asks_every_state_records_each_call_and_abstains_without_a_backend(
+    tmp_path, monkeypatch
+):
+    """A job (`helioai index --classify`) is an explicit request: it needs a judging
+    backend, not a site experiment, and records to a file of its own."""
+    from helioai.core.judgment import batch
+
+    monkeypatch.setattr(settings.judgment, "backend", "jev")
+    monkeypatch.setattr(settings.judgment, "timeout_s", 0.5)
+    monkeypatch.setattr(judgment, "_warned", set())
+    backend = _Answers(
+        {"mtype": SimpleNamespace(choice="Ephemeris", confidence=0.95, probabilities={})}
+    )
+    monkeypatch.setattr(judgment, "_backend", lambda: backend)
+    states = [{"product": f"p{i}"} for i in range(5)]
+    q = {"mtype": Choice("?", ("Ephemeris", "MagneticField"), floor=0.9)}
+
+    out = asyncio.run(batch("index", states, q, concurrency=2, record_to=tmp_path / "j.jsonl"))
+    assert [a["mtype"] for a in out] == ["Ephemeris"] * 5
+    assert len(backend.calls) == 5 and {c[0]["product"] for c in backend.calls} == {
+        f"p{i}" for i in range(5)
+    }
+    lines = [json.loads(row) for row in (tmp_path / "j.jsonl").read_text().splitlines()]
+    assert len(lines) == 5 and all(row["site"] == "index" for row in lines)
+
+    monkeypatch.setattr(judgment, "_backend", lambda: _Raises())
+    out = asyncio.run(batch("index", states[:2], q, record_to=tmp_path / "k.jsonl"))
+    assert out == [None, None]
+    assert len((tmp_path / "k.jsonl").read_text().splitlines()) == 2, "failures are recorded too"
+
+    monkeypatch.setattr(settings.judgment, "backend", "null")
+    monkeypatch.setattr(judgment, "_backend", lambda: _Refuses())
+    assert asyncio.run(batch("index", states, q)) == [None] * 5

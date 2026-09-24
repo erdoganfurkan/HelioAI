@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -217,6 +217,83 @@ def _record_dir() -> Path | None:
     return ctx.session_dir if ctx is not None else None
 
 
+async def batch(
+    site: str,
+    states: list[Mapping[str, Any]],
+    questions: Mapping[str, Question],
+    *,
+    concurrency: int = 8,
+    record_to: Path | None = None,
+    keys: Sequence[str] | None = None,
+) -> list[Answers | None]:
+    """Ask the same questions of many states, off the agent loop — for a job, not a turn.
+
+    The runtime's `ask` is gated by a site's experiment name because it runs inside a
+    conversation nobody asked to be judged. A job such as `helioai index --classify` is an
+    explicit request: it needs only a judging backend, and it records every call to a file
+    of its own (`record_to`) rather than to a session that does not exist. The same
+    thresholds decide the answers, so what a job writes and what a turn would read agree.
+
+    Args:
+        site: The job's name, in the records.
+        states: One state per item, JSON-serialisable.
+        questions: The questions, asked of every state.
+        concurrency: How many calls in flight at once (37 ms per item at eight, measured).
+        record_to: The JSON-lines file every call is appended to; None records nothing.
+        keys: One name per state, written into its record as `key` — the product id, so
+            a record can be found again without matching its text. The 82 266 records of
+            the first indexing pass carried none and had to be joined back by text.
+
+    Returns:
+        One `Answers` or `None` (abstained, failed, timed out) per state, in order.
+    """
+    if settings.judgment.backend == "null" or not states:
+        return [None] * len(states)
+    if keys is not None and len(keys) != len(states):
+        raise ValueError("one key per state")
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def one(state: Mapping[str, Any], key: str | None) -> Answers | None:
+        async with sem:
+            t0 = time.perf_counter()
+            try:
+                response = await asyncio.wait_for(
+                    _backend().ask(dict(state), dict(questions)),
+                    timeout=settings.judgment.timeout_s,
+                )
+            except Exception as e:
+                latency = (time.perf_counter() - t0) * 1000
+                _warn_once(site, e)
+                _record(
+                    site,
+                    state,
+                    questions,
+                    None,
+                    None,
+                    latency,
+                    error=str(e),
+                    path=record_to,
+                    key=key,
+                )
+                return None
+            latency = (time.perf_counter() - t0) * 1000
+            answers = Answers(
+                values=_decide(questions, response.answers),
+                raw=_raw(questions, response.answers),
+                model=response.model,
+                latency_ms=latency,
+                request_id=response.request_id,
+            )
+            _record(site, state, questions, answers, None, latency, path=record_to, key=key)
+            return answers
+
+    return list(
+        await asyncio.gather(
+            *(one(st, keys[i] if keys is not None else None) for i, st in enumerate(states))
+        )
+    )
+
+
 def _record(
     site: str,
     state: Mapping[str, Any],
@@ -226,10 +303,13 @@ def _record(
     latency_ms: float,
     *,
     error: str | None = None,
+    path: Path | None = None,
+    key: str | None = None,
 ) -> None:
     line = {
         "ts": datetime.now(UTC).isoformat(timespec="seconds"),
         "site": site,
+        "key": key,
         "backend": settings.judgment.backend,
         "model": answers.model if answers else settings.judgment.model,
         "latency_ms": round(latency_ms, 1),
@@ -242,12 +322,14 @@ def _record(
         "error": error,
     }
     try:
-        directory = _record_dir()
-        if directory is None:
-            log.debug("judgment_unrecorded_no_session", site=site)
-            return
-        directory.mkdir(parents=True, exist_ok=True)
-        with (directory / RECORD_FILE).open("a", encoding="utf-8") as f:
+        if path is None:
+            directory = _record_dir()
+            if directory is None:
+                log.debug("judgment_unrecorded_no_session", site=site)
+                return
+            path = directory / RECORD_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
     except Exception as e:
         log.warning("judgment_record_failed", site=site, error=str(e))
@@ -263,20 +345,170 @@ def _warn_once(site: str, error: Exception) -> None:
         log.warning("judgment_abstained", site=site, error=f"{type(error).__name__}: {error}")
 
 
+# ── The intent contract ──────────────────────────────────────────────────────────────
+#
+# What a question commits the answer to, read once from the question alone. Every field
+# is a Choice over a closed set or a yes/no: the judge never writes free text into the
+# system, and a date arrives as its named components — the code assembles the datetime,
+# because ordering dates is arithmetic and arithmetic is not what a reading model is for.
+# The quantity is a Choice over the index's own measurement-type vocabulary, so a later
+# join between "what was asked" and "what was retrieved" is an exact comparison of two
+# strings, not a judgement.
+
+_YEARS = tuple(str(y) for y in range(1990, 2028))
+_MONTHS = tuple(f"{m:02d}" for m in range(1, 13))
+_DAYS = tuple(f"{d:02d}" for d in range(1, 32))
+NONE = "none"
+
+DELIVERABLES: tuple[str, ...] = ("value", "figure", "catalogue", "procedure")
+"""What a request may want delivered, each asked as its own yes/no: one Choice over the
+same set abstained on every request that wanted two things at once — "plot |B| and compute
+θ_Bn" is a figure *and* a value — and abstaining on the commonest shape of a question is
+not a contract. A request that wants none of the four is an explanation."""
+
+INTENT_QUESTIONS: dict[str, Question] = {
+    "wants_value": Noul(
+        "Does the request ask for a measured value, a number or a quantitative result to be "
+        "reported — an angle, a density, a position, a time, a count, a peak?"
+    ),
+    "wants_figure": Noul("Does the request ask for a figure, a plot or a visualisation?"),
+    "wants_catalogue": Noul(
+        "Does the request ask for a list or catalogue of events, intervals or datasets as the "
+        "thing to be delivered — not a catalogue to be used as an input?"
+    ),
+    "wants_procedure": Noul(
+        "Is the answer itself meant to be code, a script or written step-by-step instructions "
+        "for the user to run later — as opposed to a request that the result be computed and "
+        "reported now, whatever tools or recipes it tells the system to use on the way?"
+    ),
+    "quantity": Choice(
+        "Which SPASE measurement type is the physical quantity the request is about? "
+        "MagneticField for B, IMF, field components or magnitude; ThermalPlasma for density, "
+        "temperature, velocity, plasma beta of the bulk plasma; EnergeticParticles for fluxes "
+        "above thermal energies, SEP, cosmic rays; Ephemeris for a position, orbit, trajectory; "
+        "ElectricField, Waves, IonComposition as named; none when the request names no quantity "
+        "(a catalogue lookup, an explanation).",
+        (
+            "MagneticField",
+            "ElectricField",
+            "ThermalPlasma",
+            "EnergeticParticles",
+            "IonComposition",
+            "Ephemeris",
+            "Waves",
+            "Spectrum",
+            NONE,
+        ),
+        floor=0.6,
+    ),
+    "frame": Choice(
+        "Which coordinate frame does the request name for the data, if any?",
+        ("GSE", "GSM", "RTN", "GEO", "SM", "HEE", "HCI", "other", NONE),
+        floor=0.6,
+    ),
+    "year": Choice("Which year does the request name, if any?", _YEARS + (NONE,), floor=0.6),
+    "month": Choice(
+        "Which month (01–12) does the request name, if any?", _MONTHS + (NONE,), floor=0.6
+    ),
+    "day": Choice(
+        "Which day of the month (01–31) does the request name, if any?", _DAYS + (NONE,), floor=0.6
+    ),
+    "event_named": Noul("Does the request name a specific event, date or time interval?"),
+    "uncertainty_required": Noul(
+        "Does the request ask for an uncertainty, an error bar, a confidence or a spread?"
+    ),
+    "method_named": Noul(
+        "Does the request name a specific method, recipe, formula or reference to use?"
+    ),
+    "two_spacecraft": Noul(
+        "Does the request compare or combine two or more spacecraft or instruments?"
+    ),
+}
+
+
+async def intent_contract(query: str) -> Answers | None:
+    """The contract for one question, or None — see `INTENT_QUESTIONS`.
+
+    Args:
+        query: The user's question, verbatim.
+    """
+    if not query or not query.strip():
+        return None
+    return await ask("intent", {"question": query}, INTENT_QUESTIONS)
+
+
+def contract_fields(answers: Answers) -> dict[str, Any]:
+    """The `intent` event's payload: the decided answers, the date assembled by the code.
+
+    A Choice of `none`, or an abstention, is `None` in the payload — the reader must not
+    mistake "the judge did not say" for "the request named nothing". `date` is the ISO day,
+    month or year the components make, with `date_precision` saying which; `deliverable`
+    is the kinds wanted joined with `+` ("value+figure"), `explanation` when all four were
+    decided no, `None` when any of them was left undecided and none was yes.
+    """
+    out: dict[str, Any] = {}
+    for name in INTENT_QUESTIONS:
+        value = answers.get(name)
+        out[name] = None if value in (None, NONE) else value
+    wanted = [kind for kind in DELIVERABLES if out.get(f"wants_{kind}") is True]
+    if wanted:
+        out["deliverable"] = "+".join(wanted)
+    elif all(out.get(f"wants_{kind}") is False for kind in DELIVERABLES):
+        out["deliverable"] = "explanation"
+    else:
+        out["deliverable"] = None
+    year, month, day = out.pop("year"), out.pop("month"), out.pop("day")
+    if year and month and day:
+        out["date"], out["date_precision"] = f"{year}-{month}-{day}", "day"
+    elif year and month:
+        out["date"], out["date_precision"] = f"{year}-{month}", "month"
+    elif year:
+        out["date"], out["date_precision"] = year, "year"
+    else:
+        out["date"], out["date_precision"] = None, None
+    out["model"] = answers.model
+    out["latency_ms"] = round(answers.latency_ms, 1)
+    return out
+
+
+async def collect(task: asyncio.Task) -> dict[str, Any] | None:
+    """Read a contract task the turn started; abstain if it has not answered in time.
+
+    The task ran concurrently with the model; by the time the answer is out it has almost
+    always finished. A turn never waits on the judge longer than one judgment budget.
+    """
+    try:
+        answers = await asyncio.wait_for(task, timeout=settings.judgment.timeout_s)
+    except Exception as e:
+        _warn_once("intent", e)
+        return None
+    return contract_fields(answers) if answers is not None else None
+
+
 class _JevBackend:
     """TypeSafe's System One through `typesafe-sdk`, imported only when first asked.
 
-    One client per process, no SDK-level retry: the whole call is already bounded by
+    One client per event loop, no SDK-level retry: the whole call is already bounded by
     `ask`, and a retry inside a 2 s budget would only make the timeout the common case.
+    Per loop rather than per process because the CLI runs one `asyncio.run()` per query:
+    a pool opened under the first loop raised `Event loop is closed` from the second
+    query on, and the judge abstained silently for the rest of the session.
     """
 
     def __init__(self) -> None:
         self._client: Any = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def _get_client(self) -> Any:
+        if not settings.judgment.api_key:
+            raise RuntimeError("TYPESAFE_API_KEY is not set")
+        try:
+            loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._client is not None and self._loop is not loop:
+            self._client = None
         if self._client is None:
-            if not settings.judgment.api_key:
-                raise RuntimeError("TYPESAFE_API_KEY is not set")
             from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
             self._client = AsyncTypeSafeClient(
@@ -284,6 +516,7 @@ class _JevBackend:
                 model=settings.judgment.model,
                 retry=RetryPolicy(max_retries=0, timeout=settings.judgment.timeout_s),
             )
+            self._loop = loop
         return self._client
 
     async def ask(self, state: dict[str, Any], questions: dict[str, Question]) -> Any:

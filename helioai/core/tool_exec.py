@@ -363,6 +363,11 @@ def _extract_artifact(tool_name: str, payload: object) -> list[dict]:
         )
         if (data.get("quality") or {}).get("notable"):
             card["quality"] = data["quality"]
+        # What came back, when it is not what was asked: a series clipped to the archive's
+        # coverage or to a gap is the one fact the reader most needs on the card.
+        for key in ("obtained_start", "obtained_stop", "coverage_note"):
+            if data.get(key):
+                card[key] = data[key]
         artifacts.append(card)
 
     return artifacts
@@ -622,6 +627,101 @@ def _calls_any(code: str, names: set[str]) -> bool:
     """Whether `code` invokes one of `names` — a definition of it does not count."""
     body = _DEF_LINE.sub("", code)
     return any(re.search(rf"\b{re.escape(n)}\s*\(", body) for n in names)
+
+
+def _loaded_recipes(history: list) -> tuple[dict[str, str], set[str]]:
+    """Recipes the run loaded, with their source, and the ones it ran through `run_recipe`."""
+    loaded_calls: dict[str, str] = {}
+    ran: set[str] = set()
+    for m in history:
+        for tc in getattr(m, "tool_calls", None) or []:
+            name = (tc.arguments or {}).get("name")
+            if tc.name == "load_recipe" and name:
+                loaded_calls[tc.id] = name
+            elif tc.name == "run_recipe" and name:
+                ran.add(name)
+    sources: dict[str, str] = {}
+    for m in history:
+        if getattr(m, "role", None) != "tool" or m.tool_call_id not in loaded_calls:
+            continue
+        try:
+            payload = json.loads(m.content)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(payload, dict) and payload.get("code"):
+            sources[loaded_calls[m.tool_call_id]] = str(payload["code"])
+    return sources, ran
+
+
+def recipe_available(
+    tool_name: str, arguments: dict | None, result: ToolResult, history: list
+) -> ToolResult:
+    """Tell the model, on the `run_python` result it is about to read, that a shipped
+    recipe covers what its code just computed.
+
+    `_flag_recipe_bypass` reads the same signals at the end of the turn and says so in
+    the answer — after the model has stopped acting, for the reader. Here the same
+    finding rides on the tool result itself, so the next turn can call `run_recipe`
+    instead of defending a hand-written copy: on the fourth live run of 00_quickstart
+    the analyst loaded `theta_bn`, rewrote the formula inline, exported `theta_bn`, and
+    reported 54.85° from a window the recipe would not have chosen; nothing told it
+    before its answer. Same constants and helpers, imported, so the two readings cannot
+    disagree. Annotates, never blocks — the code ran, its exports stand, and the model
+    may still argue. A `run_recipe` result is exempt: the shipped source ran.
+
+    Args:
+        tool_name: The tool that just ran.
+        arguments: Its arguments; the `code` of a `run_python` is what is read.
+        result: Its result; the exports say what the code computed.
+        history: The run so far, for the recipes it loaded or ran.
+
+    Returns:
+        The result, with `recipe_available` — `[{recipe, reason, run_with}]` — added to
+        the payload when a signal fires; unchanged otherwise.
+    """
+    if tool_name != "run_python":
+        return result
+    data = result.payload
+    if not isinstance(data, dict) or data.get("error"):
+        return result
+    exported = {
+        name.lower()
+        for name, stats in (data.get("exports") or {}).items()
+        if isinstance(stats, dict) and not stats.get("error")
+    }
+    if not exported:
+        return result
+    from helioai.tools.recipes import HELPER_ALTERNATIVES, RECIPE_SIGNATURES, _recipe_path, run_with
+
+    code = str((arguments or {}).get("code") or "")
+    loaded, ran = _loaded_recipes(history)
+    findings: list[dict] = []
+    for name, source in loaded.items():
+        if name in ran:
+            continue
+        functions = _recipe_functions(source)
+        signatures = RECIPE_SIGNATURES.get(name, (name,))
+        exports_it = any(sig in e for e in exported for sig in signatures)
+        redefines_it = bool(functions & _recipe_functions(code))
+        if functions and not _calls_any(code, functions) and (exports_it or redefines_it):
+            findings.append(
+                {"recipe": name, "reason": "not_called", "run_with": run_with(name, source)}
+            )
+    named = {f["recipe"] for f in findings}
+    for name, signatures in RECIPE_SIGNATURES.items():
+        if name in loaded or name in ran or name in named:
+            continue
+        if any(h in code for h in HELPER_ALTERNATIVES.get(name, ())):
+            continue
+        if any(sig in e for e in exported for sig in signatures):
+            path = _recipe_path(name)
+            source = path.read_text(encoding="utf-8") if path else ""
+            findings.append(
+                {"recipe": name, "reason": "not_loaded", "run_with": run_with(name, source)}
+            )
+    if not findings:
+        return result
+    return result.with_payload({**data, "recipe_available": findings})
 
 
 def _flag_recipe_bypass(text: str, history: list, artifacts: list[dict]) -> tuple[str, list[dict]]:

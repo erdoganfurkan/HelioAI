@@ -6,7 +6,7 @@ Usage:
     helioai --resume              # pick a past session and continue it
     helioai history               # list sessions
     helioai history delete <id>   # delete a session and its workspace
-    helioai index [--rebuild]     # (re)index the speasy catalog
+    helioai index [--rebuild --classify]   # (re)index the speasy catalog; --classify fills measurement types and regions
     helioai export [id]           # export a session as a reproducible .ipynb
     helioai profile               # edit the user profile
     helioai mcp-install [--write] # MCP client config pointing at this install
@@ -185,6 +185,22 @@ def _same_words(a: str, b: str) -> bool:
     return _MARKUP.sub("", a) == _MARKUP.sub("", b)
 
 
+def _intent_line(data: dict) -> str:
+    """One dim line for the contract the judge read: what it decided, then the joins
+    that disagreed with what the turn produced — nothing else."""
+    from helioai.core.joins import summary
+
+    parts = [f"{k}: {data[k]}" for k in ("deliverable", "quantity", "frame", "date") if data.get(k)]
+    parts += [
+        k.replace("_", " ")
+        for k in ("event_named", "uncertainty_required", "method_named", "two_spacecraft")
+        if data.get(k) is True
+    ]
+    line = " · ".join(parts) or "nothing decided"
+    mismatches = summary(data.get("checks"))
+    return f"{line} ⚠ {'; '.join(mismatches)}" if mismatches else line
+
+
 def _render_event(ev: dict) -> None:
     from helioai.core.event_display import describe_findings
 
@@ -276,6 +292,9 @@ def _render_event(ev: dict) -> None:
     elif name == "figure_review":
         print(f"{pad}\033[95m🔍 figure review: {data.get('text', '')}\033[0m")
 
+    elif name == "intent":
+        print(f"{pad}\033[2m🎯 intent: {_intent_line(data)}\033[0m")
+
     elif name == "provenance":
         counts = (
             f"{data.get('matched', 0)} traced, {data.get('contradicted', 0)} contradicted, "
@@ -328,6 +347,7 @@ def _render_event(ev: dict) -> None:
 
 async def _run_query(query: str, *, restricted: bool = True) -> None:
     import helioai.tools.setup  # noqa: F401  registers all tools
+    from helioai.core import judgment
     from helioai.core.agent_loop import stream_chat
     from helioai.logging_config import setup_logging
     from helioai.tools.mcp_client import discover_and_register
@@ -347,12 +367,13 @@ async def _run_query(query: str, *, restricted: bool = True) -> None:
         # The interactive loop runs one asyncio.run per query, so the pool must be
         # released here rather than left for the garbage collector.
         await llm.aclose()
+        await judgment.aclose()
 
 
-def _run_index(rebuild: bool = False) -> None:
+def _run_index(rebuild: bool = False, classify: bool = False) -> None:
     from helioai.indexer import build_index  # helioai/indexer.py
 
-    build_index(rebuild=rebuild)
+    build_index(rebuild=rebuild, classify=classify)
 
 
 def _run_export(prefix: str | None = None) -> None:
@@ -688,7 +709,9 @@ def _run_command(command: str, argv: list[str]) -> None:
             _show_history()
     elif command == "index":
         p.add_argument("--rebuild", action="store_true")
-        _run_index(rebuild=p.parse_args(argv).rebuild)
+        p.add_argument("--classify", action="store_true")
+        ns = p.parse_args(argv)
+        _run_index(rebuild=ns.rebuild, classify=ns.classify)
     elif command == "profile":
         p.parse_args(argv)
         _run_profile()

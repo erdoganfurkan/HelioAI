@@ -152,6 +152,80 @@ def _amda_mission(spase_id: str) -> str:
     return " ".join(segments[:-1])
 
 
+_SPASE_NUMERICAL = "/NumericalData/"
+_ISO_DURATION = re.compile(
+    r"^PT(?:(?P<h>\d+(?:\.\d+)?)H)?(?:(?P<m>\d+(?:\.\d+)?)M)?(?:(?P<s>\d+(?:\.\d+)?)S)?$", re.I
+)
+
+
+def _cadence_label(seconds: float) -> str:
+    if seconds >= 3600:
+        return f"{seconds / 3600:g} h"
+    if seconds >= 60:
+        return f"{seconds / 60:g} min"
+    if seconds >= 1:
+        return f"{seconds:g} s"
+    return f"{seconds * 1000:g} ms"
+
+
+def _cda_spase(resource_id: str) -> tuple[str, str]:
+    """The words of a CDAWeb dataset's SPASE resource id, and its cadence, for the text.
+
+    A CDA product's text said what its variable was and nothing about whose it was:
+    `cda/RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3/Mag` read "Mag. Magnetometer vector.
+    Fluxgate magnetometer data - Craig Kletzing (University of Iowa)." — no RBSP, no Van
+    Allen, no EMFISIS, no GSM, no 4 s. Those words lived only in the id, which the sparse
+    channel tokenises and the dense channel never sees, so for "Van Allen Probe A EMFISIS
+    4-second magnetic field GSM" every ACE, ISEE and IMP-8 vector outranked it (2026-09-22,
+    rank 10–11 in the agent's third query). The same defect that hid 780 AMDA products
+    from their mission name, fixed for AMDA by the `Dataset:`/`Mission:` sentences and
+    never for the 68 000 CDA products. CDAWeb publishes the words: 64 % of its datasets
+    carry `spase://NASA/NumericalData/RBSP/A/EMFISIS/MAGNETOMETER/L3/GSM/PT4S` — mission,
+    spacecraft, instrument, level, frame and, last, the cadence as an ISO 8601 duration.
+
+    Args:
+        resource_id: The dataset's `spase_DatasetResourceID`, possibly blank.
+
+    Returns:
+        `(words, cadence)`: the path segments after `NumericalData/` joined by spaces,
+        without the duration, and the duration rendered ("4 s", "1 min"); both empty
+        when the id is absent or not of that shape.
+
+    Example:
+        >>> _cda_spase("spase://NASA/NumericalData/RBSP/A/EMFISIS/MAGNETOMETER/L3/GSM/PT4S")
+        ('RBSP A EMFISIS MAGNETOMETER L3 GSM', '4 s')
+    """
+    text = str(resource_id or "").strip()
+    if _SPASE_NUMERICAL not in text:
+        return "", ""
+    segments = [seg for seg in text.split(_SPASE_NUMERICAL, 1)[1].split("/") if seg]
+    cadence = ""
+    if segments and (m := _ISO_DURATION.match(segments[-1])):
+        seconds = (
+            float(m.group("h") or 0) * 3600
+            + float(m.group("m") or 0) * 60
+            + float(m.group("s") or 0)
+        )
+        if seconds > 0:
+            cadence = _cadence_label(seconds)
+        segments = segments[:-1]
+    return " ".join(segments), cadence
+
+
+def _cda_components(child_vars: dict) -> list[str]:
+    """The component labels of a CDAWeb vector, for the text: `LABL_PTR_1` reads
+    `['Bx_GSM', 'By_GSM', 'Bz_GSM']` on the RBSP field vector and says its frame where
+    nothing else in the product does. A scalar's single label repeats its name and is
+    left out."""
+    labels = child_vars.get("LABL_PTR_1")
+    if isinstance(labels, str):
+        labels = [labels]
+    if not isinstance(labels, list | tuple):
+        return []
+    cleaned = [str(x).strip() for x in labels if str(x).strip()]
+    return cleaned if len(cleaned) >= 2 else []
+
+
 def _extract_dataset_meta(child_vars: dict, provider_prefix: str) -> dict:
     """Extract scientific metadata from a DatasetIndex node for propagation to its parameters."""
     meta: dict = {}
@@ -178,6 +252,14 @@ def _extract_dataset_meta(child_vars: dict, provider_prefix: str) -> dict:
         desc = child_vars.get("description") or ""
         if desc:
             meta["dataset_description"] = desc[:200]
+        dataset_id = child_vars.get("serviceprovider_ID") or child_vars.get("__spz_uid__") or ""
+        if dataset_id:
+            meta["dataset_id"] = str(dataset_id)
+        words, cadence = _cda_spase(child_vars.get("spase_DatasetResourceID") or "")
+        if words:
+            meta["spase"] = words
+        if cadence:
+            meta["cadence"] = cadence
     elif provider_prefix == "csa":
         mtypes = child_vars.get("measurement_types") or ""
         if mtypes:
@@ -210,7 +292,9 @@ def _is_dataset_node(child_vars: dict, provider_prefix: str) -> bool:
     return False
 
 
-def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = True) -> int:
+def build_index(
+    rebuild: bool = False, batch_size: int = 128, verbose: bool = True, classify: bool = False
+) -> int:
     """Walk the speasy inventory and index all parameters into ChromaDB.
 
     Backs `helioai index` and must run once before `search_parameters` works;
@@ -220,6 +304,10 @@ def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = Tr
         rebuild: Drop and re-create the collection instead of appending.
         batch_size: Documents per ChromaDB insert.
         verbose: Print per-provider progress to stdout.
+        classify: Ask the judgment backend, before embedding, for the SPASE measurement
+            type of every product the archive leaves untyped and for the SPASE region of
+            every product whose region is the table's guess (`--classify`; needs
+            `HELIOAI_JUDGMENT_BACKEND=jev`). See `classify_products`.
 
     Returns:
         Number of parameters indexed (0 when speasy or chromadb is missing).
@@ -245,11 +333,22 @@ def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = Tr
     embed_model = settings.rag.embed_model
 
     if rebuild and chroma_dir.exists():
+        records = chroma_dir / JUDGMENT_RECORDS
+        kept = records.read_bytes() if records.exists() else None
         if verbose:
             print(f"[indexer] wiping {chroma_dir}")
         shutil.rmtree(chroma_dir)
+        if kept is not None:
+            chroma_dir.mkdir(parents=True, exist_ok=True)
+            records.write_bytes(kept)
 
     chroma_dir.mkdir(parents=True, exist_ok=True)
+    judged_meta, judged = load_judged(SHIPPED_JUDGED, local_judged_path())
+    if verbose and judged:
+        print(
+            f"[indexer] {len(judged)} products already put to the judge "
+            f"(snapshot {judged_meta.get('date', '?')}, {', '.join(judged_meta.get('models') or [])})"
+        )
 
     if verbose:
         print(f"[indexer] loading embedding model {embed_model}…")
@@ -291,6 +390,21 @@ def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = Tr
             print("[indexer] up to date — nothing to index")
         return 0
 
+    if judged:
+        applied = apply_judged(docs, judged)
+        if verbose:
+            print(
+                f"[indexer] the judge's recorded answers typed {applied} products, no request made"
+            )
+    if classify:
+        import asyncio
+
+        docs = asyncio.run(
+            classify_products(
+                docs, chroma_dir, judged=judged, judged_meta=judged_meta, verbose=verbose
+            )
+        )
+
     t0 = time.perf_counter()
     total = 0
 
@@ -325,6 +439,380 @@ def build_index(rebuild: bool = False, batch_size: int = 128, verbose: bool = Tr
     )
 
     return total + cat_total
+
+
+MEASUREMENT_TYPES: tuple[str, ...] = (
+    "MagneticField",
+    "ElectricField",
+    "ThermalPlasma",
+    "EnergeticParticles",
+    "IonComposition",
+    "Ephemeris",
+    "Waves",
+    "Spectrum",
+    "NeutralGas",
+    "InstrumentStatus",
+    "Irradiance",
+    "Radiance",
+)
+"""The SPASE MeasurementType vocabulary the index already carries (AMDA, CSA), as the
+closed set a classifier chooses from — so a filled field is usable as an exact filter."""
+
+MEASUREMENT_TYPE_INSTRUCTIONS = (
+    "Which SPASE MeasurementType best describes this archived data product? The type "
+    "follows the instrument's population, as SPASE assigns it: ThermalPlasma covers "
+    "everything a thermal plasma analyser produces — bulk moments (density, temperature, "
+    "velocity), and also the electron or ion distributions, pitch-angle fluxes, phase-space "
+    "densities and raw counts of instruments such as PEACE, CIS/HIA/CODIF, EAS, SWA, SPC, "
+    "SWE, FPI, HPCA, even when binned in keV. EnergeticParticles is for dedicated "
+    "energetic-particle detectors (tens of keV to GeV: EPD, RAPID, EIS, FEEPS, SIS, EPHIN, "
+    "cosmic rays). Ephemeris is a spacecraft position, orbit, attitude or a geometric angle. "
+    "IonComposition is per-species ion measurements of a mass spectrometer. Waves and "
+    "Spectrum are wave or spectral products. InstrumentStatus is housekeeping: temperatures, "
+    "voltages, modes, quality flags."
+)
+MEASUREMENT_TYPE_FLOOR = 0.9
+_LABEL_SENTENCE = re.compile(r"\s*Measurement:\s*[^.]*\.\s*")
+_REGION_SENTENCE = re.compile(r"\s*Region:\s*[A-Za-z0-9.]+\.(?=\s|$)")
+
+REGIONS: tuple[str, ...] = (
+    "Sun",
+    "Sun.Corona",
+    "Heliosphere",
+    "Heliosphere.Inner",
+    "Heliosphere.NearEarth",
+    "Heliosphere.Remote1AU",
+    "Heliosphere.Outer",
+    "Earth",
+    "Earth.Magnetosphere",
+    "Earth.Magnetosheath",
+    "Earth.Magnetosphere.Polar",
+    "Earth.Magnetosphere.Magnetotail",
+    "Earth.Magnetosphere.RadiationBelt",
+    "Earth.NearSurface",
+    "Earth.NearSurface.Ionosphere",
+    "Earth.NearSurface.AuroralRegion",
+    "Earth.NearSurface.EquatorialRegion",
+    "Earth.NearSurface.PolarCap",
+    "Mercury",
+    "Venus",
+    "Mars",
+    "Jupiter",
+    "Jupiter.Io",
+    "Jupiter.Europa",
+    "Jupiter.Ganymede",
+    "Jupiter.Callisto",
+    "Saturn",
+    "Saturn.Enceladus",
+    "Uranus",
+    "Neptune",
+    "Pluto",
+    "Comet",
+)
+"""The SPASE Region vocabulary AMDA publishes as dataset targets (30 values on 8 435
+products) plus the two the indexer's table uses and AMDA does not — the closed set a
+classifier chooses from."""
+
+REGION_INSTRUCTIONS = (
+    "In which SPASE Region was this archived data product observed? The region is the body "
+    "and domain the archive files the dataset under, decided by the mission and its orbit, "
+    "not by the physical quantity. Spacecraft at L1 or upstream of Earth (Wind, ACE, DSCOVR, "
+    "OMNI, SOHO) are Heliosphere.NearEarth; STEREO is Heliosphere.Remote1AU; Solar Orbiter, "
+    "Parker Solar Probe, Helios, MESSENGER cruise and BepiColombo cruise are "
+    "Heliosphere.Inner; Voyager and New Horizons beyond Saturn are Heliosphere.Outer; a "
+    "cruise phase or an interplanetary monitor with no nearer body is Heliosphere. "
+    "Earth-orbiting magnetospheric missions (Cluster, MMS, THEMIS, Geotail, Double Star, "
+    "GOES) are Earth.Magnetosphere unless the dataset is explicitly a magnetosheath, "
+    "magnetotail, polar or radiation-belt product; ground-based instruments (EISCAT, "
+    "magnetometer stations, indices such as Kp, AE, Dst) are Earth or Earth.NearSurface.*. "
+    "An orbiter of a planet is that planet (Juno, Galileo → Jupiter; Cassini → Saturn; "
+    "MAVEN, Mars Express → Mars; Venus Express → Venus; MESSENGER in orbit → Mercury); a "
+    "moon flyby product is Planet.Moon."
+)
+REGION_FLOOR = 0.9
+
+
+JUDGMENT_RECORDS = "judgment_index.jsonl"
+JUDGED_FILE = "judged_products.jsonl.gz"
+SHIPPED_JUDGED = Path(__file__).parent / "data" / JUDGED_FILE
+"""Every question the judge has been asked about a product, with its answer, shipped with
+the package: one gzipped JSON line per product (`id`, `name`, then one `{choice,
+confidence}` per question asked — `mtype`, `region`), after a first line of provenance
+(`meta`: date, models, floors, count). It is the part of the index that cannot be rebuilt
+from code — 82 266 requests, US$ 2.4 on 2026-09-22 — kept as the judge's raw answers, not
+as decided fields, so the policy (floors, never overwriting a published label) lives in
+code and can change without asking again. Abstentions are in it too: a question already
+asked is not paid for twice. `helioai index` applies it to every product the archive left
+untyped; `--classify` asks only what no record answers and appends to the local copy."""
+
+
+def local_judged_path() -> Path:
+    """Where `--classify` writes the answers it obtains: beside the data, not the index.
+
+    The Chroma directory is wiped by `--rebuild`; the data root is not. A user with a key
+    who classifies a new provider keeps those answers across every rebuild, and they take
+    precedence over the shipped file for the same id.
+    """
+    from helioai.config import settings
+
+    return Path(settings.data_dir) / JUDGED_FILE
+
+
+def load_judged(*paths: Path) -> tuple[dict, dict[str, dict]]:
+    """Read the judge's recorded answers from each file in turn, later files overriding
+    earlier ones id by id; a missing or unreadable file contributes nothing.
+
+    Returns:
+        `(meta, records)` — the provenance of the last file read that had any, and
+        `{id: {"name": …, "mtype": {"choice", "confidence"}, "region": {…}}}`.
+    """
+    import gzip
+    import json
+
+    meta: dict = {}
+    records: dict[str, dict] = {}
+    for path in paths:
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    if "meta" in row:
+                        meta = dict(row["meta"])
+                        continue
+                    pid = row.get("id")
+                    if pid:
+                        records[pid] = {k: v for k, v in row.items() if k != "id"}
+        except (OSError, ValueError):
+            continue
+    return meta, records
+
+
+def save_judged(path: Path, meta: dict, records: dict[str, dict]) -> None:
+    """Write the answers as `load_judged` reads them, sorted by id, provenance first."""
+    import gzip
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    meta = {**meta, "asked": len(records)}
+    with gzip.open(path, "wt", encoding="utf-8", compresslevel=9) as f:
+        f.write(json.dumps({"meta": meta}, ensure_ascii=False) + "\n")
+        for pid in sorted(records):
+            f.write(json.dumps({"id": pid, **records[pid]}, ensure_ascii=False) + "\n")
+
+
+def _answer(record: dict, question: str, floor: float) -> tuple[str | None, float]:
+    """The recorded choice for a question when the judge was confident enough, else None."""
+    raw = record.get(question)
+    if not isinstance(raw, dict) or not raw.get("choice"):
+        return None, 0.0
+    confidence = float(raw.get("confidence") or 0.0)
+    return (raw["choice"], confidence) if confidence >= floor else (None, confidence)
+
+
+def _apply_record(doc: dict, record: dict) -> bool:
+    """Write one product's recorded answers onto its freshly walked doc: fill the empty
+    type, flag the contradicted label, replace the table's region — never touch what the
+    archive publishes today. Returns whether anything was written."""
+    meta, touched = doc["meta"], False
+    label, confidence = _answer(record, "mtype", MEASUREMENT_TYPE_FLOOR)
+    if label:
+        published = meta.get("measurement_type")
+        if not published:
+            meta["measurement_type"] = label
+            meta["measurement_type_source"] = "jev"
+            meta["measurement_type_confidence"] = round(confidence, 3)
+            doc["text"] = _before_coverage(doc["text"], f"Measurement: {label}.")
+            touched = True
+        elif _normalised_type(published) != _normalised_type(label):
+            meta["measurement_type_jev"] = label
+            meta["measurement_type_jev_confidence"] = round(confidence, 3)
+            touched = True
+    region, confidence = _answer(record, "region", REGION_FLOOR)
+    if region and meta.get("region_source") != "archive":
+        meta["region"] = region
+        meta["region_source"] = "jev"
+        meta["region_confidence"] = round(confidence, 3)
+        doc["text"] = _with_region_sentence(doc["text"], region)
+        touched = True
+    return touched
+
+
+def apply_judged(docs: list[dict], judged: dict[str, dict]) -> int:
+    """Apply the recorded answers to every walked doc they name.
+
+    A record whose `name` no longer matches the product's is skipped: the id was reused
+    for something else, and a type decided about the old content is not evidence about
+    the new. A record without a name (none of the first pass had one) is applied.
+
+    Returns:
+        How many docs received at least one field.
+    """
+    applied = 0
+    for doc in docs:
+        record = judged.get(doc["id"])
+        if not record:
+            continue
+        name = record.get("name")
+        if name and doc["meta"].get("name") and name != doc["meta"]["name"]:
+            continue
+        applied += _apply_record(doc, record)
+    return applied
+
+
+def _normalised_type(label: str | None) -> str:
+    return "".join(ch for ch in str(label or "").split(",")[0].lower() if ch.isalnum())
+
+
+def _before_coverage(text: str, sentence: str) -> str:
+    """The text with one more sentence, placed before the coverage sentence — the dates
+    close every indexed text, as `_build_text` writes it."""
+    head, sep, tail = text.strip().partition(" Coverage: ")
+    return f"{head} {sentence}{sep}{tail}" if sep else f"{head} {sentence}"
+
+
+def _with_region_sentence(text: str, region: str) -> str:
+    """The text with `Region: X.` said once, where the table's guess used to be."""
+    return _before_coverage(_REGION_SENTENCE.sub("", text), f"Region: {region}.")
+
+
+async def classify_products(
+    docs: list[dict],
+    record_dir: Path | str,
+    *,
+    judged: dict[str, dict] | None = None,
+    judged_meta: dict | None = None,
+    verbose: bool = False,
+) -> list[dict]:
+    """Ask the judge what no record has answered yet, apply it, and keep the answers.
+
+    Two closed questions per product: the SPASE measurement type where the archive left it
+    empty, and the SPASE region where the indexer had only guessed. Neither answer ever
+    overwrites anything the archive published.
+
+    **Measurement type.** The field is indexed on 15.6 % of the products — AMDA and CSA —
+    and on none of CDA's 68 000, so every ranking signal built on it (`_rerank_penalty`)
+    and every filter reaches a sixth of the catalogue. Measured on 2026-09-22 against 200
+    products the archive had labelled, label stripped from the text before asking: 76.5 %
+    agreement, **89 % where the judge's confidence is at least 0.9** (72 % of the items) —
+    and the remaining confident disagreements were the archive's errors (MMS FPI plasma
+    moments labelled MagneticField, a JADE density labelled EnergeticParticles, a
+    Langmuir-probe density labelled ElectricField). So the judge is better than its ground
+    truth, and the floor is 0.9: below it the field stays empty — abstention is a type —
+    and a published label the judge contradicts at or above it is kept and flagged as
+    `measurement_type_jev`, for a person to adjudicate, never replaced.
+
+    **Region.** `_get_region` guesses from a 40-entry table matched as a substring; against
+    AMDA's 8 435 published targets it agrees on 26.9 %, is silent on 41 % and wrong on 32 %
+    ("ac" inside "cce_mepa_ion_act" made AMPTE/CCE a near-Earth heliospheric product).
+    Measured the same day on 200 of those products, target stripped: the judge agrees
+    exactly on 70 %, **on the body (Earth, Jupiter, Heliosphere…) on 97.1 % at confidence
+    ≥ 0.9**, and where judge and table differ the judge is right 75 times to the table's
+    one. Its confident disagreements with the archive are granularity, in both directions
+    (Helios filed as Heliosphere, a Galileo Io flyby read as Jupiter), so a published target
+    is never flagged — it stands. The table's guess is not a publication: at or above the
+    floor the judge's region replaces it, or fills the silence, with `region_source: "jev"`
+    and the confidence; below it the guess stays, marked as the guess it is.
+
+    **What is asked.** A product is asked only the questions no record in `judged` answers
+    for it — the shipped file plus the local one — so a second pass over the same
+    catalogue costs nothing, a new provider costs its own products, and adding a question
+    costs one request per product for that question alone. Both sentences the text carried
+    are stripped before asking, so the judge reads the product, not the labels. Every call
+    is recorded to `judgment_index.jsonl` in the index directory with the product id as its
+    key, and every answer — abstentions included — is appended to the local
+    `judged_products.jsonl.gz` for the next rebuild. ~2.9 ¢ per 1 000 requests (metered
+    2026-09-22: 838 tokens a request, the instruction being most of it).
+
+    Args:
+        docs: `{id, text, meta}` as `_walk` collects them.
+        record_dir: Where the calls are recorded (the Chroma directory).
+        judged: The answers already on record, updated in place.
+        judged_meta: Their provenance, carried into the saved file.
+        verbose: Print the counts.
+
+    Returns:
+        The same docs, metadata and text amended in place.
+    """
+    from helioai.config import settings
+    from helioai.core import judgment
+
+    judged = {} if judged is None else judged
+    if settings.judgment.backend == "null":
+        if verbose:
+            print(
+                "[indexer] --classify needs HELIOAI_JUDGMENT_BACKEND=jev and TYPESAFE_API_KEY; "
+                "skipping classification"
+            )
+        return docs
+    questions = {
+        "mtype": judgment.Choice(
+            MEASUREMENT_TYPE_INSTRUCTIONS, MEASUREMENT_TYPES, floor=MEASUREMENT_TYPE_FLOOR
+        ),
+        "region": judgment.Choice(REGION_INSTRUCTIONS, REGIONS, floor=REGION_FLOOR),
+    }
+    groups: dict[tuple[str, ...], list[dict]] = {}
+    for doc in docs:
+        record = judged.get(doc["id"]) or {}
+        missing = tuple(q for q in questions if q not in record)
+        if missing:
+            groups.setdefault(missing, []).append(doc)
+    n_requests = sum(len(g) for g in groups.values())
+    if verbose:
+        print(
+            f"[indexer] {len(docs) - n_requests} products fully on record; "
+            f"asking {n_requests} requests: "
+            + ", ".join(f"{len(g)} × {'+'.join(k)}" for k, g in groups.items())
+        )
+    models: set[str] = set(judged_meta.get("models") or []) if judged_meta else set()
+    filled = flagged = 0
+    for missing, group in groups.items():
+        asked = {q: questions[q] for q in missing}
+        states = [
+            {"product": _REGION_SENTENCE.sub("", _LABEL_SENTENCE.sub(" ", d["text"])).strip()}
+            for d in group
+        ]
+        answers = await judgment.batch(
+            "index_classify",
+            states,
+            asked,
+            record_to=Path(record_dir) / JUDGMENT_RECORDS,
+            keys=[d["id"] for d in group],
+        )
+        for doc, answer in zip(group, answers, strict=True):
+            if answer is None:
+                continue
+            record = judged.setdefault(doc["id"], {})
+            record["name"] = doc["meta"].get("name") or record.get("name")
+            for q in missing:
+                raw = answer.raw.get(q) or {}
+                if raw.get("choice") is not None:
+                    record[q] = {
+                        "choice": raw["choice"],
+                        "confidence": round(float(raw.get("confidence") or 0.0), 3),
+                    }
+            models.add(answer.model)
+            before = doc["meta"].get("measurement_type")
+            if _apply_record(doc, record):
+                if doc["meta"].get("measurement_type_source") == "jev" and not before:
+                    filled += 1
+                if "measurement_type_jev" in doc["meta"]:
+                    flagged += 1
+    if n_requests:
+        meta = {
+            **(judged_meta or {}),
+            "date": time.strftime("%Y-%m-%d"),
+            "models": sorted(models),
+            "floors": {"mtype": MEASUREMENT_TYPE_FLOOR, "region": REGION_FLOOR},
+        }
+        save_judged(local_judged_path(), meta, judged)
+    if verbose:
+        print(
+            f"[indexer] this pass: {filled} types filled, {flagged} published labels flagged, "
+            f"{n_requests} requests, answers saved to {local_judged_path()}"
+        )
+    return docs
 
 
 HNSW_SYNC_THRESHOLD = 1
@@ -466,6 +954,7 @@ def _walk(
             or xmlid
         )
         units = child_vars.get("units") or child_vars.get("UNITS") or ""
+        components = _cda_components(child_vars) if provider_prefix == "cda" else []
 
         # CSA ParameterIndex carries entity/property directly (no parent needed)
         entity = child_vars.get("entity") or ""
@@ -476,6 +965,7 @@ def _walk(
             if uid not in skip_ids:
                 skip_ids.add(uid)
                 region = _region_for(uid, parent_meta)
+                cov_start, cov_stop = _coverage(child_vars)
                 text = _build_text(
                     name,
                     description,
@@ -485,6 +975,8 @@ def _walk(
                     entity=entity,
                     prop=prop,
                     region=region,
+                    coverage=(cov_start, cov_stop),
+                    components=components,
                 )
                 if text.strip():
                     meta_entry: dict = {
@@ -498,7 +990,9 @@ def _walk(
                         meta_entry["measurement_type"] = mtype
                     if region:
                         meta_entry["region"] = region
-                    cov_start, cov_stop = _coverage(child_vars)
+                        meta_entry["region_source"] = (
+                            "archive" if (parent_meta or {}).get("region") else "table"
+                        )
                     if cov_start:
                         meta_entry["start_time"] = cov_start
                     if cov_stop:
@@ -533,16 +1027,19 @@ def _ssc_trajectory_doc(child_vars: dict, skip_ids: set[str]) -> dict | None:
     resolution = child_vars.get("Resolution")
     cadence = f" Cadence: {resolution} s." if resolution else ""
     region = _get_region(pid)
+    cov_start, cov_stop = _coverage(child_vars)
+    dates = _coverage_sentence((cov_start, cov_stop))
     text = (
         f"{name} spacecraft position (orbit, trajectory, ephemeris) from NASA SSCWeb. "
         f"Location of {name} as X, Y, Z in km — GSE by default; GSM, GEO, GEI, SM, GSM "
         f"on request. Where the spacecraft was at a given time.{cadence} Units: km."
         + (f" Region: {region}." if region else "")
+        + (f" {dates}" if dates else "")
     )
     meta: dict = {"name": name, "units": "km", "xmlid": uid, "provider": "ssc"}
     if region:
         meta["region"] = region
-    cov_start, cov_stop = _coverage(child_vars)
+        meta["region_source"] = "table"
     if cov_start:
         meta["start_time"] = cov_start
     if cov_stop:
@@ -577,6 +1074,21 @@ def _coverage(child_vars: dict) -> tuple[str, str]:
     return out[0], out[1]
 
 
+def _coverage_sentence(coverage: tuple[str, str] | None) -> str:
+    """ "Coverage: 1994-11-13 to 2026-09-01." — the dates a query names, as searchable text.
+
+    Nearly every question names a year, and the indexed text never did: "2019" in
+    "MMS1 position 2019" matched nothing in either channel and only diluted the rest,
+    while a product ending in 1997 ranked as if it covered the date. The catalogue index
+    has written `Survey: … to …` since it was built; this is the same sentence for the
+    products.
+    """
+    if not coverage:
+        return ""
+    start, stop = (str(c or "")[:10] for c in coverage)
+    return f"Coverage: {start} to {stop}." if start and stop else ""
+
+
 def _build_text(
     name: str,
     description: str,
@@ -586,6 +1098,8 @@ def _build_text(
     entity: str = "",
     prop: str = "",
     region: str = "",
+    coverage: tuple[str, str] | None = None,
+    components: list[str] | None = None,
 ) -> str:
     head = name if name != xmlid else xmlid.replace("_", " ")
     parts = [f"{head}."]
@@ -610,9 +1124,11 @@ def _build_text(
     for label, key in (
         ("Dataset", "dataset_id"),
         ("Mission", "mission"),
+        ("SPASE", "spase"),
         ("Observatory", "observatory"),
         ("Instrument", "experiments"),
         ("Processing", "processing_level"),
+        ("Cadence", "cadence"),
     ):
         value = meta.get(key) or ""
         if value:
@@ -620,10 +1136,15 @@ def _build_text(
     dataset_desc = meta.get("dataset_description") or ""
     if dataset_desc:
         parts.append(f"{dataset_desc}.")
+    if components:
+        parts.append(f"Components: {', '.join(components)}.")
     if units:
         parts.append(f"Units: {units}.")
     if region:
         parts.append(f"Region: {region}.")
+    dates = _coverage_sentence(coverage)
+    if dates:
+        parts.append(dates)
     return " ".join(parts)
 
 

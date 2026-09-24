@@ -36,6 +36,15 @@ The tool-call mechanics the runner uses.
 
 ::: helioai.core.skills_loader
 
+## Judgment
+
+The seam for a System One judge beside the loop, and the joins that read its contract.
+See [The judgment layer](../dev/judgment.md).
+
+::: helioai.core.judgment
+
+::: helioai.core.joins
+
 ## Figure review
 
 ::: helioai.core.vision

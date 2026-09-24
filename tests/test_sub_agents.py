@@ -27,10 +27,16 @@ def test_parameter_hunter_tools() -> None:
 
 
 def test_data_analyst_tools() -> None:
+    """`get_events_timeseries` takes a `catalog_id`; the two tools that produce one were
+    never on the list. Twice on 2026-09-24 the lead delegated a superposed-epoch task with
+    the discovery step inside it, and the analyst — asked to call tools it did not have —
+    imported speasy in a network-less sandbox and read its source until the turn cap."""
     role = AGENT_ROLES["data_analyst"]
     assert "run_python" in role.allowed_tools
     assert "search_parameters" in role.allowed_tools
     assert "get_timeseries" in role.allowed_tools
+    assert {"list_catalogs", "get_catalog", "get_events_timeseries"} <= set(role.allowed_tools)
+    assert "save_catalog" not in role.allowed_tools, "discovery is read-only"
 
 
 def test_librarian_tools() -> None:

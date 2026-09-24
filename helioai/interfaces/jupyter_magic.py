@@ -183,6 +183,11 @@ def _render_jupyter_event(ev: dict) -> None:
     elif name == "figure_review":
         display(Markdown(f"**🔍 figure review** — {data.get('text', '')}"))
 
+    elif name == "intent":
+        from helioai.interfaces.cli import _intent_line
+
+        display(Markdown(f"<small>🎯 intent — {_intent_line(data)}</small>"))
+
     elif name == "provenance":
         lines = [
             f"**📐 provenance** — {data.get('matched', 0)} traced, "

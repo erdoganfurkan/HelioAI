@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from helioai.config import settings
+from helioai.core import joins, judgment
 from helioai.core.event_display import finished_at_cap
 from helioai.core.events import NOT_JOURNALED, make
 from helioai.core.llm.base import LLMClient, Message, ToolCall, ToolDef
@@ -431,7 +432,15 @@ async def _stream_turn(
         label = _ws.make_session_label(user_text, session_id, store.workspace_dirs(user_id))
         store.save(user_id, session_id, history)
         store.set_workspace_dir(user_id, session_id, label)
-    ctx = RunContext.for_session(user_id, session_id, label=label)
+    ctx = RunContext.for_session(user_id, session_id, label=label, query=user_text)
+    # The intent contract, when a judge is on: asked of the question alone, concurrently
+    # with the first model call, and read only when the turn is over. Observation — it
+    # enters no message, decides nothing; the event is what a later join will read.
+    intent_task = (
+        asyncio.create_task(judgment.intent_contract(user_text))
+        if judgment.enabled("intent")
+        else None
+    )
 
     tools = tuple(registry.list_tool_defs() + _INTERNAL_TOOLS + [task_tool_def()])
     tool_names = frozenset(t.name for t in tools)
@@ -465,6 +474,7 @@ async def _stream_turn(
     try:
         end: RunEnd | None = None
         figure_reviews: list[str] = []
+        delegated: list[dict] = []
         plan: Plan | None = None
         trace: list[dict] = []
         async with aclosing(runner.run(history)) as run:
@@ -482,6 +492,10 @@ async def _stream_turn(
                     plan = Plan.from_payload(item["data"])
                 elif item["event"] in ("tool_call", "sub_agent_end"):
                     trace.append(item)
+                elif item["event"] == "artifact" and item["data"].get("sub_agent_ctx"):
+                    delegated.append(
+                        {k: v for k, v in item["data"].items() if k != "sub_agent_ctx"}
+                    )
         assert end is not None
 
         if end.capped:
@@ -541,16 +555,23 @@ async def _stream_turn(
             yield make("verdict", **verdict.as_event())
         if plan is not None:
             yield make("plan_report", **adherence(plan, trace, known=tool_names))
+        if intent_task is not None:
+            contract = await judgment.collect(intent_task)
+            if contract is not None:
+                contract["checks"] = joins.checks(contract, end.artifacts + delegated, end.claims)
+                yield make("intent", **contract)
         yield make("done", n_iterations=end.turns)
 
     except asyncio.CancelledError:
         store.save(user_id, session_id, strip_orphan_tool_calls(history))
         raise
-
     except Exception:
         log.exception("agent_loop_crashed", turn=runner.turns)
         store.save(user_id, session_id, strip_orphan_tool_calls(history))
         raise
+    finally:
+        if intent_task is not None and not intent_task.done():
+            intent_task.cancel()
 
 
 def _record_lead_usage(user_id: str, session_id: str, turn: int, response: Message) -> None:

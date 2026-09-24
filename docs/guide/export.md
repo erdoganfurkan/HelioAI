@@ -45,7 +45,15 @@ answer.
 ## What the notebook contains
 
 1. **Setup** — imports and any shims still required.
-2. **One cell per analysis step**, in order, as standalone code.
+2. **One cell per analysis step**, in order, as standalone code. A step that ran a shipped
+   recipe through `run_recipe` is exported as its own lines only — the input bindings and
+   the call — and the recipe's source sits **once**, in a collapsed cell just before its
+   first use, with a line saying whether it is identical to the recipe shipped with the
+   helioai installed now (sha256 of the text as it ran). `run_recipe(name, inputs, call)` in
+   the setup cell executes that source the way the sandbox did, on a copy of the notebook's
+   namespace with `__name__` set so a recipe's demo stays off. A session that ran
+   `superposed_epoch` five times used to export the same 385 lines five times; it now
+   exports them once, and each run is a dozen lines.
 3. **Methods & data acknowledgements** — every recipe and reference used, assembled by
    scanning the session's tool calls and the sub-agents' results, plus the data-provider
    acknowledgements.

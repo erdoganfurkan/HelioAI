@@ -58,7 +58,12 @@ def test_an_unknown_experiment_is_refused_where_the_model_is_built(monkeypatch):
 
 
 def test_every_experiment_the_code_consults_is_a_known_name():
-    assert config.EXPERIMENTS == {"deferred_tools", "search_budget", "search_variables"}
+    assert config.EXPERIMENTS == {
+        "deferred_tools",
+        "search_budget",
+        "search_variables",
+        "judgment_intent",
+    }
     assert "final_answer" not in config.EXPERIMENTS, "graduated on bench 3; it is the default"
 
 

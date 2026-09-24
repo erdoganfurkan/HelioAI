@@ -46,6 +46,19 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   candidate pool (`hybrid_fetch_k` 50 → 100 / 200, or the BM25 cap alone) was measured and
   rejected: MRR fell, two accepted products left the top-k. With the wider dense beam,
   "MMS1 spacecraft position GSE 2019" ranks `amda/mms1_xyz_gse` and `ssc/mms1` first and
+  second, where a 2026 IMAP position led before. Three more signals followed the same
+  instrument, once the CDA texts named their datasets (below): the mission patterns learn
+  the Van Allen Probes (`rbsp`, "Van Allen Probe A"); a product whose description says of
+  itself that it is "used as input to magnetic field models" — MMS MEC's copies of Dst and
+  Kp, 48 in the index, all of them MEC — is flagged `model_input` and ranks below the index
+  it copies, unless the query is about a model; and a product that *states* a cadence the
+  query contradicts by a factor of two or more (`Cadence: 5 min.` for "1-minute", `(16
+  sec)` for "4-second") is flagged `other_cadence` — the catalogue is full of cadence twins
+  under one variable name, and for "OMNI 1-minute solar wind flow pressure" the hourly and
+  5-min copies took ranks 1–3. Only a stated cadence is compared; a product that states
+  none is never demoted for it. On the 30 replayed n1 queries, five processes each: recall@1
+  56.7 → 73.3 %, recall@3 90.0 → 96.7 %, recall@5 90.0 → 100 %, MRR 0.736 → 0.847 — read
+  with the caveat that those 30 queries are where the failures these rules name were found.
   second, where a 2026 IMAP position led before.
 - **A sandbox program has no size limit anymore; `run_recipe` works on Windows.** The
   assembled script — a 14 576-character preamble, then the agent's code — travelled to the
@@ -98,6 +111,21 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   flagged for never loading `pressure_balance`, whose signature contains "magnetopause".
   Choosing another published model is not a hand-written copy of the recipe; a formula
   typed by hand for the same export still is.
+- **An exported notebook carries each recipe once, collapsed; a `run_recipe` step is its
+  own dozen lines.** `run_recipe` inserts the recipe's source verbatim into the code it runs
+  — that is the point of it — and the export reproduced that code cell by cell, so a session
+  that ran `superposed_epoch` five times exported the same 385 lines five times: 8 924
+  lines of notebook for an analysis whose own steps were 23 lines each (median, measured on
+  the saved runs). The notebook now takes a `run_recipe` script apart along the markers it
+  was written with: the recipe's source goes once into a collapsed cell
+  (`jupyter.source_hidden`, tag `recipe-source`) before its first use, under a line that
+  says whether it is identical to the recipe shipped with the helioai installed now — the
+  sha256 of the text as it ran against the shipped file's — and each run keeps the lines
+  that were its own, the bindings and the call, handed to a `run_recipe` helper in the setup
+  cell that does what the sandbox did: execute the source on a copy of the namespace with
+  the inputs bound and `__name__` not `__main__`. The same session exports at 1 879 lines,
+  the recipe runs at 7–12 lines each, and the notebook still runs without HelioAI. A script
+  not laid out as `run_recipe` lays it out is exported as it is.
 - **The CLI no longer prints an answer twice when the model streams it, then delivers it
   through `final_answer` without its markdown.** The final `reply` was not a prefix of
   the streamed text (the bold was gone), so the whole answer was printed again; two
@@ -149,6 +177,39 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   ICME of 2015" — but `get_events_timeseries` described its window as "events in this
   window", which reads as overlap, and each tool carried its own copy of the filter.
   One helper, one wording, and tests on the edge events.
+- **The data analyst can find the catalogue it is asked to analyse.** Its tool list had
+  `get_events_timeseries`, which takes a `catalog_id`, and neither `list_catalogs` nor
+  `get_catalog`, which produce one — the two arrived with the catalogue tools and the
+  whitelist was never revisited. When the lead delegated a superposed-epoch task with
+  the discovery step inside it, the analyst was asked to call tools it did not have and
+  improvised: `import speasy` in a sandbox without network (a 60 s timeout), then three
+  runs reading speasy's own source, until its turn cap — twice out of two on 2026-09-24,
+  while the day before the same question passed because the lead had listed the
+  catalogues itself. Both read-only tools are on the analyst's list now.
+- **The judge no longer falls silent after the first question of a CLI session.** The
+  Jev client and its connection pool were opened once per process, under the event loop
+  of the first question; the CLI runs one `asyncio.run()` per question, so the second one
+  raised `Event loop is closed` and the judge abstained — silently, since the failure is
+  warned once. Six judged questions in one process on 2026-09-23: one contract, then
+  nothing. One client per event loop, closed with the LLM client at the end of a query.
+- **The intent joins read what the sub-agents produced.** They were fed the lead's own
+  artifacts, so a figure the analyst drew read as "figure missing" (three of the four
+  figures in the same six questions) and no window or quantity was ever joined. They now
+  see the artifacts the sub-agents streamed through the turn; the answer validator keeps
+  the lead's list on purpose, because its recipe check reads exports against the lead's
+  history, where a delegated `run_recipe` never appears.
+- **`run_recipe` binds a string that cannot be an expression as the literal it is.** An
+  input string is a Python expression evaluated in the sandbox, because a recipe's inputs
+  are arrays the model cannot pass by value — so `{"units": "nT", "param_label": "|B| OMNI
+  1-min"}` became `param_label = (|B| OMNI 1-min)`, a `SyntaxError`, a lost turn, and the
+  model re-quoting every string on a live superposed-epoch run. A string that does not
+  parse, or is a single bare name nothing in a fresh script can carry, is now bound as the
+  string; numbers, lists and calls are the expressions they always were.
+- **An exported notebook no longer fails on a non-numeric `export()`.** The session's
+  `export()` records a value it cannot turn into numbers and moves on; the helper inlined
+  in the exported notebook raised `ValueError` on the same call — the live quickstart's
+  plot cell, `export('t_shock_iso', str(t_shock))`, drew its figure and then failed. The
+  exported helper prints such a value as it is.
 - `import helioai` no longer creates directories: the session store now creates its
   database and schema on first use rather than at import.
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the
@@ -228,6 +289,82 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   cannot be adjudicated later is not a measurement. Nothing here corrects the model. An
   unknown backend is refused where the API key is checked and by `helioai doctor`, which
   gains a `judgment` line. No site asks yet; this is the seam the next entries plug into.
+- **`helioai index --classify` fills the measurement type the archive left empty, and
+  the indexed text says the dates a product covers.** `measurement_type` is indexed on
+  15.6 % of the products (AMDA, CSA) and on none of CDA's 68 000, so every signal built on it
+  reached a sixth of the catalogue. With `HELIOAI_JUDGMENT_BACKEND=jev`, the indexer asks the
+  judge for the SPASE type of every untyped product before embedding — a `Choice` over the
+  twelve types the index already uses, so a filled field is an exact filter. Measured on 200
+  products the archive had labelled, label stripped before asking: 89 % agreement where the
+  judge's confidence is at least 0.9, and the confident disagreements were the archive's
+  own errors (MMS FPI plasma moments labelled MagneticField, a JADE density labelled
+  EnergeticParticles). So the floor is 0.9 — below it the field stays empty — and a
+  published label the judge contradicts is kept and flagged as `measurement_type_jev`, for a
+  person to adjudicate, never replaced. A filled type carries `measurement_type_source:
+  "jev"` and its confidence, and enters the text (`Measurement: X.`) where both search
+  channels read it; every call is recorded to `judgment_index.jsonl` beside the index. On 50
+  live products: 20 filled, 2 flagged, 22 abstained. The same request asks the SPASE
+  *region*, because the one the indexer had was a guess: a 40-entry table matched as a
+  substring, which against AMDA's 8 435 published dataset targets agrees on 26.9 %, is
+  silent on 41 % and wrong on 32 % ("ac" inside "cce_mepa_ion_act" filed AMPTE/CCE
+  magnetosheath counts near L1). Measured on 200 of those products, target stripped: the
+  judge agrees exactly on 70 %, on the body — Earth, Jupiter, the heliosphere — on 97.1 %
+  at confidence ≥ 0.9, and where judge and table differ the judge is right 75 times to the
+  table's one; its confident disagreements with the archive are granularity in both
+  directions (Helios filed as Heliosphere, a Galileo Io flyby read as Jupiter). So a
+  published target is never touched, the table's guess is replaced or the silence filled
+  at or above 0.9 (`region_source: "jev"` and the confidence; below it the guess stays,
+  marked `table`), and every product now says where its region came from. Without a
+  judging backend the flag is a no-op that says so.
+  **The judge's answers ship with the package, so `helioai index` types the catalogue
+  without a key.** A pass costs money — 82 266 requests, US$ 2.4 on 2026-09-22 (metered:
+  2.9 ¢ per 1 000 requests, 838 tokens each, the instruction being most of it), three
+  times what had been guessed — and it is the one part of the index code cannot rebuild.
+  `helioai/data/judged_products.jsonl.gz` (0.66 MB) holds every question the judge has been
+  asked about a product with its raw answer — choice and confidence, abstentions included
+  — after a first line of provenance (date, model, floors, count), and `helioai doctor`
+  prints that line. It is the judge's *answers*, not decided fields: the floors and the
+  never-overwrite rule live in code and can change without a request. `helioai index`
+  applies it to every product the archive left untyped — a rebuild from the file
+  reproduced the paid index to the byte, 82 266 texts and 37 677 types, and the same
+  ranking on every replayed query — and `--classify` asks only what no record answers:
+  a second pass over the same catalogue costs nothing, a new provider costs its own
+  products, a new question costs one request per product for that question alone. What
+  a user with a key obtains is appended to a local copy beside the data, which survives
+  `--rebuild` and takes precedence over the shipped file. A record whose product name no
+  longer matches is not applied: an id reused for other content is not the product that
+  was judged. Every call is now recorded with the product id as its key.
+  Separately, every product's text now ends with `Coverage: … to …`, as the catalogue
+  index has always said `Survey: … to …`: a year in a query used to match nothing and only
+  dilute the rest. And a CDAWeb product's text now says whose it is.
+  `cda/RBSP-A_MAGNETOMETER_4SEC-GSM_EMFISIS-L3/Mag` read "Mag. Magnetometer vector.
+  Fluxgate magnetometer data - Craig Kletzing (University of Iowa)." — no RBSP, no Van
+  Allen, no EMFISIS, no GSM, no 4 s; those words lived only in the id, which the sparse
+  channel tokenises and the dense channel never sees, so for "Van Allen Probe A EMFISIS
+  4-second magnetic field GSM" every ACE, ISEE and IMP-8 vector outranked it. The same
+  defect that once hid 780 AMDA products from their mission name, fixed for AMDA by the
+  `Dataset:` and `Mission:` sentences and never for the 68 000 CDA products. CDAWeb
+  publishes the words: the dataset id, on all of them; a SPASE resource id
+  (`spase://NASA/NumericalData/RBSP/A/EMFISIS/MAGNETOMETER/L3/GSM/PT4S`) on 64 % of the
+  datasets, whose segments are the mission, spacecraft, instrument, level and frame and
+  whose last one is the cadence as an ISO 8601 duration; and the component labels of
+  every vector (`Bx_GSM, By_GSM, Bz_GSM`). All three enter the text — `Dataset:`, `SPASE:`,
+  `Cadence: 4 s.`, `Components:` — and the RBSP vector went from absent to rank 4 for the
+  agent's own queries. All of it changes the index; a rebuild applies it.
+- **A shipped recipe is offered at the moment a hand-written copy of it runs, not after
+  the answer.** The recipe check (`recipe_bypassed`) reads the run's exports at the end of
+  the turn and annotates the reply — for the reader, once the model has stopped acting. On
+  the fourth live run of the quickstart the analyst loaded `theta_bn`, rewrote the formula
+  inline, exported `theta_bn` and reported 54.85° from a window the recipe would not have
+  chosen; nothing told it before it answered. The same signals now ride on the `run_python`
+  result itself, in both loops: `recipe_available` names the recipe, the reason
+  (`not_called`, `not_loaded`) and the exact `run_recipe(...)` line — read off the recipe's
+  own source, with the input names it binds through `globals().get`, or its public functions
+  when it is a library. `load_recipe` carries the same `run_with` line, so a model that has
+  just read a recipe sees the call, not only the code to paste. Both annotate and neither
+  blocks: the code ran, its exports stand, and the model may still argue. The lead's prompt
+  still does not name `run_recipe` — analysis is what the lead delegates (decided
+  2026-09-22, recorded in `tools/setup.py`).
 - **Tool results say what the system already knew, in fields, not in prose.** Five
   payload changes, each additive, from the same finding: HelioAI held facts in typed fields
   three calls before it asked a model to guess them from truncated English.
@@ -245,7 +382,44 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   the catalogue index that `helioai index` built and nothing read. `magnitude` refuses
   anything but three components, in the sandbox and in the exported notebook alike. The
   standalone notebook header reads the cell's syntax tree, not its text — a comment
-  mentioning `u.nT` no longer imports astropy.
+  mentioning `u.nT` no longer imports astropy. And when the series a download returns
+  stops short of the window asked for — a gap at the edge, a file not yet delivered — the
+  result carries one sentence, `window_note` ("obtained A → B (asked C → D)"), where
+  before the asked-for window was announced and only the timestamps knew; the web
+  parameter card prints the same sentence. Tolerance is the larger of a minute and 5 % of
+  the window, so a cadence offset or a daily file boundary stays silent.
+- **The question is read once, into a contract — the `intent` event, in observation.**
+  The first site of the judgment seam. With `HELIOAI_JUDGMENT_BACKEND=jev` and the
+  `judgment_intent` experiment named, the lead hands the user's question, verbatim and
+  alone, to the judge concurrently with the first model call, and reads the answer only
+  when the turn is over: what is to be delivered (a value, a figure, a catalogue, an
+  explanation, a procedure), which SPASE measurement type the request is about — a `Choice`
+  over the index's own vocabulary, so a later comparison with what was retrieved is an
+  exact string match — which coordinate frame, and whether an event, an uncertainty, a
+  method or two spacecraft were named. What is wanted is four yes/no questions, not one
+  choice: asked as a choice, the judge abstained on every request that wanted two things
+  at once — "plot |B| and compute θ_Bn" is a figure *and* a value, the commonest shape of
+  a question — and asked one kind at a time it answers `value+figure` at 0.96–0.99 on all
+  three such bench questions, and reads a catalogue named as an *input* as not wanted
+  (0.09). A date is asked as three closed choices (year, month, day) and assembled by the
+  code with its precision; the judge never writes a date, or any free text, into the
+  system. Each field decides or abstains (`None`) — "the judge did not say" and "the
+  request named nothing" are kept apart — and every call is recorded in `judgment.jsonl`.
+  The event is rendered by the CLI, the web client and the magic, and read by nothing
+  yet: the six HelioBench questions with an `expects` block were put through it and every
+  decided field agreed with the key.
+  `RunContext` carries the question (`query`) for the sites that follow. The event then
+  carries, under `checks`, what the turn did about the contract — four joins with no model
+  in them (`helioai.core.joins`), each an exact operation on fields the turn already had:
+  the frame named against the `coord_sys` of every product the sandbox loaded ("GSM asked,
+  `BGSE` plotted" was caught by nothing); the date named against the bounds the downloads
+  obtained, plus the series that stopped short of their window; the measurement type named
+  against the indexed type of the products loaded — a key lookup, exact once `--classify`
+  has filled the field; and what was required against what was delivered: an uncertainty
+  asked and no claim or export about a spread, a figure asked and none produced. A join
+  with nothing to compare reports `None`, not a verdict. The CLI, the web client and the
+  magic print only the joins that disagreed, after the contract, so a turn that got it
+  right reads exactly as before.
 - **Spacecraft positions are searchable: the 314 SSCWeb trajectories are indexed.** An
   SSC inventory node has neither `xmlid` nor `description`, so the indexer skipped every
   one of them and the index held no spacecraft position at all — "where was MMS1" could
@@ -432,8 +606,7 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   fails when the code reads a variable the page does not list.
 - **CI builds the Docker image** and runs `helioai doctor --json` inside it, printing
   whether bubblewrap is functional in the container — the claim `SECURITY.md` makes and
-  nothing verified. Stale CI runs of a pull request are cancelled; Dependabot watches
-  the lock, the actions and the base image weekly.
+  nothing verified. Stale CI runs of a pull request are cancelled.
 
 ### Removed
 

@@ -196,6 +196,35 @@ def test_without_a_call_the_script_ends_with_the_recipe():
     assert "_recipe_result" not in script
 
 
+def test_a_string_that_cannot_be_an_expression_is_bound_as_the_literal_it_is():
+    """Live `superposed_epoch` run, 2026-09-24: `inputs={"units": "nT", "param_label":
+    "|B| OMNI 1-min"}` became `param_label = (|B| OMNI 1-min)` — a SyntaxError, a lost
+    turn, and the model re-quoting every string. A string that does not parse, or is a
+    bare name nothing in a fresh script can carry, is the literal it obviously is;
+    numbers, lists and calls stay the expressions they always were."""
+    script = recipe_script(
+        "demo",
+        "result = 1\n",
+        {
+            "units": "nT",
+            "param_label": "|B| OMNI 1-min",
+            "when": "2015-03-17T04:00:00",
+            "events": "load_data('f_events')",
+            "n_grid": "200",
+            "seq": "[1, 2]",
+            "t0": "np.datetime64('2015-03-17')",
+        },
+        None,
+    )
+    lines = script.splitlines()
+    assert "units = ('nT')" in lines
+    assert "param_label = ('|B| OMNI 1-min')" in lines
+    assert "when = ('2015-03-17T04:00:00')" in lines
+    assert "events = (load_data('f_events'))" in lines
+    assert "n_grid = (200)" in lines and "seq = ([1, 2])" in lines
+    assert "t0 = (np.datetime64('2015-03-17'))" in lines
+
+
 # ── how the runtime reads a recipe run ───────────────────────────────────────────
 
 

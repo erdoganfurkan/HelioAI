@@ -154,6 +154,30 @@ def check_provider_online(timeout_s: float = 5.0) -> Check:
     return Check("provider reachable", OK, f"{base_url}/models → HTTP {r.status_code}")
 
 
+def check_judged() -> Check:
+    """The judge's recorded answers `helioai index` will apply: how many products, when
+    they were asked, by which model — and whether a local file extends the shipped one.
+
+    The answers are the one part of the index that code cannot rebuild, so a reader of
+    the report should see their date: an index built today from a snapshot of last year
+    says nothing about products added since.
+    """
+    from helioai.indexer import SHIPPED_JUDGED, load_judged, local_judged_path
+
+    shipped_meta, shipped = load_judged(SHIPPED_JUDGED)
+    if not shipped:
+        return Check("judged products", WARN, "no shipped answers: `helioai index` types nothing")
+    detail = (
+        f"{len(shipped)} products asked, snapshot {shipped_meta.get('date', '?')} "
+        f"({', '.join(shipped_meta.get('models') or ['?'])})"
+    )
+    local_meta, local = load_judged(local_judged_path())
+    if local:
+        new = len(set(local) - set(shipped))
+        detail += f"; local file adds {new} products ({local_meta.get('date', '?')})"
+    return Check("judged products", OK, detail)
+
+
 def check_index() -> Check:
     chroma_dir = Path(settings.rag.chroma_dir)
     if not chroma_dir.exists():
@@ -264,6 +288,7 @@ def run_checks(online: bool = False) -> list[Check]:
         "provider",
         "experiments",
         "judgment",
+        "judged",
         "index",
         "sandbox",
         "speasy_inventory",

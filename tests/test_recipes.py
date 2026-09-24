@@ -540,3 +540,17 @@ def test_theta_bn_averages_over_the_finite_rows_of_a_gapped_interval():
     res = theta_bn(up, dn)
     assert res["theta_bn_deg"] == pytest.approx(60.0, abs=0.01)
     assert res["B_up_mean_nT"] == pytest.approx([bx, 0.0, bz], abs=1e-9)
+
+
+@pytest.mark.asyncio
+async def test_load_recipe_says_how_to_run_it_as_shipped():
+    """A model that has just read a recipe is one paste away from running a copy of it;
+    the payload names the call and, exactly, the inputs the recipe reads."""
+    from helioai.tools.recipes import load_recipe
+
+    theta = await load_recipe("theta_bn")
+    assert theta["run_with"].startswith("run_recipe('theta_bn', inputs={")
+    for name in ("'B':", "'shock_time':", "'B_up':", "'B_dn':"):
+        assert name in theta["run_with"]
+    rh = await load_recipe("rankine_hugoniot")
+    assert "call='rh_jump(...)'" in rh["run_with"] and "library of functions" in rh["run_with"]

@@ -75,7 +75,11 @@ bypass, the numbers in the prose, the figure reviews — and, when the model clo
 `final_answer(answer, claims)`, places each named number against the provenance ledger by
 name with a unit-aware tolerance; the result is one `verdict` event. `runtime.plan.adherence`
 compares the tools the lead called with the plan it presented and emits one `plan_report`.
-Both are journaled with the rest of the turn.
+Both are journaled with the rest of the turn. A third, off by default, reads the question
+itself: with a judging backend and the `judgment_intent` experiment, `core.judgment` asks a
+System One judge what the question committed the answer to and `core.joins` places that
+contract against what the turn loaded and delivered — one `intent` event, observation only.
+See [The judgment layer](judgment.md).
 
 ## Registry
 

@@ -8,6 +8,40 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-24
+
+Three things changed in this release. **The search finds the product it is asked for.**
+The index is built the same in every process, reads what the archives had already said
+about a product — its measurement type, its coverage, a stated cadence, whether it is a
+model input copied from elsewhere — and its ranking rules were measured on replayed
+queries at zero tokens before any run: on the thirty HelioBench identifier tasks, recall@1
+56.7 → 73.3 % offline and 58.6 → 80.0 % live, products never returned 2 → 0. **The lead
+agent and the roles it delegates to run one loop**: the same runner, the shipped recipes
+run as shipped (`run_recipe`), one verdict on every answer, a journal a session replays
+from. **And a judge can watch, in observation**: the question is read once into a
+contract, joined at the end of the turn against what the run produced, and written into
+no message — off by default, one variable to turn on.
+
+The release was qualified on 23–24 September against the shipped 0.3.0: the question on
+which 0.3.0 had beaten the runtime branch two weeks earlier, replayed on the same index
+(parity); HelioBench, 47 tasks once, each release on the index it ships with (45/47 →
+47/47, retrieval MRR 0.718 → 0.886, no task lost); six judged replays that found five
+defects and fixed them before the merge; `examples/00_quickstart.ipynb` end to end (θ_Bn
+61.0 ± 1.5° against Harvard-CfA's 58.8 ± 2.7°) and its export run in a plain kernel; and
+the wheel installed into an empty environment on the day's resolution — openai 3.19,
+sentence-transformers 6.1, speasy 1.8.2, mcp 2.2 — with `doctor`, the MCP handshake, a
+sandboxed run and 1618 tests passing against the installed package.
+
+### Upgrading from 0.3.0
+
+- **Rebuild the index**: `helioai index --rebuild`. About seven minutes, no API key — the
+  classification the pass paid for ships in the package and is applied byte for byte.
+  The 0.4.0 ranking reads fields a 0.3.0 index does not carry; running 0.4.0 on a 0.3.0
+  index was not measured, so do not.
+- Nothing else. The session store adds its columns on first use, every new behaviour is
+  off unless its variable is set (`HELIOAI_JUDGMENT_BACKEND`, `HELIOAI_EXPERIMENTS`), and
+  no existing variable changed meaning.
+
 ### Fixed
 
 - **A search ranks the same in every process.** Chroma persists its HNSW graph only every
@@ -1118,7 +1152,8 @@ changed; the import package, the CLI commands and the API are all unchanged.
   functionally before using it and logs `sandbox_not_isolated` when it falls back, so
   the logs answer the question on any host.
 
-[Unreleased]: https://github.com/erdoganfurkan/HelioAI/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/erdoganfurkan/HelioAI/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/erdoganfurkan/HelioAI/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/erdoganfurkan/HelioAI/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/erdoganfurkan/HelioAI/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/erdoganfurkan/HelioAI/releases/tag/v0.2.0

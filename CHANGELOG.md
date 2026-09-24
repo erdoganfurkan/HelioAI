@@ -606,8 +606,7 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   fails when the code reads a variable the page does not list.
 - **CI builds the Docker image** and runs `helioai doctor --json` inside it, printing
   whether bubblewrap is functional in the container — the claim `SECURITY.md` makes and
-  nothing verified. Stale CI runs of a pull request are cancelled; Dependabot watches
-  the lock, the actions and the base image weekly.
+  nothing verified. Stale CI runs of a pull request are cancelled.
 
 ### Removed
 

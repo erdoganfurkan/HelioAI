@@ -280,12 +280,15 @@ def _load_helio4cast_catalog(name: str):
 async def list_catalogs(
     type: str = "all",
     region: str | None = None,
+    query: str | None = None,
 ) -> dict:
     """List available AMDA event catalogs and timetables.
 
     Args:
         type: 'catalog', 'timetable', or 'all' (default).
         region: optional keyword filter on name/description (e.g. 'ICME', 'bow shock', 'MMS').
+        query: optional free-text description of the events wanted; the list is then
+            ordered by semantic relevance to it instead of by size.
 
     Returns a list of entries with id, name, type, nb_events, survey range and description.
     Use the `id` field with get_catalog() and get_events_timeseries().
@@ -297,12 +300,13 @@ async def list_catalogs(
           'nb_events': 2003, 'survey_start': '1975-01-08', 'survey_stop': '2022-10-21',
           'description': '...'}, ...]}
     """
-    return await run_blocking(_list_catalogs_sync, type=type, region=region)
+    return await run_blocking(_list_catalogs_sync, type=type, region=region, query=query)
 
 
 def _list_catalogs_sync(
     type: str = "all",
     region: str | None = None,
+    query: str | None = None,
 ) -> dict:
     """Synchronous body of `list_catalogs`, run off the event loop by its wrapper."""
     spz = _get_spz()
@@ -358,14 +362,42 @@ def _list_catalogs_sync(
         kw = region.lower()
         entries = [e for e in entries if kw in e["name"].lower() or kw in e["description"].lower()]
 
-    entries.sort(key=lambda e: e["nb_events"], reverse=True)
+    # Biggest first is a proxy for relevance and nothing more: with 217 entries and a
+    # substring filter, "shock" put a 2 797-event bow-shock list above the interplanetary
+    # shock catalogue the question was about. With a query, the catalogue index that
+    # `helioai index` builds — 221 embeddings, read by nothing until now — orders the
+    # list; entries the index does not know (local, Helio4Cast) keep their place below,
+    # by size. Without one, or without the index, the order is what it always was.
+    ranked = _semantic_order(query, entries) if query else None
+    if ranked is not None:
+        entries = ranked
+    else:
+        entries.sort(key=lambda e: e["nb_events"], reverse=True)
 
     return {
         "total": len(entries),
         "type_filter": type,
         "region_filter": region,
+        **({"query": query, "order": "relevance"} if ranked is not None else {}),
         "catalogs": entries,
     }
+
+
+def _semantic_order(query: str, entries: list[dict]) -> list[dict] | None:
+    """`entries` ordered by relevance to `query`, or None when the index cannot say."""
+    try:
+        from helioai.tools.rag import search_catalogs
+
+        hits = search_catalogs(query, top_k=max(len(entries), 1))
+    except Exception as e:
+        log.debug("list_catalogs: semantic order unavailable (%s)", e)
+        return None
+    if not hits:
+        return None
+    rank = {h["id"]: i for i, h in enumerate(hits)}
+    known = sorted((e for e in entries if e["id"] in rank), key=lambda e: rank[e["id"]])
+    rest = sorted((e for e in entries if e["id"] not in rank), key=lambda e: -e["nb_events"])
+    return known + rest
 
 
 async def get_catalog(

@@ -21,7 +21,7 @@ def _shock_series(*, nan_upstream: bool = False):
     values[t == np.datetime64("2015-03-17T03:53:00", "s")] = np.nan
     values[t == np.datetime64("2015-03-17T04:06:00", "s")] = np.nan
     if nan_upstream:
-        u0 = np.datetime64("2015-03-17T03:50:00", "s")
+        u0 = np.datetime64("2015-03-17T03:45:00", "s")
         u1 = np.datetime64("2015-03-17T03:58:00", "s")
         values[(u0 <= t) & (t <= u1)] = np.nan
 
@@ -64,8 +64,8 @@ def test_theta_bn_derives_windows_from_a_shock_time(recipe, capsys):
     assert run.exports["shock_normal"]["units"] == ""
     assert run.exports["B_up_mean_nT"]["units"] == "nT"
     stdout = capsys.readouterr().out
-    assert "upstream window: 2015-03-17T03:50:00 to 2015-03-17T03:58:00" in stdout
-    assert "downstream window: 2015-03-17T04:02:00 to 2015-03-17T04:10:00" in stdout
+    assert "upstream window: 2015-03-17T03:45:00 to 2015-03-17T03:58:00" in stdout
+    assert "downstream window: 2015-03-17T04:02:00 to 2015-03-17T04:15:00" in stdout
 
 
 def test_theta_bn_refuses_a_smooth_ramp_trend_inside_a_window(recipe, capsys):
@@ -219,9 +219,9 @@ def test_a_clean_step_has_a_negligible_window_spread(recipe, capsys):
 def test_a_rotating_downstream_field_shows_up_in_the_window_spread(recipe):
     """2004-11-07 17:59 UT: the downstream field rotates through the ICME sheath, so the
     angle depends on how far the window reaches — 41.5–68.0° over 49 conventions on the
-    real data. Here the downstream field rotates 60° over twelve minutes: the 8-minute
-    default window sees part of it, the ensemble sees more, and the spread says so while
-    the bootstrap inside the fixed windows stays near zero."""
+    real data. Here the downstream field rotates 60° over twelve minutes: the 13-minute
+    default window sees all of it, the shorter conventions of the ensemble see less, and
+    the spread says so while the bootstrap inside the fixed windows stays near zero."""
     t = np.datetime64("2015-03-17T03:30:00", "s") + np.arange(1201) * np.timedelta64(3, "s")
     b_up = np.array([5.0, 0.0, 8.66])
     values = np.tile(b_up, (t.size, 1)).astype(float)

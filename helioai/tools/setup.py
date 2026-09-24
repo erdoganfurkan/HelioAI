@@ -29,7 +29,11 @@ registry.register(
         "`covers_window: false` and sorted last, which saves discovering it one failed "
         "download at a time. "
         "`quality: browse` marks key-parameter products — fine for a quick look, not for "
-        "analysis. **Cadence is stated in `description`**, not in a field of its own: "
+        "analysis. `flags` on a hit names why the ranking pushed it down (`other_mission`, "
+        "`browse_quality`, `outside_window`, `other_quantity`, `housekeeping`, `auxiliary`, "
+        "`model_derived`); a hit without `flags` was not demoted. `measurement_type` and "
+        "`region` appear when the archive states them. "
+        "**Cadence is stated in `description`**, not in a field of its own: "
         "'(3 sec)', '(1 min)', 'High-resolution', 'hourly'. Read it there and choose; "
         "re-running the search with different wording will not reveal it, and downloading "
         "to find out costs far more."
@@ -283,7 +287,8 @@ registry.register(
         "List available AMDA event catalogs and timetables (29 catalogs + 188 timetables). "
         "Returns id, name, type, number of events, survey range and description. "
         "Use the `id` with get_catalog() to inspect events or get_events_timeseries() to download data. "
-        "Filter by type ('catalog'/'timetable'/'all') and region keyword (e.g. 'ICME', 'MMS', 'shock')."
+        "Filter by type ('catalog'/'timetable'/'all') and region keyword (e.g. 'ICME', 'MMS', 'shock'). "
+        "Pass `query` to order the list by relevance to what you are looking for instead of by size."
     ),
     parameters={
         "type": "object",
@@ -296,6 +301,13 @@ registry.register(
             "region": {
                 "type": "string",
                 "description": "Optional keyword filter on name/description (e.g. 'ICME', 'bow shock', 'MMS').",
+            },
+            "query": {
+                "type": "string",
+                "description": (
+                    "Optional free-text description of the events wanted (e.g. 'interplanetary "
+                    "shocks at L1'); the list is ordered by relevance to it instead of by size."
+                ),
             },
         },
         "required": [],

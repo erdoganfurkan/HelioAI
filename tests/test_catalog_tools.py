@@ -118,6 +118,37 @@ async def test_list_catalogs_returns_all(monkeypatch, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_catalogs_orders_by_relevance_when_asked(monkeypatch, tmp_path) -> None:
+    """Biggest first is a proxy for relevance and nothing more: "shock" put a 2 797-event
+    bow-shock list above the interplanetary shock catalogue. With a query, the catalogue
+    index orders the list; entries it does not know keep their place below, by size."""
+    ip_shocks = _make_catalog_index("c1", "IP shocks", "Interplanetary shocks at L1", 400, "", "")
+    bow_shock = _make_catalog_index("c2", "Bow shock crossings", "MMS bow shock", 2797, "", "")
+    mock_spz = _make_spz({"c1": ip_shocks, "c2": bow_shock}, {})
+    monkeypatch.setitem(sys.modules, "speasy", mock_spz)
+
+    def fake_search_catalogs(query, top_k=5, **_):
+        assert query == "interplanetary shocks"
+        return [{"id": "amda/c1"}, {"id": "amda/c2"}]
+
+    import helioai.tools.rag as rag_module
+
+    monkeypatch.setattr(rag_module, "search_catalogs", fake_search_catalogs)
+    result = await list_catalogs(query="interplanetary shocks")
+    ids = [e["id"] for e in result["catalogs"]]
+    assert ids[:2] == ["amda/c1", "amda/c2"], "relevance, not size"
+    assert result["order"] == "relevance" and result["query"] == "interplanetary shocks"
+    assert ids[2:] and all(i.startswith("helio4cast/") for i in ids[2:]), (
+        "unknown to the index: below, by size"
+    )
+
+    monkeypatch.setattr(rag_module, "search_catalogs", lambda *a, **k: [])
+    result = await list_catalogs(query="interplanetary shocks")
+    assert [e["id"] for e in result["catalogs"]][0] == "amda/c2", "no index: by size, as before"
+    assert "order" not in result
+
+
+@pytest.mark.asyncio
 async def test_list_catalogs_type_filter(monkeypatch, tmp_path) -> None:
     cat_idx = _make_catalog_index("c1", "Cat", "", 10, "", "")
     tt_idx = _make_catalog_index("t1", "TT", "", 5, "", "", "TimetableIndex")

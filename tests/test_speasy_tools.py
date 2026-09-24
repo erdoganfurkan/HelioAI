@@ -48,9 +48,18 @@ def test_data_quality_detects_gap() -> None:
     t[25:] += np.timedelta64(3, "h")  # large hole before sample 25
     v = np.ones(50)
     q = _data_quality(t, v, np)
-    assert len(q["gaps"]) == 1
+    assert len(q["gaps"]) == 1 and q["n_gaps"] == 1
     assert q["gaps"][0]["dur_h"] == pytest.approx(3.0 + 1 / 60, abs=0.05)
     assert q["notable"] is True
+
+
+def test_data_quality_counts_every_gap_and_lists_ten() -> None:
+    """Twelve holes used to read as ten with no sign of the cut."""
+    t = _times(200)
+    for k in range(12):
+        t[15 * (k + 1) :] += np.timedelta64(2, "h")
+    q = _data_quality(t, np.ones(200), np)
+    assert q["n_gaps"] == 12 and len(q["gaps"]) == 10
 
 
 def test_data_quality_detects_outlier() -> None:
@@ -88,7 +97,9 @@ async def test_search_parameters_calls_rag_search(monkeypatch) -> None:
         {"id": "amda/ace_b_gse", "name": "Bx", "description": "ACE B field", "score": 0.92},
         {"id": "amda/ace_b_y", "name": "By", "description": "ACE B field Y", "score": 0.88},
     ]
-    monkeypatch.setattr(rag_module, "search", lambda q, top_k=5, provider=None: fake_results)
+    monkeypatch.setattr(
+        rag_module, "search", lambda q, top_k=5, provider=None, window=None: fake_results
+    )
 
     result = await search_parameters("ACE magnetic field")
     assert isinstance(result, dict)
@@ -103,14 +114,14 @@ async def test_search_parameters_calls_rag_search(monkeypatch) -> None:
 
 
 async def test_search_parameters_returns_query_field(monkeypatch) -> None:
-    monkeypatch.setattr(rag_module, "search", lambda q, top_k=5, provider=None: [])
+    monkeypatch.setattr(rag_module, "search", lambda q, top_k=5, provider=None, window=None: [])
     result = await search_parameters("solar wind density", top_k=3)
     assert result["query"] == "solar wind density"
     assert result["results"] == []
 
 
 async def test_search_parameters_batch_returns_groups(monkeypatch) -> None:
-    def fake_batch(queries, top_k=5, provider=None):
+    def fake_batch(queries, top_k=5, provider=None, window=None):
         return [
             [{"id": f"amda/p{i}", "name": q, "description": "", "score": 0.9}]
             for i, q in enumerate(queries)
@@ -126,6 +137,22 @@ async def test_search_parameters_batch_returns_groups(monkeypatch) -> None:
     assert all("score" not in r for g in result["groups"] for r in g["results"])
 
 
+async def test_the_download_window_reaches_the_ranking(monkeypatch) -> None:
+    """A product that cannot cover the interval used to be flagged inside the top-k, after
+    the cut; the ranking itself now knows the window, so it is demoted before the cut."""
+    seen: dict = {}
+
+    def fake_search(q, top_k=5, provider=None, window=None):
+        seen["window"] = window
+        return []
+
+    monkeypatch.setattr(rag_module, "search", fake_search)
+    await search_parameters("Wind MFI", start="2015-03-17T00:00:00", stop="2015-03-18T00:00:00")
+    assert seen["window"] == ("2015-03-17T00:00:00", "2015-03-18T00:00:00")
+    await search_parameters("Wind MFI", start="2015-03-17T00:00:00")
+    assert seen["window"] is None, "both ends are needed for the filter to apply"
+
+
 async def test_search_parameters_requires_query_or_queries() -> None:
     result = await search_parameters()
     assert "error" in result
@@ -137,7 +164,7 @@ async def test_fallback_note_names_what_actually_failed(monkeypatch) -> None:
     model with none of our context would have told the user to build an index that
     existed. The exception is the diagnosis, so the note carries it."""
 
-    def boom(q, top_k=5, provider=None):
+    def boom(q, top_k=5, provider=None, window=None):
         raise NameError("name 'nn' is not defined")
 
     monkeypatch.setattr(rag_module, "search", boom)
@@ -155,7 +182,7 @@ async def test_fallback_note_names_what_actually_failed(monkeypatch) -> None:
 
 
 async def test_batch_fallback_note_names_what_actually_failed(monkeypatch) -> None:
-    def boom(queries, top_k=5, provider=None):
+    def boom(queries, top_k=5, provider=None, window=None):
         raise RuntimeError("chroma unreachable")
 
     monkeypatch.setattr(rag_module, "search_batch", boom)
@@ -238,6 +265,23 @@ async def test_get_timeseries_downloads_a_partial_overlap(monkeypatch) -> None:
     assert len(fake_spz.get_data_calls) == 1
     assert "coverage_note" in result
     assert "clipped" in result["coverage_note"]
+    assert result["available_start"] == "2005-01-01T00:00:00"
+    assert result["available_stop"] == "2005-12-31T23:59:59", "bounds as keys, not only prose"
+
+
+async def test_get_timeseries_says_what_it_obtained_beside_what_was_asked(monkeypatch) -> None:
+    """The series' own first and last timestamps, so a window clipped to the archive or to
+    a gap is visible as two dates, not inferred from a sentence."""
+    fake_spz = FakeSpeasy(get_data=_make_fake_var(5))
+    monkeypatch.setitem(sys.modules, "speasy", fake_spz)
+
+    result = await get_timeseries("amda/imf", "2005-01-17T00:00:00", "2005-01-18T00:00:00")
+
+    assert result["start"] == "2005-01-17T00:00:00" and result["stop"] == "2005-01-18T00:00:00"
+    assert result["obtained_start"] == "2005-01-17T12:00:00"
+    assert result["obtained_stop"] == "2005-01-17T12:04:00"
+    keys = list(result)
+    assert keys.index("obtained_start") == keys.index("stop") + 1, "beside what was asked"
 
 
 async def test_get_timeseries_is_silent_when_fully_covered(monkeypatch) -> None:
@@ -434,9 +478,10 @@ def test_cadence_measures_samples_not_the_file_grid():
     values = np.full(len(times), np.nan)
     values[::375] = 42.0
 
-    cadence, n_valid = _sample_cadence(times, values)
+    cadence, n_valid, cadence_ms = _sample_cadence(times, values)
     assert cadence == "3 s", cadence
     assert n_valid == 20
+    assert cadence_ms == pytest.approx(3000.0), "the number beside the string"
 
 
 def test_cadence_of_a_gapless_product_is_unchanged():
@@ -448,8 +493,9 @@ def test_cadence_of_a_gapless_product_is_unchanged():
     times = np.datetime64("2015-03-17T00:00:00") + np.arange(100, dtype="int64") * np.timedelta64(
         16, "s"
     )
-    cadence, n_valid = _sample_cadence(times, np.arange(100.0))
+    cadence, n_valid, cadence_ms = _sample_cadence(times, np.arange(100.0))
     assert cadence == "16 s"
+    assert cadence_ms == pytest.approx(16000.0)
     assert n_valid == 100
 
 
@@ -462,7 +508,7 @@ def test_cadence_survives_a_non_numeric_variable():
     times = np.datetime64("2015-03-17T00:00:00") + np.arange(5, dtype="int64") * np.timedelta64(
         1, "m"
     )
-    cadence, n_valid = _sample_cadence(times, np.array(["a", "b", "c", "d", "e"]))
+    cadence, n_valid, _ = _sample_cadence(times, np.array(["a", "b", "c", "d", "e"]))
     assert cadence == "1 min"
     assert n_valid == 5
 
@@ -487,7 +533,9 @@ async def test_a_slow_download_does_not_freeze_the_event_loop(monkeypatch):
 
     fake_spz = FakeSpeasy(get_data=slow_get_data)
     monkeypatch.setitem(sys.modules, "speasy", fake_spz)
-    monkeypatch.setattr("helioai.tools.speasy_tools._coverage_check", lambda *a, **k: (None, None))
+    monkeypatch.setattr(
+        "helioai.tools.speasy_tools._coverage_check", lambda *a, **k: (None, None, None)
+    )
 
     gaps: list[float] = []
 

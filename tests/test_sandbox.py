@@ -620,6 +620,30 @@ print(p)
 
 
 @pytest.mark.asyncio
+async def test_magnitude_refuses_anything_but_three_components():
+    """The norm over the 32 channels of a spectrogram, or over B_xyz plus a |B| column, is a
+    number that plots and means nothing; the refusal names the fix."""
+    code = """
+import numpy as np
+export('single_vector', magnitude(np.array([3., 4., 0.])))
+try:
+    magnitude(np.zeros((5, 32)))
+except ValueError as e:
+    export('refused_spectrogram', np.array([1.0]))
+    print(e)
+try:
+    magnitude(np.zeros((5, 4)))
+except ValueError as e:
+    export('refused_four_columns', np.array([1.0]))
+"""
+    result = await run_python(code)
+    assert result.get("error") is None, result.get("stderr", "")
+    ex = result["exports"]
+    assert ex["single_vector"]["mean"] == pytest.approx(5.0)
+    assert ex["refused_spectrogram"]["mean"] == 1.0 and ex["refused_four_columns"]["mean"] == 1.0
+    assert "got shape (5, 32)" in result["stdout"] and "b[:, :3]" in result["stdout"]
+
+
 async def test_magnitude_leaves_a_data_gap_as_a_gap():
     """The hand-written idiom turned a 90 s hole in Wind/MFI into |B| = 0 nT.
 

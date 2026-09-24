@@ -101,6 +101,33 @@ def check_experiments() -> Check:
     )
 
 
+def check_judgment() -> Check:
+    from helioai.config import settings, validate_judgment
+
+    try:
+        backend = validate_judgment()
+    except RuntimeError as e:
+        return Check("judgment", FAIL, str(e))
+    if backend == "null":
+        return Check("judgment", OK, "null (abstains; default behaviour)")
+    if not settings.judgment.api_key:
+        return Check("judgment", FAIL, f"{backend}: TYPESAFE_API_KEY is not set")
+    try:
+        __import__("typesafe_sdk")
+    except Exception:
+        return Check(
+            "judgment",
+            FAIL,
+            f"{backend}: typesafe-sdk missing — pip install 'helioai-agent[judgment]'",
+        )
+    sites = sorted(n for n in settings.agent.experiments if n.startswith("judgment_"))
+    return Check(
+        "judgment",
+        OK,
+        f"{backend} ({settings.judgment.model}), sites: {', '.join(sites) if sites else 'none enabled'}",
+    )
+
+
 def check_provider_online(timeout_s: float = 5.0) -> Check:
     """One GET to the provider's model list, for the OpenAI-compatible providers.
 
@@ -137,11 +164,22 @@ def check_index() -> Check:
         import chromadb
 
         client = chromadb.PersistentClient(path=str(chroma_dir))
-        count = client.get_collection(settings.rag.collection_name).count()
+        collection = client.get_collection(settings.rag.collection_name)
+        count = collection.count()
+        threshold = (collection.configuration_json.get("hnsw") or {}).get("sync_threshold")
     except Exception as e:
         return Check("search index", FAIL, f"{chroma_dir}: cannot open ({e})")
     age = _age_days(chroma_dir)
     detail = f"{count} products at {chroma_dir}, last built {age:.0f} days ago"
+    if count and threshold != 1:
+        # Writes past the last persist are replayed into the graph at every start, in a
+        # varying order: the same query ranks differently from one process to the next.
+        return Check(
+            "search index",
+            WARN,
+            f"{detail}; built before writes were persisted at once (sync_threshold "
+            f"{threshold}) — run `helioai index` once so a search ranks the same in every process",
+        )
     return Check("search index", OK if count else WARN, detail)
 
 
@@ -196,7 +234,11 @@ def check_sessions_db() -> Check:
 
 def check_extras() -> Check:
     found = []
-    for module, extra in (("solarmach", "solarmach"), ("sentence_transformers", "index")):
+    for module, extra in (
+        ("solarmach", "solarmach"),
+        ("sentence_transformers", "index"),
+        ("typesafe_sdk", "judgment"),
+    ):
         try:
             __import__(module)
             found.append(extra)
@@ -221,6 +263,7 @@ def run_checks(online: bool = False) -> list[Check]:
         "env_file",
         "provider",
         "experiments",
+        "judgment",
         "index",
         "sandbox",
         "speasy_inventory",

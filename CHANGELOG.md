@@ -10,6 +10,43 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Fixed
 
+- **A search ranks the same in every process.** Chroma persists its HNSW graph only every
+  `sync_threshold` writes — 1000 by default — and replays whatever followed the last persist
+  into the in-memory graph at every start, in an order that varies. Measured on 2026-09-22
+  with one query embedding in five processes: five different dense top-50 lists, `ssc/mms1`
+  at rank 1 in four of them and absent from the fifth — the 325 SSCWeb trajectories added
+  last were the replayed tail, and the catalogue collection had never been persisted at
+  all. The indexer now opens both collections with a threshold of one (0.11 s per batch on
+  the full index, nothing left to replay) and settles a collection built before the setting
+  on open: modified, reopened, its tail persisted. `helioai doctor` warns on an index that
+  still carries the old threshold and names the one command that settles it.
+  `HelioBench/scripts/retrieval_replay.py`, which measures this, found the final fused
+  ranking stable on the 30 n1 queries before the fix; the dense channel alone was not, and
+  any change to the fusion would have carried its variance into the ranking the agent sees.
+  The same opener raises the dense search beam (`ef_search` 100 → 400): the catalogue is
+  full of near-twins — trajectories that differ by a spacecraft name, housekeeping variables
+  that differ by a suffix — and a narrow approximate search loses the exact one. `ssc/mms1`,
+  the true nearest neighbour of "MMS1 spacecraft position GSE 2019", was absent from the
+  dense top-50 and is rank 1 now, for 0.7 → 1.2 ms per query; on the 30 HelioBench n1
+  queries recall@1 moves from 53.3 % to 56.7 %. A `helioai index` run applies both to an
+  existing index.
+- **The parameter ranking uses what the index already knew.** Three signals of
+  `_rerank_penalty` were dead or missing, each measured on the 30 HelioBench n1 queries
+  replayed in five processes with `HelioBench/scripts/retrieval_replay.py` (zero tokens,
+  ranks identical across processes throughout). The mission penalty matched `\bmms\b` and
+  therefore never "mms1", "c1", "sta" or "vg1" — silent on every multi-spacecraft mission
+  exactly when the user named the spacecraft: each mission now has a query pattern with its
+  numbered forms (THEMIS-E's "the" left out), and the one MMS task moved from rank 13 to 3,
+  `amda/c1_b_gsm` no longer heading an "MMS1 FGM" search (recall@3 86.7 → 90.0 %, MRR 0.727
+  → 0.736). `measurement_type`, indexed on 12 850 products and consulted by nothing, now
+  demotes a typed product that measures another quantity than the query names and leaves
+  the 84 % without a type untouched; and a product whose coverage cannot overlap the
+  download window is demoted before the cut, where it used to be merely flagged inside the
+  top-k after it — `search` takes the window, the tool passes the one it had. Widening the
+  candidate pool (`hybrid_fetch_k` 50 → 100 / 200, or the BM25 cap alone) was measured and
+  rejected: MRR fell, two accepted products left the top-k. With the wider dense beam,
+  "MMS1 spacecraft position GSE 2019" ranks `amda/mms1_xyz_gse` and `ssc/mms1` first and
+  second, where a 2026 IMAP position led before.
 - **A sandbox program has no size limit anymore; `run_recipe` works on Windows.** The
   assembled script — a 14 576-character preamble, then the agent's code — travelled to the
   interpreter as the argument of `python -c`, and an argument has a size: 32 767 characters
@@ -173,6 +210,42 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Added
 
+- **A seam for a System One judge beside the loop — `helioai.core.judgment`, in
+  observation.** HelioAI verifies itself thoroughly (claims against the ledger, ids against
+  the index, code against the recipes, tools against the plan) and nothing verifies it
+  against the question it was asked. Before any such check exists, this module fixes where
+  it will live and what it may do: every question HelioAI puts to a judge is written here,
+  in one file a reviewer can read in one sitting; the answer is typed (`Noul` → yes / no /
+  abstain, `Choice` → one option of a closed set / abstain) and abstention is `None`, never
+  a sentinel that could be summed into a plausible wrong answer. The default backend,
+  `HELIOAI_JUDGMENT_BACKEND=null`, abstains on everything, so the loop is exactly the one
+  that shipped before; `jev` asks TypeSafe's model through the optional `judgment` extra
+  and `TYPESAFE_API_KEY`, and only at sites whose `judgment_<site>` experiment is named —
+  two axes, so "the judge does not help here" and "the layer costs something" can be told
+  apart. Every call is bounded (`HELIOAI_JUDGMENT_TIMEOUT_S`, default 2 s; the round trip
+  measured from France is 266 ms median, 373 ms p95) and recorded as one JSON line under
+  the session workspace, `judgment.jsonl`, with the state in full — a disagreement that
+  cannot be adjudicated later is not a measurement. Nothing here corrects the model. An
+  unknown backend is refused where the API key is checked and by `helioai doctor`, which
+  gains a `judgment` line. No site asks yet; this is the seam the next entries plug into.
+- **Tool results say what the system already knew, in fields, not in prose.** Five
+  payload changes, each additive, from the same finding: HelioAI held facts in typed fields
+  three calls before it asked a model to guess them from truncated English.
+  `get_timeseries` returns `obtained_start`/`obtained_stop` beside the requested window
+  (a series clipped to the archive or to a gap was announced with the window asked for —
+  the 2026-09-18 θ_Bn of 12° for a 54° shock, every downstream check green), and a partial
+  overlap carries `available_start`/`available_stop` as keys as the non-overlapping refusal
+  always did. `cadence_ms` rides beside the `cadence` string; `quality.n_gaps` counts what
+  the ten-entry `gaps` list cut. A `search_parameters` hit renders `measurement_type` and
+  `region` when the archive states them, and `flags` names each reason the ranking pushed
+  it down (`other_mission`, `browse_quality`, `outside_window`, `other_quantity`,
+  `housekeeping`, `auxiliary`, `model_derived`) — the order carried no reason before, and a
+  margin between two RRF sums was rejected as a confidence number because two such sums
+  are close by construction. `list_catalogs` takes a `query` and orders by relevance through
+  the catalogue index that `helioai index` built and nothing read. `magnitude` refuses
+  anything but three components, in the sandbox and in the exported notebook alike. The
+  standalone notebook header reads the cell's syntax tree, not its text — a comment
+  mentioning `u.nT` no longer imports astropy.
 - **Spacecraft positions are searchable: the 314 SSCWeb trajectories are indexed.** An
   SSC inventory node has neither `xmlid` nor `description`, so the indexer skipped every
   one of them and the index held no spacecraft position at all — "where was MMS1" could
@@ -376,6 +449,21 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Changed
 
+- **`theta_bn` averages over 13-minute windows, the Harvard-CfA convention, instead of
+  8-minute ones.** The CfA shock database publishes θ_Bn method by method, and its
+  magnetic-coplanarity (MC) entries rest on 260 field samples per side — 13 min at 3 s — so
+  a recipe that is itself an MC estimate can only be compared to it at those windows. On
+  CfA shock 00368 (Wind, 2004-11-07 17:59:05 ± 60 s UT) the recipe at guard 2 min / span
+  13 min gives **54.3°** against the CfA's **MC 54.5 ± 3.6°**, with the two window means
+  matching the CfA's asymptotic states, and the velocity- and mixed-coplanarity normals
+  computed on the same windows land within 0.3σ of its VC, MX1, MX2 and MX3; the former
+  default gave 49.1° on that shock. The difference was a window convention, not a method
+  error — which is exactly what the exported `theta_bn_window_spread_deg` exists to say.
+  On 2015-03-17 04:00 UT the same change moves the answer from 62.2° to 60.9° (CfA MC
+  58.8 ± 2.7°). The spread grid moves with the default, to spans of 8, 10, 13 and 15 min
+  (guards 1, 2, 3): 49.1–57.7° on the 2004 shock, 60.7–63.6° on the 2015 one. The
+  quickstart notebook asks for 13-minute windows accordingly; the 62.68° it reported under
+  0.3.0 was correct for the 8-minute convention it asked for then.
 - **Behaviours that change what the model sees or is told are named experiments, off by
   default, and go on by measurement: `HELIOAI_EXPERIMENTS=deferred_tools,search_budget,
   search_variables`.** Each shipped on the strength of a single live run and none was ever
@@ -411,7 +499,7 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   validator compares unit-aware, and a speed recorded bare could not vouch for
   "V_shock = 579 km/s". Recipe by recipe:
     - `theta_bn`: the upstream/downstream windows can be derived from the shock time
-      (`shock_time` + the series `B`; guard 2 min, span 8 min; a window with a step or a
+      (`shock_time` + the series `B`; guard 2 min, span 13 min — see *Changed*; a window with a step or a
       trend that looks like the ramp is refused) instead of chosen by the model — three
       live runs on the same shock had given 54.85°, 59.95° and 64.27°. Exports gain the
       normal, the magnetic compression ratio, the two window means, a bootstrap spread of

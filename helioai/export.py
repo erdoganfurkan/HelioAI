@@ -15,11 +15,13 @@ runs in a plain Jupyter kernel with no HelioAI sandbox around it.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import NamedTuple
 
 from helioai.config import settings
 from helioai.core.session import store
@@ -59,6 +61,12 @@ _MAGNITUDE_DEF = '''\
 def magnitude(vectors):
     """|V| of an N×3 array where a data gap stays NaN (nansum would read it as 0)."""
     arr = clean(vectors)
+    if arr.ndim not in (1, 2) or arr.shape[-1] != 3:
+        raise ValueError(
+            f"magnitude expects an (N, 3) array of vector components, got shape {arr.shape}: "
+            "pass the three components (for instance b[:, :3]); a spectrogram or a scalar "
+            "series has no vector magnitude"
+        )
     return np.sqrt(np.sum(arr**2, axis=-1))'''
 
 _INTERP_TO_DEF = '''\
@@ -381,55 +389,100 @@ def _strip_known_imports(code: str) -> str:
     return "\n".join(out)
 
 
+class _Uses(NamedTuple):
+    """What a cell reaches for: attribute roots it does not bind itself, and names it calls."""
+
+    roots: frozenset[str]
+    calls: frozenset[str]
+
+
+def _uses(code: str) -> _Uses:
+    """Read the names a cell uses off its syntax tree, not off its text.
+
+    `"np." in code` and `\\bu\\.` saw comments and string literals — a `# convert with u.nT`
+    pulled astropy into a notebook that never used it — and a local variable named `stats`
+    pulled scipy. The tree ignores comments and strings, and a name the cell binds itself
+    (assignment, loop target, def, import) is not a module it needs. Code that does not
+    parse falls back to the textual reading: an unparsable cell is already broken, and a
+    superfluous import is the least of its problems.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        roots = frozenset(re.findall(r"\b([A-Za-z_]\w*)\.", code))
+        calls = frozenset(re.findall(r"\b([A-Za-z_]\w*)\s*\(", code))
+        return _Uses(roots, calls)
+    bound: set[str] = set()
+    roots: set[str] = set()
+    calls: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            bound.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+        elif isinstance(node, ast.arg):
+            bound.add(node.arg)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bound.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            roots.add(node.value.id)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            calls.add(node.func.id)
+    return _Uses(frozenset(roots - bound), frozenset(calls))
+
+
 def _standalone_header(code: str) -> str:
     """Imports + real helpers needed by `code`, conditionally."""
-    fetches = re.search(r"\b(fetch_series|fetch_events)\s*\(", code)
-    needs_np = "np." in code or re.search(
-        r"\b(clean|export|magnitude|interp_to|transform_coords|mp_shue1998|bs_jelinek2012)\s*\(",
-        code,
-    )
+    uses = _uses(code)
+    fetches = bool(uses.calls & {"fetch_series", "fetch_events"})
+    helpers = {
+        "clean",
+        "export",
+        "magnitude",
+        "interp_to",
+        "transform_coords",
+        "mp_shue1998",
+        "bs_jelinek2012",
+    }
     imports: list[str] = []
-    if needs_np or fetches:
+    if "np" in uses.roots or uses.calls & helpers or fetches:
         imports.append("import numpy as np")
-    if "plt." in code or "matplotlib" in code:
+    if uses.roots & {"plt", "matplotlib"}:
         imports.append("import matplotlib.pyplot as plt")
-    if "spz." in code or fetches:
+    if "spz" in uses.roots or fetches:
         imports.append("import speasy as spz")
     if fetches:
         imports.append("import types")
-    scipy_mods = [m for m in ("signal", "stats", "fft") if re.search(rf"\b{m}\.", code)]
+    scipy_mods = [m for m in ("signal", "stats", "fft") if m in uses.roots]
     if scipy_mods:
         imports.append(f"from scipy import {', '.join(scipy_mods)}")
-    if "pf." in code:
+    if "pf" in uses.roots:
         imports.append("import plasmapy.formulary as pf")
-    if re.search(r"\bu\.", code):
+    if "u" in uses.roots:
         imports.append("import astropy.units as u")
 
     blocks: list[str] = []
     if imports:
         blocks.append("\n".join(imports))
-    needs_clean = re.search(r"\b(clean|magnitude)\s*\(", code)
-    if needs_clean:
+    if uses.calls & {"clean", "magnitude"}:
         blocks.append(_CLEAN_DEF)
-    if re.search(r"\bexport\s*\(", code):
+    if "export" in uses.calls:
         blocks.append(_EXPORT_DEF)
-    if re.search(r"\bmagnitude\s*\(", code):
+    if "magnitude" in uses.calls:
         blocks.append(_MAGNITUDE_DEF)
-    if re.search(r"\binterp_to\s*\(", code):
+    if "interp_to" in uses.calls:
         blocks.append(_INTERP_TO_DEF)
     if fetches:
         blocks.append(_FETCH_DEFS)
-    blocks.extend(_physics_helper_defs(code))
+    blocks.extend(_physics_helper_defs(code, uses))
     return "\n\n\n".join(blocks)
 
 
-def _physics_helper_defs(code: str) -> list[str]:
+def _physics_helper_defs(code: str, uses: _Uses | None = None) -> list[str]:
     """Source of the sandbox physics helpers the code calls, for standalone reuse."""
-    used = [
-        h
-        for h in ("transform_coords", "mp_shue1998", "bs_jelinek2012")
-        if re.search(rf"\b{h}\s*\(", code)
-    ]
+    calls = (uses or _uses(code)).calls
+    used = [h for h in ("transform_coords", "mp_shue1998", "bs_jelinek2012") if h in calls]
     if not used:
         return []
     import inspect

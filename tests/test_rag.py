@@ -81,6 +81,36 @@ def test_search_result_shape(isolated_rag) -> None:
     assert 0.0 <= r["score"] <= 1.0
 
 
+def test_a_hit_renders_the_measurement_type_and_region_the_archive_states(isolated_rag) -> None:
+    """Indexed on 16 % of the products, filterable, and shown to nobody: the model guessed
+    from a 280-character description what the index held in a typed field. Rendered when
+    present, absent otherwise — an empty key would read as "measures nothing"."""
+    rng = np.random.default_rng(1)
+    vecs = rng.random((2, 128)).astype("float32")
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    isolated_rag.add(
+        ids=["amda/mms1_xyz_gse", "cda/X_POS/xyz"],
+        embeddings=vecs.tolist(),
+        documents=["MMS1 position GSE. Measurement: Ephemeris.", "X position GSE."],
+        metadatas=[
+            {
+                "name": "xyz",
+                "provider": "amda",
+                "xmlid": "mms1_xyz_gse",
+                "measurement_type": "Ephemeris",
+                "region": "Earth.Magnetosphere",
+            },
+            {"name": "xyz", "provider": "cda", "xmlid": "X_POS/xyz"},
+        ],
+    )
+    by_id = {r["id"]: r for r in search("position GSE", top_k=2)}
+    assert by_id["amda/mms1_xyz_gse"]["measurement_type"] == "Ephemeris"
+    assert by_id["amda/mms1_xyz_gse"]["region"] == "Earth.Magnetosphere"
+    assert "measurement_type" not in by_id["cda/X_POS/xyz"]
+    assert "region" not in by_id["cda/X_POS/xyz"]
+    assert not any(k.startswith("_") for r in by_id.values() for k in r), "no private keys leak"
+
+
 def test_search_empty_query_returns_empty(isolated_rag) -> None:
     _seed(isolated_rag)
     assert search("") == []
@@ -434,6 +464,27 @@ def test_solar_wind_is_not_the_Wind_spacecraft():
     assert _query_mission("interface region imaging") is None, "'ace' inside a word"
 
 
+def test_a_numbered_spacecraft_names_its_mission():
+    """`\\bmms\\b` never matched "mms1": the mission penalty was dead on every multi-spacecraft
+    mission exactly when the user named the spacecraft, which is always."""
+    from helioai.tools.rag import _MISSION_PATTERNS, _MISSION_QUERY, _query_mission
+
+    assert _query_mission("MMS1 FGM burst magnetic field GSM") == "mms"
+    assert _query_mission("mms-3 spacecraft position") == "mms"
+    assert _query_mission("Cluster C1 FGM spin resolution") == "cluster"
+    assert _query_mission("C3 CIS HIA ion density") == "cluster"
+    assert _query_mission("STA IMPACT magnetic field RTN") == "stereo"
+    assert _query_mission("STEREO-A PLASTIC proton density") == "stereo"
+    assert _query_mission("THEMIS-A FGM GSM") == "themis"
+    assert _query_mission("tha fgs magnetic field") == "themis"
+    assert _query_mission("VG1 MAG heliospheric field") == "voyager"
+    assert _query_mission("PSP FIELDS MAG RTN") == "parker"
+    assert _query_mission("solo mag rtn normal mode") == "solar orbiter"
+    assert _query_mission("the magnetic field of the solar wind") is None, "THEMIS-E is 'the'"
+    assert _query_mission("hourly Dst geomagnetic index") is None
+    assert set(_MISSION_QUERY) == set(_MISSION_PATTERNS), "one query pattern per mission"
+
+
 def test_candidate_mission_from_the_dataset_prefix():
     from helioai.tools.rag import _candidate_mission
 
@@ -465,6 +516,113 @@ def test_browse_is_kept_when_it_is_what_was_asked_for():
     k0 = {"id": "cda/WI_K0_SWE/Np", "quality": "browse"}
     assert _rerank_penalty("Wind key parameter density", k0) == 0
     assert _rerank_penalty("Wind proton density", k0) == 1
+
+
+def test_a_product_that_names_another_quantity_is_demoted_and_an_untyped_one_is_not():
+    """`measurement_type` is indexed on 16 % of the products (AMDA, CSA) and consulted by
+    nothing. A typed product that measures another quantity than the query asks for goes
+    down like a product of another mission; an untyped one — all of CDA — is untouched."""
+    from helioai.tools.rag import _rerank_penalty, _types_of, _wanted_type
+
+    assert _wanted_type("MMS1 spacecraft position GSE 2019") == {"ephemeris"}
+    assert _wanted_type("Wind MFI magnetic field 3 second") == {"magneticfield"}
+    assert _wanted_type("hourly Dst geomagnetic index") is None, "no class for indices"
+    assert _types_of("Magnetic_Field, Radio_and_Plasma_Waves") == {
+        "magneticfield",
+        "radioandplasmawaves",
+    }
+    assert _types_of("ThermalPlasma") == {"thermalplasma"} and _types_of("") == frozenset()
+
+    q = "MMS1 spacecraft position GSE 2019"
+    e_field = {
+        "id": "amda/mms1_e_gse",
+        "quality": "",
+        "_measurement_type": "Electric_Field",
+    }
+    ephem = {"id": "amda/mms1_xyz_gse", "quality": "", "_measurement_type": "Ephemeris"}
+    untyped = {
+        "id": "cda/MMS1_MEC_SRVY_L2_EPHT89D/mms1_mec_r_gse",
+        "quality": "",
+        "_measurement_type": "",
+    }
+    assert _rerank_penalty(q, e_field) == 2
+    assert _rerank_penalty(q, ephem) == 0
+    assert _rerank_penalty(q, untyped) == 0
+    multi = {
+        "id": "csa/C1_CP_STAFF/B",
+        "quality": "",
+        "_measurement_type": "Electric_Field, Magnetic_Field",
+    }
+    assert _rerank_penalty("Cluster magnetic field", multi) == 0, "any listed class matches"
+
+
+def test_a_product_that_cannot_cover_the_window_is_demoted_before_the_cut():
+    """The flag `covers_window: false` was set on the top-k after the cut; a covering
+    product at rank 6 never reached the model. The ranking itself now reads the window."""
+    from helioai.tools.rag import _apply_domain_rerank, _rerank_penalty
+
+    window = ("2019-06-01T00:00:00", "2019-06-02T00:00:00")
+    stale = {
+        "id": "cda/MMS1_MEC_BRST_L2_EPHT89D/mms1_mec_r_gse",
+        "quality": "",
+        "coverage": "1994-11-01 → 1997-12-31",
+    }
+    live = {
+        "id": "cda/MMS1_MEC_SRVY_L2_EPHT89Q/mms1_mec_r_gse",
+        "quality": "",
+        "coverage": "2025-09-24 → 2026-09-21",
+    }
+    fits = {"id": "amda/mms1_xyz_gse", "quality": "", "coverage": "2015-09-01 → 2026-09-01"}
+    unknown = {"id": "amda/mms1_xyz_gsm", "quality": "", "coverage": ""}
+    assert _rerank_penalty("MMS1 spacecraft position", stale, window) == 3
+    assert _rerank_penalty("MMS1 spacecraft position", live, window) == 3
+    assert _rerank_penalty("MMS1 spacecraft position", fits, window) == 0
+    assert _rerank_penalty("MMS1 spacecraft position", unknown, window) == 0, (
+        "absent coverage covers"
+    )
+    assert _rerank_penalty("MMS1 spacecraft position", stale) == 0, "no window, no penalty"
+    ranked = _apply_domain_rerank("MMS1 spacecraft position", [live, stale, fits], window)
+    assert [c["id"] for c in ranked] == [fits["id"], live["id"], stale["id"]]
+
+
+def test_a_demoted_hit_says_why_and_a_clean_one_says_nothing():
+    """The ranking was an order with no reason attached: a product at rank 4 for being
+    housekeeping and one at rank 4 for a close call looked the same to the model."""
+    from helioai.tools.rag import _apply_domain_rerank, _demotions
+
+    q = "Wind proton density"
+    browse = {"id": "cda/WI_K0_SWE/Np", "quality": "browse", "description": ""}
+    ace = {"id": "cda/AC_H0_SWE/Np", "quality": "", "description": ""}
+    good = {"id": "cda/WI_H1_SWE/Proton_Np_moment", "quality": "", "description": ""}
+    assert [n for _, n in _demotions(q, browse)] == ["browse_quality"]
+    assert [n for _, n in _demotions(q, ace)] == ["other_mission"]
+    assert _demotions(q, good) == []
+    names = {n for _, n in _demotions(q, {"id": "amda/sw_n", "quality": "", "description": ""})}
+    assert names == {""}, "the unattributable-mission nudge is a tie-break, not a flag"
+
+    ranked = _apply_domain_rerank(q, [browse, ace, good])
+    assert [c["id"] for c in ranked] == [good["id"], browse["id"], ace["id"]]
+    assert ranked[0]["_flags"] == [] and ranked[1]["_flags"] == ["browse_quality"]
+    assert ranked[2]["_flags"] == ["other_mission"]
+
+
+def test_flags_reach_the_hit_and_private_keys_do_not(isolated_rag) -> None:
+    rng = np.random.default_rng(2)
+    vecs = rng.random((2, 128)).astype("float32")
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    isolated_rag.add(
+        ids=["cda/WI_H1_SWE/Proton_Np_moment", "cda/AC_H0_SWE/Np"],
+        embeddings=vecs.tolist(),
+        documents=["Wind proton density.", "ACE proton density."],
+        metadatas=[
+            {"name": "Np", "provider": "cda", "xmlid": "a"},
+            {"name": "Np", "provider": "cda", "xmlid": "b"},
+        ],
+    )
+    by_id = {r["id"]: r for r in search("Wind proton density", top_k=2)}
+    assert by_id["cda/AC_H0_SWE/Np"]["flags"] == ["other_mission"]
+    assert "flags" not in by_id["cda/WI_H1_SWE/Proton_Np_moment"]
+    assert not any(k.startswith("_") for r in by_id.values() for k in r)
 
 
 def test_rerank_never_drops_a_candidate():

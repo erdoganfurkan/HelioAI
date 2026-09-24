@@ -34,6 +34,9 @@ provider's key is checked when a client is built.
 | `HELIOAI_RAG_HYBRID` | `1` | `0` for dense-only parameter search instead of BM25 + dense fused by RRF. |
 | `HELIOAI_VISION_ENABLED` | `0` | Review generated figures with a multimodal side-call (text verdict only enters the history). |
 | `HELIOAI_VISION_PROVIDER`, `HELIOAI_VISION_MODEL` | `azure`, — | Provider and model for that review. |
+| `HELIOAI_JUDGMENT_BACKEND` | `null` | Who answers the judgment questions of `helioai.core.judgment`: `null` abstains on every one (the loop behaves exactly as without the module), `jev` asks TypeSafe's System One model (extra `judgment`, `TYPESAFE_API_KEY`). A site only asks when its `judgment_<site>` experiment is also named in `HELIOAI_EXPERIMENTS`; every answer is recorded under the session workspace (`judgment.jsonl`) and none corrects the model. An unknown backend is refused when a model is built and by `helioai doctor`. |
+| `HELIOAI_JUDGMENT_MODEL`, `HELIOAI_JUDGMENT_TIMEOUT_S` | `jev-latest`, `2.0` | The judge model, and the bound on one call — past it the judge abstains. |
+| `TYPESAFE_API_KEY` | — | Key for the `jev` backend. Never required to import or run HelioAI. |
 | `HELIOAI_DEV_TOKEN` | — | Shared secret that lifts the heliophysics scope guardrail (`--dev`, `X-Helio-Dev-Token`). Empty means nothing unlocks it. |
 | `ADS_API_TOKEN` | — | NASA ADS token for `find_papers`. |
 | `HELIOAI_MCP_SERVERS` | — | JSON describing remote MCP servers to mount into the tool registry. |

@@ -16,7 +16,7 @@ from helioai.tools.offload import run_blocking, speasy_gate
 log = logging.getLogger(__name__)
 
 
-def _sample_cadence(times, values) -> tuple[str, int]:
+def _sample_cadence(times, values) -> tuple[str, int, float | None]:
     """Median gap between samples that actually carry a measurement, and how many.
 
     Measured over the whole time grid instead, this reports the file's epoch spacing,
@@ -37,7 +37,10 @@ def _sample_cadence(times, values) -> tuple[str, int]:
         values: Matching values, already fill-blanked to NaN.
 
     Returns:
-        (human-readable cadence, number of samples carrying a measurement).
+        (human-readable cadence, number of samples carrying a measurement, the same
+        cadence in milliseconds or None). The number rides beside the string because a
+        recipe choosing a window in samples, or a join comparing two products' rates,
+        should not have to parse "3 s" back out of prose.
     """
     import numpy as np
 
@@ -54,18 +57,18 @@ def _sample_cadence(times, values) -> tuple[str, int]:
         pass  # non-numeric variable: the grid is all there is to measure
 
     if len(sample_times) < 2:
-        return "", n_valid
+        return "", n_valid, None
     try:
         med_ms = float(np.median(np.diff(sample_times.astype("datetime64[ms]").astype(float))))
     except Exception:
-        return "", n_valid
+        return "", n_valid, None
     if med_ms >= 3_600_000:
-        return f"{med_ms / 3_600_000:.4g} h", n_valid
+        return f"{med_ms / 3_600_000:.4g} h", n_valid, med_ms
     if med_ms >= 60_000:
-        return f"{med_ms / 60_000:.4g} min", n_valid
+        return f"{med_ms / 60_000:.4g} min", n_valid, med_ms
     if med_ms >= 1_000:
-        return f"{med_ms / 1_000:.4g} s", n_valid
-    return f"{med_ms:.4g} ms", n_valid
+        return f"{med_ms / 1_000:.4g} s", n_valid, med_ms
+    return f"{med_ms:.4g} ms", n_valid, med_ms
 
 
 async def get_timeseries(
@@ -138,7 +141,7 @@ def _get_timeseries_sync(
             "Nothing was re-fetched; read it with load_data().",
         }
 
-    blocking, coverage_note = _coverage_check(spz, np, param_id, start, stop)
+    blocking, coverage_note, available = _coverage_check(spz, np, param_id, start, stop)
     if blocking is not None:
         return blocking
 
@@ -221,7 +224,7 @@ def _get_timeseries_sync(
     # before the preview is thinned: `load_data()` hands back the full resolution, and
     # a cadence measured on the thinned copy would describe something the agent never
     # works with.
-    cadence, n_valid = _sample_cadence(times, values)
+    cadence, n_valid, cadence_ms = _sample_cadence(times, values)
 
     # Downsample if needed
     if n_points > max_points:
@@ -276,14 +279,21 @@ def _get_timeseries_sync(
         ds_name = saved["dataset"]
         result["dataset"] = ds_name
         result["dataset_note"] = f"use load_data({ds_name!r}) in run_python — never spz.get_data"
+    # What came back, beside what was asked for: a series clipped to the archive's
+    # coverage, or to a gap, used to be announced with the requested window and nothing
+    # else — the shock at the edge of the 2026-09-18 run had no downstream and every
+    # check downstream of it was green.
     result |= {
         "param_id": param_id,
         "name": name,
         "start": start,
         "stop": stop,
+        "obtained_start": str(times[0])[:19],
+        "obtained_stop": str(times[-1])[:19],
         "units": str(units),
         "components": components,
         "cadence": cadence,
+        **({"cadence_ms": round(cadence_ms, 3)} if cadence_ms is not None else {}),
         "mission": mission,
         "instrument": instrument,
         "shape": shape,
@@ -295,6 +305,8 @@ def _get_timeseries_sync(
         result["quality"] = quality
     if coverage_note:
         result["coverage_note"] = coverage_note
+        if available:
+            result["available_start"], result["available_stop"] = available
     return result
 
 
@@ -303,11 +315,14 @@ _PROVIDERS_WITH_RANGE = ("amda", "cda", "csa", "ssc")
 
 def _coverage_check(
     spz, np, param_id: str, start: str, stop: str
-) -> tuple[dict | None, str | None]:
+) -> tuple[dict | None, str | None, tuple[str, str] | None]:
     """Compare the requested window against the parameter's published coverage.
 
-    Returns (blocking_result, note). The blocking result is returned to the agent
-    instead of downloading; the note rides along with a successful download.
+    Returns (blocking_result, note, available). The blocking result is returned to the
+    agent instead of downloading; the note rides along with a successful download, and
+    so do the coverage bounds it quotes — as two keys, not only inside a sentence, because
+    the sentence is the one thing a stale tool result loses first and a clipped series
+    announced with the window that was asked for is the 2026-09-18 θ_Bn of 12°.
 
     Only a request that does not overlap the coverage AT ALL is refused. A partial
     overlap still downloads, because refusing it throws away real data: the guard
@@ -322,12 +337,12 @@ def _coverage_check(
     """
     provider = param_id.split("/", 1)[0] if "/" in param_id else ""
     if provider not in _PROVIDERS_WITH_RANGE:
-        return None, None
+        return None, None, None
     try:
         with speasy_gate:
             rng = getattr(spz, provider).parameter_range(param_id.split("/", 1)[1])
         if rng is None:
-            return None, None
+            return None, None, None
         # speasy's DateTimeRange exposes start_time/stop_time as tz-aware datetimes.
         # isoformat, not str(): str() renders a space separator that datetime64 rejects.
         avail_start = rng.start_time.isoformat()[:19]
@@ -342,29 +357,37 @@ def _coverage_check(
         # broken: it read rng.start, which does not exist, and the bare except
         # made the guard a no-op that its mocked test still passed.
         log.warning("coverage check failed for %r: %s", param_id, e)
-        return None, None
+        return None, None, None
 
     if req_stop < cov_start or req_start > cov_stop:
-        return {
-            "error": (
-                f"{param_id!r} has no data in [{start}, {stop}] — it covers "
-                f"[{avail_start}, {avail_stop}]."
-            ),
-            "suggestion": (
-                "The window and the parameter do not overlap at all. Pick a different "
-                "parameter for this event rather than a different window, unless you "
-                "meant to study a date inside the coverage."
-            ),
-            "available_start": avail_start,
-            "available_stop": avail_stop,
-        }, None
+        return (
+            {
+                "error": (
+                    f"{param_id!r} has no data in [{start}, {stop}] — it covers "
+                    f"[{avail_start}, {avail_stop}]."
+                ),
+                "suggestion": (
+                    "The window and the parameter do not overlap at all. Pick a different "
+                    "parameter for this event rather than a different window, unless you "
+                    "meant to study a date inside the coverage."
+                ),
+                "available_start": avail_start,
+                "available_stop": avail_stop,
+            },
+            None,
+            None,
+        )
 
     if req_start < cov_start or req_stop > cov_stop:
-        return None, (
-            f"Requested [{start}, {stop}] extends past the coverage of {param_id!r} "
-            f"([{avail_start}, {avail_stop}]) — the series is clipped to the overlap."
+        return (
+            None,
+            (
+                f"Requested [{start}, {stop}] extends past the coverage of {param_id!r} "
+                f"([{avail_start}, {avail_stop}]) — the series is clipped to the overlap."
+            ),
+            (avail_start, avail_stop),
         )
-    return None, None
+    return None, None, None
 
 
 def _data_quality(times, values, np, fillval=None, fill_mask=None) -> dict:
@@ -390,11 +413,16 @@ def _data_quality(times, values, np, fillval=None, fill_mask=None) -> dict:
         missing_pct = round(100 * float(bad.sum()) / total, 1) if total else 0.0
 
         gaps: list[dict] = []
+        n_gaps = 0
         if len(times) > 2:
             deltas = np.diff(times.astype("datetime64[ms]").astype(float))
             med = float(np.median(deltas))
             if med > 0:
-                for i in np.where(deltas > 3 * med)[0][:10]:
+                where = np.where(deltas > 3 * med)[0]
+                n_gaps = int(where.size)
+                # The list is cut at ten so a gappy product does not flood the payload;
+                # the count says how many there really were.
+                for i in where[:10]:
                     gaps.append(
                         {
                             "start": str(times[i])[:19],
@@ -414,6 +442,7 @@ def _data_quality(times, values, np, fillval=None, fill_mask=None) -> dict:
         return {
             "missing_pct": missing_pct,
             "gaps": gaps,
+            "n_gaps": n_gaps,
             "outliers_5sigma": outliers,
             "notable": notable,
         }
@@ -599,7 +628,7 @@ def _search_parameters_sync(
         try:
             from helioai.tools.rag import search_batch as rag_search_batch
 
-            batch = rag_search_batch(queries, top_k=top_k, provider=provider)
+            batch = rag_search_batch(queries, top_k=top_k, provider=provider, window=window)
             note = _provider_note(provider)
             return {
                 "provider": provider,
@@ -633,7 +662,7 @@ def _search_parameters_sync(
     try:
         from helioai.tools.rag import search as rag_search
 
-        results = rag_search(query, top_k=top_k, provider=provider)
+        results = rag_search(query, top_k=top_k, provider=provider, window=window)
         note = _provider_note(provider)
         return {
             "query": query,

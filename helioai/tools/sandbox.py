@@ -586,8 +586,18 @@ def magnitude(vectors):
     it survives every finite check, and `np.diff` sees the recovery out of the gap as the
     largest jump in the interval — which is how a shock detector came to fire on a 90-second
     hole in Wind/MFI and report a shock 3.5 minutes early.
+
+    Anything but three components is refused: the norm over the 32 energy channels of a
+    spectrogram, or over B_x, B_y, B_z and a fourth |B| column, is a number that plots and
+    means nothing.
     \"\"\"
     arr = clean(vectors)
+    if arr.ndim not in (1, 2) or arr.shape[-1] != 3:
+        raise ValueError(
+            f"magnitude expects an (N, 3) array of vector components, got shape {arr.shape}: "
+            "pass the three components (for instance b[:, :3]); a spectrogram or a scalar "
+            "series has no vector magnitude"
+        )
     return np.sqrt(np.sum(arr**2, axis=-1))
 
 

@@ -470,6 +470,47 @@ def test_exported_helpers_accept_what_the_sandbox_helpers_accept() -> None:
     assert ns["mid"][0] == pytest.approx(20.0)
 
 
+def test_the_exported_magnitude_refuses_what_the_sandbox_one_refuses() -> None:
+    """Two copies of one function: a shape the sandbox refuses must be refused by the
+    notebook too, or the exported notebook diverges from the run it reproduces."""
+    from helioai.export import to_standalone
+
+    out = to_standalone("mag = magnitude(np.zeros((5, 32)))\n", {"datasets": {}})
+    with pytest.raises(ValueError, match=r"got shape \(5, 32\)"):
+        exec(out, {})  # noqa: S102
+
+
+def test_the_header_reads_the_cell_not_its_comments_or_strings() -> None:
+    """`"np." in code` and `\\bu\\.` saw comments and string literals, and a local variable
+    named `stats` pulled scipy: a notebook imported astropy for a comment."""
+    from helioai.export import _standalone_header, _uses
+
+    code = (
+        "# convert with u.nT if needed; np.array is not used here\n"
+        'label = "stats.describe"\n'
+        "stats = {}\n"
+        "stats.update(a=1)\n"
+        "print(label)\n"
+    )
+    uses = _uses(code)
+    assert "u" not in uses.roots and "np" not in uses.roots and "stats" not in uses.roots
+    assert _standalone_header(code) == ""
+
+    used = "x = np.arange(3)\nspec = signal.welch(x)\ndens = 1 * u.cm**-3\nm = magnitude(b)\n"
+    header = _standalone_header(used)
+    assert "import numpy as np" in header and "from scipy import signal" in header
+    assert "import astropy.units as u" in header and "def magnitude(" in header
+    assert "def clean(" in header, "magnitude needs clean"
+    assert "import matplotlib" not in header
+
+    assert _uses("def f(x):\n    return x.real\n").roots == frozenset(), "a parameter is bound"
+    assert _uses("for plt in items:\n    plt.show()\n").roots == frozenset(), (
+        "a loop target is bound"
+    )
+    broken = "np.arange(3\n"
+    assert "np" in _uses(broken).roots, "unparsable code falls back to the textual reading"
+
+
 def test_strip_known_imports_keeps_names_the_header_does_not_provide() -> None:
     """Audit probe: `from numpy import mean` was stripped because its root is numpy,
     but the header only binds `np` — the cell then died on NameError.

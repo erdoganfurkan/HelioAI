@@ -60,12 +60,31 @@ def test_a_built_index_reports_its_product_count(quiet_install):
     import chromadb
 
     from helioai.config import settings
+    from helioai.indexer import HNSW_SYNC_THRESHOLD
 
     client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
-    coll = client.create_collection(settings.rag.collection_name)
+    coll = client.create_collection(
+        settings.rag.collection_name,
+        configuration={"hnsw": {"space": "cosine", "sync_threshold": HNSW_SYNC_THRESHOLD}},
+    )
     coll.add(ids=["a", "b"], embeddings=[[0.0, 1.0], [1.0, 0.0]], documents=["x", "y"])
     (index,) = [c for c in doctor.run_checks() if c.name == "search index"]
     assert index.status == doctor.OK and index.detail.startswith("2 products")
+
+
+def test_an_index_built_before_writes_were_persisted_at_once_is_a_warning(quiet_install):
+    """Its unpersisted tail is replayed into the graph at every start, in a varying order,
+    so the same query can rank differently from one process to the next."""
+    import chromadb
+
+    from helioai.config import settings
+
+    client = chromadb.PersistentClient(path=str(settings.rag.chroma_dir))
+    coll = client.create_collection(settings.rag.collection_name, metadata={"hnsw:space": "cosine"})
+    coll.add(ids=["a", "b"], embeddings=[[0.0, 1.0], [1.0, 0.0]], documents=["x", "y"])
+    (index,) = [c for c in doctor.run_checks() if c.name == "search index"]
+    assert index.status == doctor.WARN
+    assert "sync_threshold 1000" in index.detail and "helioai index" in index.detail
 
 
 def test_large_workspaces_are_flagged(quiet_install, monkeypatch):

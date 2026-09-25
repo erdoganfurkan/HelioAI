@@ -143,6 +143,25 @@ def test_index_is_empty(tmp_path):
     assert not index_snapshot.index_is_empty()
 
 
+def test_a_store_chroma_cannot_open_is_not_taken_for_an_empty_one():
+    chroma_dir = settings.rag.chroma_dir
+    chroma_dir.mkdir(parents=True)
+    (chroma_dir / "chroma.sqlite3").write_bytes(b"not a database " * 8)
+
+    assert not index_snapshot.index_is_empty()
+
+
+def test_a_store_without_the_product_collection_is_empty():
+    import chromadb
+
+    chromadb.PersistentClient(path=str(settings.rag.chroma_dir)).get_or_create_collection(
+        settings.rag.catalogs_collection_name
+    )
+    index_snapshot._release_clients()
+
+    assert index_snapshot.index_is_empty()
+
+
 def test_a_release_without_its_own_snapshot_gets_the_latest(tmp_path, monkeypatch):
     import huggingface_hub
     from huggingface_hub.errors import RevisionNotFoundError

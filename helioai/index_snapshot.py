@@ -56,8 +56,10 @@ def index_is_empty(chroma_dir: Path | None = None) -> bool:
     """Whether the product collection is absent or holds nothing.
 
     This is the condition under which `helioai index` fetches the published snapshot
-    rather than walking the inventory: a non-empty index is only ever topped up locally,
-    so a fetch never discards products a user built or classified.
+    rather than walking the inventory, and a fetch replaces the index. So a store that
+    exists but cannot be read — corrupt, or written by a Chroma this one cannot open — is
+    not empty: `helioai index` then builds on it and fails loudly, rather than discarding
+    products a user built or classified.
     """
     from helioai.config import settings
 
@@ -66,11 +68,13 @@ def index_is_empty(chroma_dir: Path | None = None) -> bool:
         return True
     import chromadb
 
+    name = settings.rag.collection_name
     try:
         client = chromadb.PersistentClient(path=str(chroma_dir))
-        return client.get_collection(settings.rag.collection_name).count() == 0
+        listed = {c if isinstance(c, str) else c.name for c in client.list_collections()}
+        return name not in listed or client.get_collection(name).count() == 0
     except Exception:
-        return True
+        return False
     finally:
         _release_clients()
 

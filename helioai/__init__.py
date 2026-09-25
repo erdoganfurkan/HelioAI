@@ -1,3 +1,3 @@
 """HelioAI — AI agent for heliophysics and space plasma data analysis."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

@@ -383,14 +383,21 @@ async def export_notebook(session_id: str, user_id: str = Depends(require_user))
 
 
 @app.get("/code")
-async def serve_code(path: str, user_id: str = Depends(require_user)) -> PlainTextResponse:
+async def serve_code(
+    path: str, full: bool = False, user_id: str = Depends(require_user)
+) -> PlainTextResponse:
     """Return a generated script, rewritten to standalone form.
 
     Ownership is checked against the caller before anything is read, so a path
-    outside the caller's workspace is a 404 rather than a leak.
+    outside the caller's workspace is a 404 rather than a leak. A `run_recipe` run of an
+    unmodified shipped recipe is shown as its own lines, the recipe read from the
+    installed package (`export.recipe_run_view`) — six hundred lines of recipe buried the
+    five the model wrote — and the `X-HelioAI-Full-Lines` header tells the panel that the
+    whole script is one `full=true` away.
 
     Args:
         path: Absolute path of the generated script, as the artifact reported it.
+        full: Return the whole script even when a short recipe view exists.
         user_id: Resolved by `require_user`.
 
     Returns:
@@ -408,11 +415,15 @@ async def serve_code(path: str, user_id: str = Depends(require_user)) -> PlainTe
         log.warning("code_rejected", path=path, reason="file not found or not .py")
         raise HTTPException(status_code=404, detail="Not found")
     from helioai.datastore import read_manifest
-    from helioai.export import to_standalone
+    from helioai.export import recipe_run_view, to_standalone
 
     manifest = read_manifest(p.parent)
-    standalone = to_standalone(p.read_text(encoding="utf-8"), manifest, with_header=True)
-    return PlainTextResponse(standalone)
+    code = p.read_text(encoding="utf-8")
+    short = None if full else recipe_run_view(code, manifest)
+    if short is not None:
+        n_lines = str(code.count("\n") + 1)
+        return PlainTextResponse(short, headers={"X-HelioAI-Full-Lines": n_lines})
+    return PlainTextResponse(to_standalone(code, manifest, with_header=True))
 
 
 _FIGURE_TYPES = {".png": "image/png", ".pdf": "application/pdf"}

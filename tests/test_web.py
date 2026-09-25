@@ -327,6 +327,31 @@ def test_code_valid(web_client, tmp_path, monkeypatch):
     assert "def clean(" in r.text and "def export(" in r.text  # shims supplied
 
 
+def test_code_of_a_recipe_run_shows_its_own_lines_and_the_full_script_on_request(
+    web_client, tmp_path
+):
+    from helioai.config import _PKG_RECIPES
+    from helioai.tools.recipes import recipe_script
+
+    code_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
+    code_dir.mkdir(parents=True)
+    code_file = code_dir / "code_0.py"
+    recipe = (_PKG_RECIPES / "theta_bn.py").read_text(encoding="utf-8")
+    code_file.write_text(
+        recipe_script("theta_bn", recipe, {"B_up": [5, 0, 8.66], "B_dn": [5, 0, 21.65]}, None),
+        encoding="utf-8",
+    )
+
+    short = web_client.get(f"/code?path={code_file}")
+    assert short.status_code == 200
+    assert "def theta_bn(" not in short.text and "run_recipe('theta_bn'" in short.text
+    assert int(short.headers["X-HelioAI-Full-Lines"]) > 600
+
+    full = web_client.get(f"/code?path={code_file}&full=true")
+    assert "def theta_bn(" in full.text
+    assert "X-HelioAI-Full-Lines" not in full.headers
+
+
 def test_session_messages_attach_code(monkeypatch, tmp_path):
     import json
 

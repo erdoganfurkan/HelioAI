@@ -77,7 +77,7 @@ def test_incompatible_units_on_a_named_scalar_are_a_contradiction():
 
 
 def test_units_the_ledger_spells_unparseably_leave_the_claim_unjudged():
-    ledger = [_entry("n_p", 48.5, "#/cc")]
+    ledger = [_entry("n_p", 48.5, "c/acc")]
     status, detail = judge_claim(_claim("n_p", 48.5, "cm-3"), ledger)
     assert status == "unsourced" and "reconciled" in detail["note"]
 

@@ -1,7 +1,7 @@
 # name: theta_bn
 # description: Compute the shock normal angle theta_Bn from upstream and downstream magnetic field vectors.
 # inputs: B_up (array of shape (N,3) or (3,) in nT, upstream), B_dn (array of shape (N,3) or (3,), downstream); or B (series with .time and .values) plus shock_time; or B alone to list shock candidates (optional density and speed series screen them); optional guard_min, span_min, n_candidates
-# outputs: theta_bn (deg), shock_normal, compression_ratio (magnetic |<B_dn>|/|<B_up>|), B_up_mean_nT, B_dn_mean_nT, theta_bn_window_spread_deg (B + shock_time only), theta_bn_sampling_std_deg, normal_spread_deg, Bn_std_nT
+# outputs: theta_bn (deg), shock_normal, compression_ratio (magnetic |<B_dn>|/|<B_up>|), B_up_mean_nT, B_dn_mean_nT, B_up_mag_nT, B_dn_mag_nT (|<B_up>|, |<B_dn>|), theta_bn_window_spread_deg (B + shock_time only), theta_bn_sampling_std_deg, normal_spread_deg, Bn_std_nT
 # reference: Coplanarity theorem (Colburn & Sonett 1966); Schwartz (1998), "Shock and Discontinuity Normals, Mach Numbers and Related Parameters", ISSI SR-001, ch. 10.
 
 """Shock normal angle theta_Bn.
@@ -135,6 +135,8 @@ def _solve_from_means(u, d):
         "compression_ratio": float(np.linalg.norm(d) / np.linalg.norm(u)),
         "B_up_mean_nT": u,
         "B_dn_mean_nT": d,
+        "B_up_mag_nT": float(np.linalg.norm(u)),
+        "B_dn_mag_nT": float(np.linalg.norm(d)),
     }
 
 
@@ -190,7 +192,9 @@ def theta_bn(B_up, B_dn):
     dict with theta_bn_deg (degrees, 0-90), geometry ("quasi-parallel" below
     45 deg, "quasi-perpendicular" above), shock_normal (unit 3-vector),
     compression_ratio (the magnetic compression |<B_dn>| / |<B_up>|),
-    B_up_mean_nT and B_dn_mean_nT (the vectors actually used), and series-only diagnostics theta_bn_sampling_std_deg,
+    B_up_mean_nT and B_dn_mean_nT (the vectors actually used), B_up_mag_nT and
+    B_dn_mag_nT (their magnitudes — the pair compression_ratio divides, not the mean
+    of |B|, which fluctuations make larger), and series-only diagnostics theta_bn_sampling_std_deg,
     normal_spread_deg and Bn_std_nT. On a NaN or zero input, or on collinear or
     identical vectors, the normal is undefined and the dict carries an "error"
     key and nothing else: a NaN used to flow through to theta_bn_deg and,
@@ -216,6 +220,8 @@ def theta_bn(B_up, B_dn):
         "compression_ratio": result["compression_ratio"],
         "B_up_mean_nT": result["B_up_mean_nT"].tolist(),
         "B_dn_mean_nT": result["B_dn_mean_nT"].tolist(),
+        "B_up_mag_nT": result["B_up_mag_nT"],
+        "B_dn_mag_nT": result["B_dn_mag_nT"],
         **diagnostics,
     }
 
@@ -519,6 +525,8 @@ def _export_result(result):
     export("compression_ratio", np.array([result["compression_ratio"]]), "")
     export("B_up_mean_nT", np.asarray(result["B_up_mean_nT"]), "nT")
     export("B_dn_mean_nT", np.asarray(result["B_dn_mean_nT"]), "nT")
+    export("B_up_mag_nT", np.array([result["B_up_mag_nT"]]), "nT")
+    export("B_dn_mag_nT", np.array([result["B_dn_mag_nT"]]), "nT")
     if result.get("theta_bn_window_spread_deg") is not None:
         export("theta_bn_window_spread_deg", np.array([result["theta_bn_window_spread_deg"]]), "deg")
     if result.get("theta_bn_sampling_std_deg") is not None:

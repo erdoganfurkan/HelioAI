@@ -22,7 +22,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from helioai import provenance
-from helioai.core.provenance_check import RTOL, _is_scalar, _states, check_reply
+from helioai.core.provenance_check import (
+    RTOL,
+    _is_scalar,
+    _states,
+    _within_rounding,
+    canonical_unit,
+    check_reply,
+)
 from helioai.core.tool_exec import _flag_recipe_bypass, _flag_unknown_ids
 from helioai.logging_config import get_logger
 
@@ -256,12 +263,13 @@ def _in_ledger_units(value: float, claim_units: str, ledger_units: str) -> float
     without `units=`, or a ratio — so the claim's value is compared as is, whatever it
     was labelled: the SEA live run claimed `peak_tau = 0.606 "dimensionless (normalized
     epoch)"` against an export recorded blank and was told the units could not be
-    reconciled. A claim unit that does not parse against a ledger unit that does leaves
+    reconciled. Both are first put in one spelling (`canonical_unit`): CDAWeb's
+    `#/cc` against a claimed `cm^-3` is one unit astropy cannot read. A claim unit that does not parse against a ledger unit that does leaves
     the claim unjudged (None) rather than accused — a spelling is not a contradiction.
     Two units that parse and cannot be converted into each other (`deg` against `km/s`)
     are one, and return `_INCOMPATIBLE`.
     """
-    a, b = claim_units.strip(), ledger_units.strip()
+    a, b = canonical_unit(claim_units), canonical_unit(ledger_units)
     if a.lower() == b.lower() or not a or not b:
         return value
     try:
@@ -274,30 +282,6 @@ def _in_ledger_units(value: float, claim_units: str, ledger_units: str) -> float
         return float((value * ua).to(ub).value)
     except Exception:
         return _INCOMPATIBLE
-
-
-def _within_rounding(entry: dict, value: float) -> bool:
-    """Whether the claim is the entry's mean rounded to the digits the claim shows, or —
-    for an entry that summarises a series — within its spread. `2.5` states a recorded
-    `2.519`; `60` states `59.95`; a mean quoted inside one standard deviation of a time
-    series is not a different number."""
-    mean = entry.get("mean")
-    if not isinstance(mean, (int, float)) or isinstance(mean, bool):
-        return False
-    tol = 0.5 * 10 ** (-_decimals(value))
-    if abs(abs(mean) - abs(value)) <= tol:
-        return True
-    std = entry.get("std")
-    if not _is_scalar(entry) and isinstance(std, (int, float)) and std > 0:
-        return abs(abs(mean) - abs(value)) <= std
-    return False
-
-
-def _decimals(value: float) -> int:
-    text = repr(float(value))
-    if "e" in text or "E" in text:
-        return 0
-    return len(text.split(".")[1].rstrip("0")) if "." in text else 0
 
 
 def _ledger_value(entry: dict) -> object:

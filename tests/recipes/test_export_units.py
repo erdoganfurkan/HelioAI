@@ -156,6 +156,8 @@ EXPECTED_DIMENSION: dict[str, str] = {
     "normal_spread_deg": "angle",
     "B_up_mean_nT": "magnetic flux density",
     "B_dn_mean_nT": "magnetic flux density",
+    "B_up_mag_nT": "magnetic flux density",
+    "B_dn_mag_nT": "magnetic flux density",
     "Bn_std_nT": "magnetic flux density",
     "mvab_lambda_min": "nT2",
     "mvab_dphi_min_int": "angle",

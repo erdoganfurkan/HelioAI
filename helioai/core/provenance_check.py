@@ -207,7 +207,32 @@ def _same_unit(a: str, b: str) -> bool:
     every contradiction of the first real run was that same false positive. Unitless still
     matches unitless, which is what keeps a compression ratio checkable.
     """
-    return _UNIT_ALIASES.get(a, a).lower() == _UNIT_ALIASES.get(b, b).lower()
+    return canonical_unit(a).lower() == canonical_unit(b).lower()
+
+
+_NUMBER_DENSITY = re.compile(
+    r"^(?:(?:#|n|1|particles|ions|protons|counts)?/(?:cc|cm(?:\^|\*\*)?3)"
+    r"|(?:particles)?cm(?:\^|\*\*)?\{?-3\}?|cm!u-3!n|cm⁻³)$",
+    re.IGNORECASE,
+)
+
+
+def canonical_unit(units: str) -> str:
+    """One spelling per unit where the archives use several: `cm-3` for a number
+    density, whatever the file said.
+
+    A ledger unit is often the dataset's own, copied from its metadata — ACE SWEPAM says
+    `#/cc` — and a reply writes `cm^-3`; astropy parses neither `#/cc` nor `n/cc`, so the
+    claims validator read the two as irreconcilable and the density of a live run came back
+    unsourced three times. The index holds some twenty spellings of that one unit (`n/cc`,
+    `1/cm^3`, `Protons/cm**3`, `cm^{-3}`, IDL's `cm!u-3!n`…). Only spellings that cannot be
+    anything else are folded: `eV/cm^3` is an energy density and stays itself.
+    """
+    u = units.strip()
+    u = _UNIT_ALIASES.get(u, u)
+    if _NUMBER_DENSITY.match(u.replace(" ", "")):
+        return "cm-3"
+    return u
 
 
 def _named_entry(
@@ -332,6 +357,36 @@ def _states(entry: dict, value: float, rtol: float) -> bool:
     )
 
 
+def _within_rounding(entry: dict, value: float) -> bool:
+    """Whether the claim is the entry's mean rounded to the digits the claim shows, or —
+    for an entry that summarises a series — within its spread. `2.5` states a recorded
+    `2.519`; `60` states `59.95`; a mean quoted inside one standard deviation of a time
+    series is not a different number. The sign rule is `_states`': a negative claim is
+    not the rounding of a positive record.
+
+    Shared by the prose check, for a number whose wording names a recorded scalar, and
+    by the claims validator, so one answer is held to one rounding rule."""
+    mean = entry.get("mean")
+    if not isinstance(mean, (int, float)) or isinstance(mean, bool):
+        return False
+    if value < 0 and mean > 0:
+        return False
+    tol = 0.5 * 10 ** (-_decimals(value))
+    if abs(abs(mean) - abs(value)) <= tol:
+        return True
+    std = entry.get("std")
+    if not _is_scalar(entry) and isinstance(std, (int, float)) and std > 0:
+        return abs(abs(mean) - abs(value)) <= std
+    return False
+
+
+def _decimals(value: float) -> int:
+    text = repr(float(value))
+    if "e" in text or "E" in text:
+        return 0
+    return len(text.split(".")[1].rstrip("0")) if "." in text else 0
+
+
 # Relative tolerance for calling a stated number equal to a recorded one: wide enough
 # for the rounding a reply does (2.59 for 2.5848), narrow enough that a different result
 # is a different number. Shared with the claims judged by name (`runtime.validator`), so
@@ -345,7 +400,9 @@ def verify(claims: list[Claim], ledger: dict, rtol: float = RTOL) -> Report:
     - `matched` — a recorded value (mean, min, max or std) equals it within `rtol`, from
       an entry whose unit does not contradict the claim's. When the wording names a
       recorded scalar, only that entry can source the number: a density of 25 cm-3 must
-      not vouch for "B downstream = 25 nT".
+      not vouch for "B downstream = 25 nT". That entry also sources its value rounded to
+      the digits the reply shows (`_within_rounding`): "std 1.5 nT" for a recorded
+      1.5153 is the number, not a contradiction of it.
     - `contradicted` — the wording names a recorded **scalar** and the number is not it.
       The strongest signal available here: the value was computed, and what got published
       is something else. An entry holding several values cannot support the accusation —
@@ -382,7 +439,8 @@ def verify(claims: list[Claim], ledger: dict, rtol: float = RTOL) -> Report:
             hits = [
                 e
                 for e in reversed(entries)
-                if e.get("name") == named.get("name") and _states(e, claim.value, rtol)
+                if e.get("name") == named.get("name")
+                and (_states(e, claim.value, rtol) or _within_rounding(e, claim.value))
             ]
         else:
             hits = [

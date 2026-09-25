@@ -159,7 +159,10 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "query — never pad the reply with weak matches."
         ),
         allowed_tools=("find_papers",),
-        max_turns=4,
+        # Three searches and the answer is four turns, with none to spare: on 2026-09-25 a
+        # librarian made a fourth search, was capped before it could reply, and the four
+        # results it had were lost — the lead ran five searches of its own to replace them.
+        max_turns=5,
         auto_load_skills=("librarian",),
     ),
     "plasma_physicist": SubAgentRole(

@@ -94,3 +94,83 @@ def test_registered_in_registry():
     from helioai.tools.registry import registry
 
     assert "find_papers" in registry
+
+
+# ── a query too narrow for ADS's implicit AND is widened once ───────────────────────
+
+
+def _doc(bibcode: str) -> dict:
+    return dict(_DOC, bibcode=bibcode, title=[f"Paper {bibcode}"])
+
+
+def _two_step(
+    first: list[dict], second: list[dict], *, status2: int = 200, log: list | None = None
+):
+    calls: list[dict] = [] if log is None else log
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(dict(request.url.params))
+        if len(calls) == 1:
+            return httpx.Response(200, content=json.dumps({"response": {"docs": first}}))
+        return httpx.Response(status2, content=json.dumps({"response": {"docs": second}}))
+
+    return httpx.MockTransport(handler)
+
+
+async def test_a_query_that_starves_is_widened_to_refereed_papers_matching_most_words(ads_token):
+    """Live web run, 2026-09-25: ten of the twelve find_papers queries of one turn came
+    back with 0–3 papers — ADS requires every bare word, and the model writes eight to
+    twelve ("... solar wind driver Dst -223"). Replayed against ADS, the same queries
+    widened this way returned five refereed papers each, the two the answer cited among
+    them. The exact hits come first; the widened ones fill the rest, ranked by relevance
+    — by citations, "any of these words" is headed by Deep learning."""
+    calls: list[dict] = []
+    transport = _two_step([_doc("A")], [_doc("A"), _doc("B"), _doc("C")], log=calls)
+
+    out = await literature.find_papers(
+        'abs:"St. Patrick" 2015 storm sheath -223',
+        max_results=5,
+        sort="citations",
+        year_start=2015,
+        _transport=transport,
+    )
+
+    assert [p["bibcode"] for p in out["papers"]] == ["A", "B", "C"]
+    assert out["relaxed"] is True
+    widened = calls[1]["q"]
+    assert out["relaxed_query"] == widened
+    assert widened.startswith('abs:"St. Patrick" -223 (2015 OR storm OR sheath)')
+    assert "property:refereed" in widened and "database:astronomy" in widened
+    assert "year:2015-" in widened
+    assert calls[1]["sort"] == "score desc"
+    assert calls[0]["q"] == 'abs:"St. Patrick" 2015 storm sheath -223 year:2015-'
+
+
+async def test_a_query_that_returns_enough_is_sent_once_and_left_as_it_is(ads_token):
+    calls: list[dict] = []
+    docs = [_doc(str(i)) for i in range(5)]
+    out = await literature.find_papers(
+        "interplanetary shock", max_results=5, _transport=_two_step(docs, [], log=calls)
+    )
+    assert len(calls) == 1
+    assert out["relaxed"] is False and "relaxed_query" not in out
+
+
+@pytest.mark.parametrize(
+    "query", ["shock AND (Wind OR ACE)", "shock NOT magnetopause", '"interplanetary shock"']
+)
+async def test_a_query_with_nothing_to_relax_is_not_rewritten(ads_token, query):
+    """Explicit operators are the model's own structure, and a query of required terms
+    only has no optional word to widen: both are sent once, as written."""
+    calls: list[dict] = []
+    out = await literature.find_papers(query, _transport=_two_step([], [_doc("X")], log=calls))
+    assert len(calls) == 1
+    assert out["papers"] == [] and out["relaxed"] is False
+
+
+async def test_a_failed_widening_keeps_the_exact_hits(ads_token):
+    out = await literature.find_papers(
+        "shock Wind 2015 driver", _transport=_two_step([_doc("A")], [], status2=503)
+    )
+    assert [p["bibcode"] for p in out["papers"]] == ["A"]
+    assert "error" not in out and out["relaxed"] is False

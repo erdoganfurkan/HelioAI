@@ -8,6 +8,40 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-24
+
+Three things changed in this release. **The search finds the product it is asked for.**
+The index is built the same in every process, reads what the archives had already said
+about a product — its measurement type, its coverage, a stated cadence, whether it is a
+model input copied from elsewhere — and its ranking rules were measured on replayed
+queries at zero tokens before any run: on the thirty HelioBench identifier tasks, recall@1
+56.7 → 73.3 % offline and 58.6 → 80.0 % live, products never returned 2 → 0. **The lead
+agent and the roles it delegates to run one loop**: the same runner, the shipped recipes
+run as shipped (`run_recipe`), one verdict on every answer, a journal a session replays
+from. **And a judge can watch, in observation**: the question is read once into a
+contract, joined at the end of the turn against what the run produced, and written into
+no message — off by default, one variable to turn on.
+
+The release was qualified on 23–24 September against the shipped 0.3.0: the question on
+which 0.3.0 had beaten the runtime branch two weeks earlier, replayed on the same index
+(parity); HelioBench, 47 tasks once, each release on the index it ships with (45/47 →
+47/47, retrieval MRR 0.718 → 0.886, no task lost); six judged replays that found five
+defects and fixed them before the merge; `examples/00_quickstart.ipynb` end to end (θ_Bn
+61.0 ± 1.5° against Harvard-CfA's 58.8 ± 2.7°) and its export run in a plain kernel; and
+the wheel installed into an empty environment on the day's resolution — openai 3.19,
+sentence-transformers 6.1, speasy 1.8.2, mcp 2.2 — with `doctor`, the MCP handshake, a
+sandboxed run and 1618 tests passing against the installed package.
+
+### Upgrading from 0.3.0
+
+- **Rebuild the index**: `helioai index --rebuild`. About seven minutes, no API key — the
+  classification the pass paid for ships in the package and is applied byte for byte.
+  The 0.4.0 ranking reads fields a 0.3.0 index does not carry; running 0.4.0 on a 0.3.0
+  index was not measured, so do not.
+- Nothing else. The session store adds its columns on first use, every new behaviour is
+  off unless its variable is set (`HELIOAI_JUDGMENT_BACKEND`, `HELIOAI_EXPERIMENTS`), and
+  no existing variable changed meaning.
+
 ### Fixed
 
 - **A search ranks the same in every process.** Chroma persists its HNSW graph only every
@@ -210,6 +244,63 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   in the exported notebook raised `ValueError` on the same call — the live quickstart's
   plot cell, `export('t_shock_iso', str(t_shock))`, drew its figure and then failed. The
   exported helper prints such a value as it is.
+- **A number rounded to the digits it shows is no longer "contradicted".** The live
+  quickstart of 2026-09-25 wrote "B·n̂ std 1.5 nT" for a recorded `Bn_std_nT` of 1.5153,
+  and the provenance line under the answer read `contradicted`: the prose check allowed
+  only its 0.5 % tolerance, while the claims check of the same answer already accepted a
+  value rounded to its shown digits. The prose check now applies that rounding rule to
+  the scalar the wording names, so one answer is held to one rule; a digit further off
+  ("1.6 nT") is still contradicted, and a negative claim is not the rounding of a
+  positive record, in either check.
+- **A density in the archive's spelling is the same unit as in the reply's.** A live web
+  run of 2026-09-25 exported ACE densities with CDAWeb's own unit, `#/cc`, and claimed them
+  in `cm^-3`: astropy reads neither `#/cc` nor `n/cc`, so the claims check found the units
+  irreconcilable and three densities stated to the digit (7.64 for 7.637) came back
+  unsourced. The index carries some twenty spellings of a number density (`#/cc`, `n/cc`,
+  `1/cm^3`, `Protons/cm**3`, `cm^{-3}`, IDL's `cm!u-3!n`…); both checks now fold them into
+  one (`provenance_check.canonical_unit`) before comparing. `eV/cm^3` is an energy density
+  and stays apart; a unit neither spelling table nor astropy reads still leaves the claim
+  unjudged rather than accused. On that run, 3 backed / 6 unsourced becomes 6 / 3 — the
+  three left are the standard deviations and the missing fraction, which the script
+  printed and never exported, and which the model itself marked `asserted`.
+- **`theta_bn` exports |B_up| and |B_dn|.** It returned the two mean vectors and their
+  ratio; the two magnitudes every θ_Bn report quotes were missing, and on both live runs
+  of 2026-09-25 (the quickstart, a free Wind 2004-11-07 question) the analyst wrote one
+  more `run_python` to export them. `B_up_mag_nT` and `B_dn_mag_nT` are the magnitudes of
+  the mean vectors — the pair `compression_ratio` divides — not the mean of |B|, which
+  fluctuations make larger.
+- **The web code panel of a `run_recipe` step shows the run, not the recipe.** The saved
+  script carries the recipe verbatim — it is the record of what the sandbox ran and stays
+  whole on disk — so the panel of a θ_Bn step showed some 700 lines of which the model
+  wrote five. The panel now shows those lines and the call, runnable, with the recipe read
+  from the installed helioai (`export.recipe_run_view`, the cut the notebook export already
+  makes), and a link to the full script. Only when what ran is, to the byte, the recipe
+  the installed package ships: otherwise the short view would run another recipe than the
+  session did, and the panel shows the full script as before — which is what a session run
+  on an earlier `theta_bn` shows after this release.
+- **`find_papers` widens a query that starves.** ADS requires every bare word of a query,
+  and the model writes eight to twelve of them: on a live web turn of 2026-09-25, ten of
+  the twelve queries about the 2015 St. Patrick's Day shock returned 0–3 papers — each
+  extra word ("driver", "in situ", "ACE") removing some — the two librarians found one
+  paper between them, and the lead ran five searches of its own. A query that returns
+  fewer papers than asked is now sent once more with its bare words made optional (one
+  `OR` group; fielded terms, quoted phrases and negations stay required), restricted to
+  refereed papers of the astronomy database and ranked by relevance: by citations, "any
+  of these words" is headed by *Deep learning*, and the heliophysics collection holds
+  almost nothing before 2024. The exact hits come first, the result carries `relaxed` and
+  the `relaxed_query`, and a query with explicit `AND`/`OR`/`NOT` is sent as written.
+  Replayed against ADS through the tool (no model call): those twelve queries return 96
+  papers against 27, eight each, the two the answer finally cited among them.
+- **The librarian has a turn to answer after its third search.** Its instructions allow
+  three `find_papers` calls and its cap was four turns, with none to spare: on the same
+  turn a librarian made a fourth search, was capped before it could reply, and the four
+  results it had were lost. The cap is five.
+- **The quickstart's one-question step asks for the recipe's windows by name.** "13-minute
+  upstream and downstream averages clear of the ramp" was read by the analyst as windows
+  13 minutes *away* from the ramp (03:32–03:45, 04:15–04:28 UT): it ran the recipe's own
+  windows (60.9°, ±1.45° over the conventions), then its reading (56.0°), and the answer
+  quoted 56.0° with the other windows' ±1.5°. The question now names the recipe's default
+  windows from the shock time found, and asks for the recipe's window spread.
 - `import helioai` no longer creates directories: the session store now creates its
   database and schema on first use rather than at import.
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the
@@ -1118,7 +1209,8 @@ changed; the import package, the CLI commands and the API are all unchanged.
   functionally before using it and logs `sandbox_not_isolated` when it falls back, so
   the logs answer the question on any host.
 
-[Unreleased]: https://github.com/erdoganfurkan/HelioAI/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/erdoganfurkan/HelioAI/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/erdoganfurkan/HelioAI/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/erdoganfurkan/HelioAI/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/erdoganfurkan/HelioAI/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/erdoganfurkan/HelioAI/releases/tag/v0.2.0

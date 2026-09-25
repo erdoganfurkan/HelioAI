@@ -291,6 +291,10 @@ sandboxed run and 1618 tests passing against the installed package.
   the `relaxed_query`, and a query with explicit `AND`/`OR`/`NOT` is sent as written.
   Replayed against ADS through the tool (no model call): those twelve queries return 96
   papers against 27, eight each, the two the answer finally cited among them.
+- **The librarian has a turn to answer after its third search.** Its instructions allow
+  three `find_papers` calls and its cap was four turns, with none to spare: on the same
+  turn a librarian made a fourth search, was capped before it could reply, and the four
+  results it had were lost. The cap is five.
 - `import helioai` no longer creates directories: the session store now creates its
   database and schema on first use rather than at import.
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the

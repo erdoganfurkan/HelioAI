@@ -295,6 +295,12 @@ sandboxed run and 1618 tests passing against the installed package.
   three `find_papers` calls and its cap was four turns, with none to spare: on the same
   turn a librarian made a fourth search, was capped before it could reply, and the four
   results it had were lost. The cap is five.
+- **The quickstart's one-question step asks for the recipe's windows by name.** "13-minute
+  upstream and downstream averages clear of the ramp" was read by the analyst as windows
+  13 minutes *away* from the ramp (03:32–03:45, 04:15–04:28 UT): it ran the recipe's own
+  windows (60.9°, ±1.45° over the conventions), then its reading (56.0°), and the answer
+  quoted 56.0° with the other windows' ±1.5°. The question now names the recipe's default
+  windows from the shock time found, and asks for the recipe's window spread.
 - `import helioai` no longer creates directories: the session store now creates its
   database and schema on first use rather than at import.
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the

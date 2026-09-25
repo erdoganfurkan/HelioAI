@@ -252,6 +252,17 @@ sandboxed run and 1618 tests passing against the installed package.
   the scalar the wording names, so one answer is held to one rule; a digit further off
   ("1.6 nT") is still contradicted, and a negative claim is not the rounding of a
   positive record, in either check.
+- **A density in the archive's spelling is the same unit as in the reply's.** A live web
+  run of 2026-09-25 exported ACE densities with CDAWeb's own unit, `#/cc`, and claimed them
+  in `cm^-3`: astropy reads neither `#/cc` nor `n/cc`, so the claims check found the units
+  irreconcilable and three densities stated to the digit (7.64 for 7.637) came back
+  unsourced. The index carries some twenty spellings of a number density (`#/cc`, `n/cc`,
+  `1/cm^3`, `Protons/cm**3`, `cm^{-3}`, IDL's `cm!u-3!n`…); both checks now fold them into
+  one (`provenance_check.canonical_unit`) before comparing. `eV/cm^3` is an energy density
+  and stays apart; a unit neither spelling table nor astropy reads still leaves the claim
+  unjudged rather than accused. On that run, 3 backed / 6 unsourced becomes 6 / 3 — the
+  three left are the standard deviations and the missing fraction, which the script
+  printed and never exported, and which the model itself marked `asserted`.
 - `import helioai` no longer creates directories: the session store now creates its
   database and schema on first use rather than at import.
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the

@@ -207,7 +207,32 @@ def _same_unit(a: str, b: str) -> bool:
     every contradiction of the first real run was that same false positive. Unitless still
     matches unitless, which is what keeps a compression ratio checkable.
     """
-    return _UNIT_ALIASES.get(a, a).lower() == _UNIT_ALIASES.get(b, b).lower()
+    return canonical_unit(a).lower() == canonical_unit(b).lower()
+
+
+_NUMBER_DENSITY = re.compile(
+    r"^(?:(?:#|n|1|particles|ions|protons|counts)?/(?:cc|cm(?:\^|\*\*)?3)"
+    r"|(?:particles)?cm(?:\^|\*\*)?\{?-3\}?|cm!u-3!n|cm⁻³)$",
+    re.IGNORECASE,
+)
+
+
+def canonical_unit(units: str) -> str:
+    """One spelling per unit where the archives use several: `cm-3` for a number
+    density, whatever the file said.
+
+    A ledger unit is often the dataset's own, copied from its metadata — ACE SWEPAM says
+    `#/cc` — and a reply writes `cm^-3`; astropy parses neither `#/cc` nor `n/cc`, so the
+    claims validator read the two as irreconcilable and the density of a live run came back
+    unsourced three times. The index holds some twenty spellings of that one unit (`n/cc`,
+    `1/cm^3`, `Protons/cm**3`, `cm^{-3}`, IDL's `cm!u-3!n`…). Only spellings that cannot be
+    anything else are folded: `eV/cm^3` is an energy density and stays itself.
+    """
+    u = units.strip()
+    u = _UNIT_ALIASES.get(u, u)
+    if _NUMBER_DENSITY.match(u.replace(" ", "")):
+        return "cm-3"
+    return u
 
 
 def _named_entry(

@@ -27,6 +27,7 @@ from helioai.core.provenance_check import (
     _is_scalar,
     _states,
     _within_rounding,
+    canonical_unit,
     check_reply,
 )
 from helioai.core.tool_exec import _flag_recipe_bypass, _flag_unknown_ids
@@ -262,12 +263,13 @@ def _in_ledger_units(value: float, claim_units: str, ledger_units: str) -> float
     without `units=`, or a ratio — so the claim's value is compared as is, whatever it
     was labelled: the SEA live run claimed `peak_tau = 0.606 "dimensionless (normalized
     epoch)"` against an export recorded blank and was told the units could not be
-    reconciled. A claim unit that does not parse against a ledger unit that does leaves
+    reconciled. Both are first put in one spelling (`canonical_unit`): CDAWeb's
+    `#/cc` against a claimed `cm^-3` is one unit astropy cannot read. A claim unit that does not parse against a ledger unit that does leaves
     the claim unjudged (None) rather than accused — a spelling is not a contradiction.
     Two units that parse and cannot be converted into each other (`deg` against `km/s`)
     are one, and return `_INCOMPATIBLE`.
     """
-    a, b = claim_units.strip(), ledger_units.strip()
+    a, b = canonical_unit(claim_units), canonical_unit(ledger_units)
     if a.lower() == b.lower() or not a or not b:
         return value
     try:

@@ -653,18 +653,26 @@ function closeLightbox() {
 
 // ── Code panel ───────────────────────────────────────────────────────────────
 
-async function openCodePanel(path, name) {
+async function openCodePanel(path, name, full = false) {
   const content = document.getElementById('code-content');
-  document.querySelector('.cp-title').textContent = name || 'Generated code';
+  const title = document.querySelector('.cp-title');
+  title.textContent = name || 'Generated code';
   content.removeAttribute('data-highlighted');
   content.textContent = 'Loading…';
   document.getElementById('code-panel').classList.add('open');
   try {
-    const r = await fetch(`/code?path=${encodeURIComponent(path)}`);
+    const r = await fetch(`/code?path=${encodeURIComponent(path)}${full ? '&full=true' : ''}`);
     content.textContent = r.ok ? await r.text() : `⚠ Code non accessible (${r.status})`;
     if (r.ok) {
       content.className = 'language-python';
       Prism.highlightElement(content);
+      const fullLines = r.headers.get('X-HelioAI-Full-Lines');
+      if (fullLines || full) {
+        const toggle = el('a', 'cp-toggle', full ? 'run lines only' : `full script (${fullLines} lines)`);
+        toggle.href = '#';
+        toggle.addEventListener('click', (e) => { e.preventDefault(); openCodePanel(path, name, !full); });
+        title.append(' · ', toggle);
+      }
     }
   } catch (e) {
     content.textContent = `⚠ ${e.message}`;

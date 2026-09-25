@@ -269,6 +269,15 @@ sandboxed run and 1618 tests passing against the installed package.
   more `run_python` to export them. `B_up_mag_nT` and `B_dn_mag_nT` are the magnitudes of
   the mean vectors — the pair `compression_ratio` divides — not the mean of |B|, which
   fluctuations make larger.
+- **The web code panel of a `run_recipe` step shows the run, not the recipe.** The saved
+  script carries the recipe verbatim — it is the record of what the sandbox ran and stays
+  whole on disk — so the panel of a θ_Bn step showed some 700 lines of which the model
+  wrote five. The panel now shows those lines and the call, runnable, with the recipe read
+  from the installed helioai (`export.recipe_run_view`, the cut the notebook export already
+  makes), and a link to the full script. Only when what ran is, to the byte, the recipe
+  the installed package ships: otherwise the short view would run another recipe than the
+  session did, and the panel shows the full script as before — which is what a session run
+  on an earlier `theta_bn` shows after this release.
 - `import helioai` no longer creates directories: the session store now creates its
   database and schema on first use rather than at import.
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the

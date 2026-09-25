@@ -190,10 +190,10 @@ RECIPE_SOURCES = {}
 
 
 def run_recipe(name, inputs=None, call=None):
-    """Run a shipped recipe as the session ran it: its source, kept verbatim in the
-    collapsed cell above its first use, executed on a copy of this namespace with the
-    inputs bound and __name__ set so a demo behind `if __name__ == "__main__":` stays off.
-    `call` is the expression the session evaluated after the recipe, if any."""
+    """Run a shipped recipe as the session ran it: its source, RECIPE_SOURCES[name],
+    executed on a copy of this namespace with the inputs bound and __name__ set so a
+    demo behind `if __name__ == "__main__":` stays off. `call` is the expression the
+    session evaluated after the recipe, if any."""
     ns = dict(globals())
     ns.update(inputs or {})
     ns["__name__"] = "recipe"
@@ -822,21 +822,80 @@ def _recipe_source_cells(run: _RecipeRun, raw_source: str | None):
     return [nbf.v4.new_markdown_cell(md), nbf.v4.new_code_cell(code, metadata=metadata)]
 
 
-def _recipe_call_cell(run: _RecipeRun) -> str:
+def _recipe_call_cell(run: _RecipeRun, where: str = "collapsed cell above") -> str:
     """A `run_recipe` run as a cell of its own lines: the bindings as they ran, then the
     call to the helper with those names and the session's call expression."""
     names = _BINDING_RE.findall(run.bindings)
     inputs = "{" + ", ".join(f"{n!r}: {n}" for n in names) + "}"
     call = f", call={run.call!r}" if run.call else ""
-    lines = [
-        f"# run_recipe: {run.name} — the inputs, then the recipe as shipped (collapsed cell above)"
-    ]
+    lines = [f"# run_recipe: {run.name} — the inputs, then the recipe as shipped ({where})"]
     if run.preamble:
         lines.insert(0, run.preamble)
     if run.bindings:
         lines.append(run.bindings)
     lines.append(f"run_recipe({run.name!r}, inputs={inputs}{call})")
     return "\n".join(lines) + "\n"
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.rstrip("\n").encode()).hexdigest()
+
+
+def recipe_run_view(code_src: str, manifest: dict) -> str | None:
+    """A `run_recipe` script as the code panel shows it: the run's own lines, runnable,
+    with the recipe read from the installed helioai instead of repeated.
+
+    The saved script carries the recipe verbatim — it is the record of what the sandbox
+    ran, and stays whole on disk — so the panel of a θ_Bn run showed 700 lines of which
+    the model wrote five. The notebook export already keeps each recipe once; this is the
+    same cut for a single script. It holds only when what ran is, to the byte, the recipe
+    the installed package ships (`importlib.resources` reads that file, not the
+    `HELIOAI_RECIPES_DIR` override): otherwise the view would run another recipe than the
+    session did, and None sends the caller back to the full script. The digest is written
+    into the view, which warns when a later helioai ships a different text.
+
+    Args:
+        code_src: A saved `code_N.py`.
+        manifest: The session manifest, for the `load_data` → `fetch_series` rewrite.
+
+    Returns:
+        The short standalone script, or None when `code_src` is not a `run_recipe` run of
+        a shipped, unmodified recipe.
+    """
+    from helioai.config import _PKG_RECIPES
+
+    raw = _split_recipe_run(code_src)
+    if raw is None:
+        return None
+    shipped = _PKG_RECIPES / f"{raw.name}.py"
+    if not shipped.is_file():
+        return None
+    digest = _digest(raw.source)
+    if _digest(shipped.read_text(encoding="utf-8")) != digest:
+        return None
+    run = _split_recipe_run(to_standalone(code_src, manifest, with_header=False))
+    if run is None:
+        return None
+    body = _recipe_call_cell(run, where="read from the installed helioai above")
+    # The recipe calls export() and numpy itself; the header must supply both.
+    header = _standalone_header(body + "\nexport('', np.zeros(0))\n")
+    n_lines = raw.source.count("\n") + 1
+    loader = f"""\
+# Recipe `{raw.name}` ({n_lines} lines) is not repeated here: what ran is identical to the one
+# shipped with helioai {_helioai_version()} (sha256 {digest[:16]}…), so it is read from the
+# installed package. The full script as it ran stays in the session workspace, and the
+# notebook export carries the recipe once, collapsed.
+import hashlib
+import warnings
+from importlib.resources import files
+{_RUN_RECIPE_DEF.strip()}
+
+
+_source = files("helioai").joinpath("data", "recipes", "{raw.name}.py").read_text(encoding="utf-8")
+if hashlib.sha256(_source.rstrip("\\n").encode()).hexdigest() != "{digest}":
+    warnings.warn("the installed helioai ships another {raw.name} than the one this run used")
+RECIPE_SOURCES[{raw.name!r}] = _source"""
+    return f"{header}\n\n\n{loader}\n\n\n{body}"
 
 
 def build_notebook(user_id: str, session_id: str):

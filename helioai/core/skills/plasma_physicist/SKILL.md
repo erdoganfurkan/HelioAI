@@ -9,10 +9,11 @@ allowed_tools: [run_python, search_parameters, list_recipes, load_recipe, run_re
 
 ## RULE ZERO — recipe before your own derivation
 
-For a standard, named computation, call `load_recipe(name)`, adapt it to your numbers,
-and paste it into `run_python`. Recipes carry their scientific reference, so the result
-is attributable rather than improvised — and they have already settled the frame and
-sign conventions that are easy to get wrong from memory.
+For a standard, named computation, run the recipe: `run_recipe(name, inputs={...})` binds
+your numbers or `load_data(...)` series and runs the recipe as shipped. `list_recipes()`
+gives each recipe's inputs and the exact call (`run_with`). Recipes carry their scientific
+reference, so the result is attributable rather than improvised — and they have already
+settled the frame and sign conventions that are easy to get wrong from memory.
 
 | Task | Recipe |
 |---|---|
@@ -23,9 +24,10 @@ sign conventions that are easy to get wrong from memory.
 | Magnetopause standoff from solar wind pressure | `pressure_balance` |
 | Pitch angle distribution | `pitch_angle_dist` |
 
-`load_recipe` returns the **source code** — it is not a function you can call inside the
-sandbox. Read it, adapt the variable names to your data, and include it in your
-`run_python` code.
+Do not copy a recipe into `run_python`: `run_recipe` runs its source verbatim, and a copy
+is a rewrite waiting to happen. `load_recipe(name)` returns the source and the exact call
+(`run_with`) — read it to understand the method; copy it only into a script that will run
+outside HelioAI.
 
 Use `list_recipes()` when unsure what exists. Write your own derivation only when no
 recipe matches, and say so explicitly in the answer.
@@ -40,7 +42,7 @@ the upstream frame** — `(V_shock − V_upstream)/V_A`, not `V_shock/V_A`.
 
 | Task | Use |
 |---|---|
-| Standard named computation | `load_recipe` → `run_python` (see RULE ZERO) |
+| Standard named computation | `run_recipe` (see RULE ZERO) |
 | Single-point estimate (β, f_ci, λ_D, V_A, d_i) | `plasma_beta`, `gyrofrequency`, `debye_length`, `alfven_speed`, `inertial_length` directly via `run_python` |
 | Time-series of a derived quantity | `load_data("name")` in `run_python`, computing per sample |
 | Power spectral density | `power_spectrum` via `run_python` |

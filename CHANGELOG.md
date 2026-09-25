@@ -725,6 +725,13 @@ sandboxed run and 1618 tests passing against the installed package.
 
 ### Changed
 
+- **A recipe is used one way: `run_recipe`.** The role prompts, the skills, the lead's tool
+  list and the catalogue hint said "`load_recipe`, then paste it into `run_python`" while
+  `run_recipe` — which runs the source verbatim on the inputs bound — went unnamed, and
+  the model followed the text: in the twelve 0.4.0-candidate sessions of the 2026-09-25
+  A/B, two loaded `rankine_hugoniot` and rewrote it by hand (`not_called`). Every text now
+  names `run_recipe`; copying is named for its one use, a script that runs outside
+  HelioAI. A test scans everything the model reads for an instruction to copy a recipe.
 - **`theta_bn` averages over 13-minute windows, the Harvard-CfA convention, instead of
   8-minute ones.** The CfA shock database publishes θ_Bn method by method, and its
   magnetic-coplanarity (MC) entries rest on 260 field samples per side — 13 min at 3 s — so

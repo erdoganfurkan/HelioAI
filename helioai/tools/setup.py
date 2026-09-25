@@ -465,9 +465,10 @@ registry.register(
 registry.register(
     name="load_recipe",
     description=(
-        "Load the source code of a named derived recipe. "
-        "Use list_recipes() first to discover recipe names. "
-        "Returns the Python source — pass it to run_python to execute it."
+        "Load a named derived recipe: its Python source, its metadata (inputs, outputs, "
+        "reference) and run_with, the exact run_recipe call. Read it to understand the "
+        "method; run it with run_recipe, not by copying it into run_python. "
+        "Use list_recipes() first to discover recipe names."
     ),
     parameters={
         "type": "object",

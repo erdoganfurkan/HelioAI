@@ -772,7 +772,8 @@ def _get_events_timeseries_sync(
         result["note"] = (
             f"In run_python: events = load_data({ds_name!r}) — "
             "a list of objects with .time, .values, .start, .stop, .units per event. "
-            "Use the superposed_epoch recipe: load_recipe('superposed_epoch')."
+            "For a superposed epoch: run_recipe('superposed_epoch', "
+            f"inputs={{'events': \"load_data({ds_name!r})\"}})."
         )
     else:
         result["note"] = (

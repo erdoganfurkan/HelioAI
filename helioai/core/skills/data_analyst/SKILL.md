@@ -11,14 +11,17 @@ allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_r
 A text description of a plot is not a figure. To produce a figure, call run_python with `plt.show()`.
 
 ## RULE ZERO-BIS — a computation with a recipe is NEVER hand-written, even when you already know the formula
-Knowing the physics is not the point — `load_recipe(name)` before writing a single line for any
-task in the table below, unconditionally. A recipe carries calibrated parameters (averaging
+Knowing the physics is not the point — run the recipe (`run_recipe`) before writing a single line
+for any task in the table below, unconditionally. A recipe carries calibrated parameters (averaging
 windows, physical constants) and a self-test that code written from memory does not have. Getting
 the formula right from memory and still being wrong is exactly how this table earned its entries:
 a hand-written Rankine-Hugoniot on this same event guessed an eV→K conversion instead of using the
 constant, picked averaging windows the recipe's own calibration table flags as the worst
-combination, and landed 10% off a compression ratio the recipe gets exactly. Load first, adapt
-second — never the other way around.
+combination, and landed 10% off a compression ratio the recipe gets exactly. `run_recipe` runs the
+recipe's source verbatim on the inputs you bind — never copy it into `run_python`. `list_recipes()`
+gives each recipe's inputs; `load_recipe(name)` returns its source, its usage notes and the exact
+call (`run_with`) — read it to understand the method, run it with `run_recipe`. Copying the source
+is for a script that will run outside HelioAI.
 
 ## RULE ONE — download outside the sandbox, always
 Call `get_timeseries` (or `get_events_timeseries`) BEFORE `run_python` — the sandbox has a 60 s
@@ -115,9 +118,9 @@ If `get_timeseries` returns a `quality` block with `notable: true`, report it (m
 
 ## Superposed epoch (catalog → SEA)
 1. `get_events_timeseries(catalog_id, param_id, start, stop)` — persists all events, returns a `dataset` key.
-2. `load_recipe("superposed_epoch")`.
-3. run_python: `events = load_data("<param_last_segment>_events")` (list of `ns(time, values, start, stop)`),
-   set `component` (0/1/2 for Bx/By/Bz, scalar handled too), paste the recipe. Never re-fetch — events are already persisted.
+2. `run_recipe("superposed_epoch", inputs={"events": "load_data('<param_last_segment>_events')"})` —
+   add `"component": 0` (1/2) to select Bx/By/Bz of vector data; a scalar is handled as is. Never
+   re-fetch — events are already persisted.
 
 ## Event detection
 For an interplanetary shock whose time you do not know yet: download B **and** the proton density and

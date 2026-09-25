@@ -16,13 +16,17 @@ A plain Python module in `helioai/data/recipes/`, with a comment header:
 # reference: Sonnerup & Scheible (1998), ISSI SR-001, Ch. 8
 ```
 
-The agent calls `load_recipe("mvab")` to read the source *and* the metadata, and
-`run_recipe("theta_bn", inputs={...})` to run one as shipped: the inputs are bound first —
-each value a Python expression evaluated in the sandbox, `load_data()` included — then the
-recipe's source follows verbatim, and for a recipe that is a library of functions rather
-than a script (`rankine_hugoniot`, `pressure_balance`, `shock_timing_2sc`) one `call`
-applies its function to the inputs. The recipe's own `export()` calls produce the numbers,
-and the run is recorded as a use of the recipe with its reference. Because the recipe is a
+The agent finds a recipe with `list_recipes`, whose entries carry `run_with` — the exact
+call, with the recipe's own input names — and runs it with
+`run_recipe("theta_bn", inputs={...})`: the inputs are bound first — each value a Python
+expression evaluated in the sandbox, `load_data()` included — then the recipe's source
+follows verbatim, and its run block reads what was bound. Every physics recipe runs that
+way; `fill_values`, a library for scripts that run outside HelioAI, takes one `call`
+applying its function, and any recipe's functions can be called that way too. A run that
+fails or produces nothing comes back with the recipe's notice (`recipe_notice`).
+`load_recipe("mvab")` returns the source and the metadata, to read the method. The
+recipe's own `export()` calls produce the numbers, and the run is recorded as a use of the
+recipe with its reference. Because the recipe is a
 real script rather than a prompt instruction, the model cannot quietly reimplement the
 method its own way — and through `run_recipe` it does not get the chance to.
 

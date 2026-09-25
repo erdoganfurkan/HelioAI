@@ -739,6 +739,17 @@ sandboxed run and 1618 tests passing against the installed package.
   recipes read their inputs with `globals().get` and, bound under a wrong name, did
   nothing — no export, no output, no error — which the model could not tell from a quiet
   recipe. An unknown recipe name comes back with the names there are.
+- **Every physics recipe runs the same way: `run_recipe(name, inputs)`.** Nine of the
+  eleven already read their inputs; `rankine_hugoniot` was a library that did nothing
+  without a `call` the model had to write, and its instructions said to paste it; the
+  two hand-written copies of the 2026-09-25 A/B were of this recipe. It now has a run block: bind `density`, `speed`, `B` (and `temperature` in eV,
+  `normal`) with `shock_time` — the recipe picks its calibrated windows — or with given
+  `upstream`/`downstream` windows, or the means `n_u … B_d`; it exports the window means
+  with their units next to `rh_jump`'s, and a partial binding is an error that names what
+  is missing. The jump conditions are unchanged; the self-check still runs. Only
+  `fill_values`, a library for scripts that run outside HelioAI, takes a `call`.
+  `run_with` now reads the inputs a recipe reads in a loop as well: `shock_timing_2sc`
+  was announced as needing only its optional `V_shock_rh`.
 - **`theta_bn` averages over 13-minute windows, the Harvard-CfA convention, instead of
   8-minute ones.** The CfA shock database publishes θ_Bn method by method, and its
   magnetic-coplanarity (MC) entries rest on 260 field samples per side — 13 min at 3 s — so

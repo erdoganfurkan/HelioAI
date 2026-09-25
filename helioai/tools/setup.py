@@ -488,9 +488,9 @@ registry.register(
         "Run a shipped recipe as shipped on this session's data — no copying its code into "
         "run_python, no rewriting its formula. `inputs` binds the variables the recipe reads: "
         "a string is a Python expression evaluated in the sandbox (e.g. "
-        '{"B_up": "load_data(\'b3gsm\').values[m_up]"}), a number or list is literal. For a '
-        "recipe that is a library of functions (rankine_hugoniot, pressure_balance, "
-        "shock_timing_2sc), pass `call`: one expression applying its function to the inputs. "
+        '{"B": "load_data(\'b3gsm\')"}), a number or list is literal; each recipe\'s run_with '
+        "(list_recipes) names what to bind. `call` is optional: one expression evaluated "
+        "after the recipe, such as one of its functions. "
         "Returns the recipe's own export() values, stdout and figures, and records the recipe "
         "and its reference as the method used. A run that fails or yields nothing returns "
         "recipe_notice (usage, signatures, run_with). Download data with get_timeseries first."

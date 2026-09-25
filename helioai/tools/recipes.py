@@ -191,7 +191,48 @@ def _public_functions(tree: ast.Module) -> list[dict]:
     return functions
 
 
-_GLOBALS_GET = re.compile(r"""globals\(\)\.get\(\s*["']([A-Za-z_]\w*)["']""")
+def _globals_read(code: str) -> list[str]:
+    """The names a recipe reads with `globals().get`, literal or looped over.
+
+    A regex on `globals().get("name")` missed `{k: globals().get(k) for k in ("t1", ...)}`,
+    and `shock_timing_2sc` was announced as needing only `V_shock_rh`, the one optional
+    input it reads by name — its five required ones were in the loop.
+    """
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(code)):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Call)
+            and isinstance(node.func.value.func, ast.Name)
+            and node.func.value.func.id == "globals"
+            and node.args
+        ):
+            continue
+        arg = node.args[0]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            names.add(arg.value)
+        elif isinstance(arg, ast.Name):
+            names |= _loop_constants(code, arg.id)
+    return sorted(names)
+
+
+def _loop_constants(code: str, var: str) -> set[str]:
+    """String constants a comprehension or `for` binds to `var` from a literal tuple/list."""
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(code)):
+        if isinstance(node, ast.comprehension | ast.For):
+            if isinstance(node.target, ast.Name) and node.target.id == var:
+                if isinstance(node.iter, ast.Tuple | ast.List):
+                    found |= {
+                        e.value
+                        for e in node.iter.elts
+                        if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                    }
+    return found
+
+
 _PUBLIC_DEF = re.compile(r"^def\s+([A-Za-z]\w*)\s*\(", re.MULTILINE)
 
 
@@ -211,7 +252,7 @@ def run_with(name: str, code: str) -> str:
     Returns:
         A `run_recipe(...)` call template with the recipe's own input names or functions.
     """
-    inputs = sorted(set(_GLOBALS_GET.findall(code)))
+    inputs = _globals_read(code)
     if inputs:
         bound = ", ".join(f"{i!r}: ..." for i in inputs)
         return (

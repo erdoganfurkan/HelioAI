@@ -11,6 +11,7 @@ dimensionless — a ratio, a count, a correlation, a unit vector.
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 
 import astropy.units as u
 import numpy as np
@@ -132,9 +133,23 @@ def _exporting_runs(recipe) -> dict[str, dict]:
             "pitch_angle_dist", V=rng.normal(0, 1, (2000, 3)), B=np.array([0.0, 0.0, 10.0])
         ),
     }
-    rh = recipe("rankine_hugoniot")
-    rh.namespace["rh_jump"](17.43, 45.12, 411.3, 514.1, 10.0, 25.27, 8.34, 45.0)
-    runs["rankine_hugoniot"] = rh
+    shock_t = np.datetime64("2015-03-17T04:45:00", "s")
+    t_rh = shock_t + (np.arange(61) - 30) * np.timedelta64(60, "s")
+    after = (t_rh > shock_t)[:, None]
+
+    def step(before, jumped, cols=1):
+        return SimpleNamespace(
+            time=t_rh, values=np.where(after, jumped, before) * np.ones((61, cols))
+        )
+
+    runs["rankine_hugoniot"] = recipe(
+        "rankine_hugoniot",
+        density=step(17.43, 45.12),
+        speed=step(411.3, 514.1),
+        B=step(np.array([6.0, 0.0, 8.0]), np.array([6.0, 0.0, 8.0]) * 2.527, cols=3),
+        temperature=step(8.34, 45.0),
+        shock_time=shock_t,
+    )
     t1 = np.datetime64("2015-03-17T04:00:00")
     runs["shock_timing_2sc"] = recipe(
         "shock_timing_2sc",
@@ -164,6 +179,14 @@ EXPECTED_DIMENSION: dict[str, str] = {
     "mvab_dphi_min_max": "angle",
     "mvab_dBn": "magnetic flux density",
     "V_HT": "speed",
+    "n_upstream": "number density",
+    "n_downstream": "number density",
+    "V_upstream": "speed",
+    "V_downstream": "speed",
+    "B_upstream": "magnetic flux density",
+    "B_downstream": "magnetic flux density",
+    "T_upstream": "energy",
+    "T_downstream": "energy",
     "V_shock": "speed",
     "V_A": "speed",
     "c_s": "speed",

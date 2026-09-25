@@ -207,7 +207,7 @@ def test_a_recipe_is_offered_on_the_run_python_result_before_the_answer():
             "reason": "not_loaded",
             "run_with": finding["run_with"],
         }
-        and "rh_jump" in finding["run_with"]
+        and "'shock_time': ..." in finding["run_with"]
     )
     assert recipe_available("run_recipe", {"name": "theta_bn"}, result, history) is result
 

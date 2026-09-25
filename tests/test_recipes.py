@@ -576,4 +576,8 @@ async def test_load_recipe_says_how_to_run_it_as_shipped():
     for name in ("'B':", "'shock_time':", "'B_up':", "'B_dn':"):
         assert name in theta["run_with"]
     rh = await load_recipe("rankine_hugoniot")
-    assert "call='rh_jump(...)'" in rh["run_with"] and "library of functions" in rh["run_with"]
+    for name in ("'density':", "'speed':", "'B':", "'shock_time':"):
+        assert name in rh["run_with"], "a script now: it reads its series and the shock time"
+    fill = await load_recipe("fill_values")
+    assert "call='clean_variable(...)'" in fill["run_with"]
+    assert "library of functions" in fill["run_with"]

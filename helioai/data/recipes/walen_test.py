@@ -1,6 +1,7 @@
 # name: walen_test
 # description: Walén test — compare plasma velocity in the de Hoffmann-Teller frame with the Alfvén velocity to identify rotational discontinuities.
 # inputs: V (ion velocity array shape (N,3) in km/s), B (magnetic field array shape (N,3) in nT), n_cm3 (ion density array shape (N,) in cm⁻³), frame (optional, "ht" or "mean")
+# run: run_recipe("walen_test", inputs={"v": "load_data('<v>')", "b": "interp_to(v.time, load_data('<b>').time, load_data('<b>').values)", "n": "interp_to(v.time, load_data('<n>').time, load_data('<n>').values[:, 0])", "ok": "np.isfinite(v.values).all(axis=1) & np.isfinite(b).all(axis=1) & np.isfinite(n)", "V": "v.values[ok]", "B": "b[ok]", "n_cm3": "n[ok]"})
 # outputs: walen_slope (dimensionless), walen_R2 (dimensionless), V_HT (km/s), ht_residual (dimensionless)
 # reference: Walén (1944), Ark. Mat. Astron. Fys. 30A; Sonnerup et al. (1987), JGR 92, 12137; Khrabrov & Sonnerup (1998), ISSI SR-001, ch. 9; Paschmann & Sonnerup (2008), ISSI SR-008, ch. 3.
 

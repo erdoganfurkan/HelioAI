@@ -1,6 +1,7 @@
 # name: superposed_epoch
 # description: Superposed epoch analysis (SEA) on a collection of events: align, normalize, and composite.
 # inputs: events — list of SimpleNamespace(time, values, start, stop) from load_data("<param>_events"); units; min_events; n_boot; seed; max_gap_cadences; component; n_grid
+# run: run_recipe("superposed_epoch", inputs={"events": "load_data('<param>_events')"})
 # outputs: epoch_median, epoch_q25, epoch_q75, epoch_ci_low, epoch_ci_high, epoch_n
 # reference: Superposed epoch (Chree) analysis — Chree (1913), Phil. Trans. R. Soc. A 212, 75. Bootstrap confidence intervals — Efron, B. (1979), Ann. Statist. 7, 1.
 
@@ -28,9 +29,9 @@ event has been converted to one common unit: either the caller's `units`, or the
 first event unit when `units` is not bound. Incompatible unit collections are
 refused because no warning can repair a median of unlike dimensions.
 
-Usage inside run_python:
-    events = load_data("imf_gsm_events")   # list of ns(time, values, start, stop)
-    # Then run this script. Set component=0 to select a single column of multi-component data.
+Usage — events is the list of ns(time, values, start, stop) get_events_timeseries saved;
+component selects one column of multi-component data (0, 1, 2 for Bx, By, Bz):
+    run_recipe("superposed_epoch", inputs={"events": "load_data('imf_gsm_events')", "component": 2})
 """
 
 import re

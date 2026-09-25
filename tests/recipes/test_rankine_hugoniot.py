@@ -86,13 +86,20 @@ def test_with_nothing_bound_nothing_is_exported(recipe):
     assert recipe("rankine_hugoniot").exports == {}
 
 
-def test_run_with_names_every_input_the_block_reads():
+def test_run_with_gives_the_usual_call_then_the_other_inputs():
+    """The header's `# run:` call comes first — the series and the shock time — and the
+    alternatives (given windows, the means) and options are named after it, not mixed in
+    alphabetically with it: eighteen flat names sent the model to read the source."""
     from helioai.config import _PKG_RECIPES
     from helioai.tools.recipes import run_with
 
     line = run_with("rankine_hugoniot", (_PKG_RECIPES / "rankine_hugoniot.py").read_text("utf-8"))
-    for name in ("density", "speed", "B", "shock_time", "upstream", "normal", "n_u", "T_d"):
-        assert f"'{name}': ..." in line, name
+    call, other = line.split(" — ", 1)
+    for name in ('"density":', '"speed":', '"B":', '"shock_time":'):
+        assert name in call, name
+    for name in ("upstream", "downstream", "normal", "temperature", "n_u", "T_d"):
+        assert name in other.split("other inputs it reads:")[1], name
     timing = run_with("shock_timing_2sc", (_PKG_RECIPES / "shock_timing_2sc.py").read_text("utf-8"))
-    for name in ("t1", "t2", "r1", "r2", "n_hat"):
-        assert f"'{name}': ..." in timing, f"read in a loop, still announced: {name}"
+    for name in ('"t1":', '"t2":', '"r1":', '"r2":', '"n_hat":'):
+        assert name in timing, f"read in a loop, still announced: {name}"
+    assert "V_shock_rh" in timing.split("other inputs it reads:")[1]

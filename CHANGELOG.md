@@ -750,6 +750,17 @@ sandboxed run and 1618 tests passing against the installed package.
   `fill_values`, a library for scripts that run outside HelioAI, takes a `call`.
   `run_with` now reads the inputs a recipe reads in a loop as well: `shock_timing_2sc`
   was announced as needing only its optional `V_shock_rh`.
+- **Each recipe declares the call that runs it.** A `# run:` line in the header gives the
+  usual `run_recipe(...)` call with `<...>` placeholders, and `run_with` puts it first
+  and names the other inputs after it: listed flat and alphabetically, the eighteen
+  names `rankine_hugoniot` reads — three alternative bindings — did not say which to
+  bind. Every declared call is executed by the tests on stand-in data with gaps:
+  `mvab` and `walen_test` refuse a NaN by design, so their calls select the finite rows
+  (on one time grid for the Walén test). `fill_values` declares what it is for — a copy
+  into a script that runs outside HelioAI, where `load_data()` has not blanked the fills.
+  The usage notes of seven recipes — the `usage` `load_recipe` returns — still read
+  "Usage inside run_python: … then run this script"; they show the `run_recipe` call
+  now, and the test that scans what the model reads covers the recipes' own text.
 - **`theta_bn` averages over 13-minute windows, the Harvard-CfA convention, instead of
   8-minute ones.** The CfA shock database publishes θ_Bn method by method, and its
   magnetic-coplanarity (MC) entries rest on 260 field samples per side — 13 min at 3 s — so

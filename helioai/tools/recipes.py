@@ -241,18 +241,33 @@ def run_with(name: str, code: str) -> str:
 
     A model that has just read a recipe's code is one paste away from running a copy of
     it in `run_python` — which is how a 54.85° θ_Bn came out of a 12-minute window the
-    recipe would never have chosen. The line names the tool and, exactly, what to bind:
-    the variables the recipe reads with `globals().get` when it is a script, its public
-    functions when it is a library. Not prose about what to do; the call itself.
+    recipe would never have chosen. The line names the tool and, exactly, what to bind.
+
+    A recipe declares its usual call in its header (`# run:`), because the names it reads
+    are not a call: `rankine_hugoniot` reads eighteen, in three alternative bindings,
+    and listed flat, alphabetically, they do not say which to bind. The other names it
+    reads follow it. Without a declaration the line is derived: the
+    variables read with `globals().get` for a script, the public functions for a library.
 
     Args:
         name: The recipe.
         code: Its source.
 
     Returns:
-        A `run_recipe(...)` call template with the recipe's own input names or functions.
+        The declared call, or a `run_recipe(...)` template with the recipe's own input
+        names or functions.
     """
     inputs = _globals_read(code)
+    declared = _parse_header(code).get("run")
+    if declared:
+        named = _declared_inputs(declared)
+        others = [i for i in inputs if i not in named]
+        if not named:
+            return declared
+        line = f"{declared} — replace each <...> with yours"
+        if others:
+            line += f"; other inputs it reads: {', '.join(others)} — its inputs say what each is"
+        return line
     if inputs:
         bound = ", ".join(f"{i!r}: ..." for i in inputs)
         return (
@@ -271,6 +286,21 @@ def run_with(name: str, code: str) -> str:
         f"run_recipe({name!r}, inputs={{...}}) runs the recipe's source verbatim on the "
         f"session's data"
     )
+
+
+def _declared_inputs(call: str) -> set[str]:
+    """The input names of a declared `run_recipe(..., inputs={...})` call; empty when the
+    declaration is not such a call (`fill_values` says to copy it instead)."""
+    try:
+        node = ast.parse(call, mode="eval").body
+    except SyntaxError:
+        return set()
+    if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "run_recipe"):
+        return set()
+    for kw in node.keywords:
+        if kw.arg == "inputs" and isinstance(kw.value, ast.Dict):
+            return {k.value for k in kw.value.keys if isinstance(k, ast.Constant)}
+    return set()
 
 
 _INPUT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -379,7 +409,7 @@ async def run_recipe(
         `method_used` card. When the run failed, or produced nothing at all — six of
         the recipes read their inputs with `globals().get` and do nothing, silently,
         when a name is bound wrong — it also carries `recipe_notice`: the recipe's
-        usage, public signatures and `run_with`, what `load_recipe` would have said.
+        usage, public signatures and `run_with`, how it is called without its source.
         `{"error": ...}` for an unknown recipe (with the names there are) or an input
         that is not a Python name (with the notice).
     """

@@ -1,7 +1,8 @@
 # name: rankine_hugoniot
 # description: Rankine-Hugoniot analysis of a collisionless shock. Derives the upstream/downstream averaging windows from the shock time itself, then computes compression ratio, shock speed and Mach numbers, and checks them against each other.
-# inputs: shock_time (numpy datetime64), and per quantity a (time, values) pair — magnetic field magnitude nT, proton density cm-3, bulk speed km/s, temperature eV (optional). Each may have its own cadence.
-# outputs: V_shock (km/s, spacecraft frame), r (density compression ratio), plus the windows used and a consistency verdict
+# inputs: density (cm-3), speed (km/s) and B (nT) — series from load_data, each on its own cadence — with shock_time (numpy datetime64; the recipe picks the windows) or with upstream=(t0, t1) and downstream=(t0, t1) when the windows are given; optional temperature (series, eV) and normal (unit 3-vector, projects V·n̂); or instead the means n_u, n_d, V_u, V_d, B_u, B_d (optional T_u, T_d)
+# run: run_recipe("rankine_hugoniot", inputs={"density": "load_data('<n>')", "speed": "load_data('<v>')", "B": "load_data('<b>')", "shock_time": "np.datetime64('<crossing time>')"})
+# outputs: V_shock (km/s, spacecraft frame), r (density compression ratio), B_ratio, M_A, M_ms, V_A, c_s, U_upstream, mom_residual, r_predicted, r_mismatch, and the window means n/V/B/T_upstream and _downstream; the windows used and a consistency verdict are printed
 # reference: Rankine-Hugoniot jump conditions (Rankine 1870; Hugoniot 1887); for collisionless shocks see Schwartz (1998), ISSI SR-001, ch. 10 — including the averaging-window guidance this recipe implements.
 
 """Rankine-Hugoniot jump conditions for a collisionless shock.
@@ -16,10 +17,10 @@ by hand is where the analysis actually goes wrong: one run averaged the downstre
 from shock+30 min out to shock+120 min, landing in the decaying sheath rather than the
 shocked plasma. Density came out 32 cm-3 instead of 45, the compression ratio 1.89
 instead of 2.59, and the Alfvenic Mach number 4.6 instead of 3.2 — every downstream
-number wrong, from one plausible-sounding choice. Do not pass your own averages.
+number wrong, from one plausible-sounding choice. Do not average the series yourself.
 
-Usage: run_recipe("rankine_hugoniot", inputs={...}) runs the block at the end of this
-file, which picks the windows and applies rh_jump. Bind either
+Usage: run_recipe("rankine_hugoniot", inputs={...}) picks the averaging windows and
+applies rh_jump. Bind either
 
     density, speed, B          the series from load_data(), each on its own time base
                                (B is typically 3 s, plasma moments 92 s), and
@@ -27,19 +28,16 @@ file, which picks the windows and applies rh_jump. Bind either
     or upstream=(t0, t1), downstream=(t0, t1) instead, only when the windows are given;
     temperature (a series in eV) and normal (unit 3-vector) are optional,
 
-or, when you hold numbers rather than series, the means themselves: n_u, n_d, V_u,
-V_d, B_u, B_d (T_u, T_d optional). The window means are exported with their units next
-to rh_jump's own exports. The functions stay available through `call` — e.g.
-upstream_downstream(t, values, shock_time) for one more quantity:
-
-    n_u, n_d = upstream_downstream(t_n, n, shock_time)
-    V_shock, r = rh_jump(n_u=n_u, n_d=n_d, V_u=V_u, V_d=V_d, B_u=B_u, B_d=B_d, T_u=T_u, T_d=T_d)
+or, only when you were handed numbers and hold no series, the means themselves: n_u,
+n_d, V_u, V_d, B_u, B_d (T_u, T_d optional). The window means are exported with their
+units next to rh_jump's own exports. The functions (shock_windows, upstream_downstream,
+rh_jump) stay callable through `call` for anything the run block does not cover.
 
 Recommended when the shock normal is known: bind normal=n_hat from theta_bn or mvab,
 which projects V·n̂ instead of averaging |V|.
 
-V_shock comes back FIRST — this example used to read `r, V_shock`, which silently
-swapped a 579 km/s speed with a compression ratio of 2.59.
+rh_jump returns V_shock FIRST, then r — an earlier example read `r, V_shock`, which
+silently swapped a 579 km/s speed with a compression ratio of 2.59.
 
 V_shock is in the spacecraft frame, derived from mass-flux conservation. Two things
 follow. Do not use V_d * r/(r-1) instead: it assumes the upstream plasma is at rest,

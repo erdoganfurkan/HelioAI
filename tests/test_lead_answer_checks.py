@@ -162,7 +162,7 @@ def test_a_recipe_is_offered_on_the_run_python_result_before_the_answer():
     out = recipe_available("run_python", {"code": inline}, result, history)
     (finding,) = out.payload["recipe_available"]
     assert finding["recipe"] == "theta_bn" and finding["reason"] == "not_called"
-    assert finding["run_with"].startswith("run_recipe('theta_bn'")
+    assert finding["run_with"].startswith("run_recipe('theta_bn'"), "derived from the toy source"
     assert "recipe_available" in out.for_llm(), "the model reads it in the tool message"
 
     called = "r = theta_bn(Bu, Bd)\nexport('theta_bn', np.array([r['theta_bn_deg']]), 'deg')"
@@ -207,7 +207,7 @@ def test_a_recipe_is_offered_on_the_run_python_result_before_the_answer():
             "reason": "not_loaded",
             "run_with": finding["run_with"],
         }
-        and "'shock_time': ..." in finding["run_with"]
+        and '"shock_time":' in finding["run_with"]
     )
     assert recipe_available("run_recipe", {"name": "theta_bn"}, result, history) is result
 

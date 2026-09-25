@@ -1,6 +1,7 @@
 # name: pressure_balance
 # description: Determine the magnetopause standoff distance from Chapman-Ferraro pressure balance.
 # inputs: n_sw (solar wind density cm-3), V_sw (solar wind speed km/s), B_sw (IMF magnitude nT), B0_nT (optional surface equatorial dipole field nT), f_cf (optional Chapman-Ferraro field factor), r_ref (optional reference distance R_E), B_msp_ref (optional magnetosphere field nT at r_ref)
+# run: run_recipe("pressure_balance", inputs={"n_sw": "<density, cm-3>", "V_sw": "<speed, km/s>", "B_sw": "<|B|, nT>"})
 # outputs: r_mp_RE (R_earth), P_dyn_nPa (nPa), P_applied_nPa (nPa), P_mag_sw_nPa (nPa), P_total_sw_nPa (nPa), B_msp_ref_nT (nT)
 # reference: Chapman & Ferraro (1931); Spreiter, Summers & Alksne (1966), Planet. Space Sci. 14, 223; Alken et al. (2021), Earth Planets Space 73, 49; Schield (1969), JGR 74, 1275; Shue et al. (1998), JGR 103, 17691.
 

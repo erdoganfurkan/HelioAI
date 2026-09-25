@@ -1,6 +1,7 @@
 # name: fill_values
 # description: Blank a mission's fill values to NaN from the variable's declared FILLVAL — the logic to copy into any script that reads speasy directly instead of through HelioAI.
 # inputs: a speasy variable (the object returned by spz.get_data), or a values array plus its declared fillval
+# run: load_recipe("fill_values"), then copy fill_mask and blank_fill into a script that runs outside HelioAI — inside it, load_data() has already blanked the fill values
 # outputs: values with every non-measurement set to NaN, so a mean or a max fails loudly instead of returning a sentinel
 # reference: CDF ISTP metadata guidelines, FILLVAL attribute — https://spdf.gsfc.nasa.gov/istp_guide/vattributes.html
 
@@ -36,7 +37,8 @@ Two traps that have each produced a wrong published number:
 The float32 round-trip is why the comparison is `isclose(rtol=1e-6)` and not `==`:
 Wind declares 99999.9 and stores 99999.8984375.
 
-Usage inside run_python:
+Usage, in a script that runs outside HelioAI — inside it, load_data() has already blanked
+the fill values, so there is nothing to call:
     var = spz.get_data("cda/WI_H1_SWE/Proton_V_nonlin", start, stop)
     t, v = clean_variable(var)
 """

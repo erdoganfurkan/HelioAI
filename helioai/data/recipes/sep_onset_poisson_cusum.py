@@ -1,6 +1,7 @@
 # name: sep_onset_poisson_cusum
 # description: SEP onset with the Poisson CUSUM of Huttunen-Heikinmaa et al. (2005), on intensities; the z-score option is the same detector in normalized units.
 # inputs: flux — SimpleNamespace(time, values) from load_data("<param>"), e.g. an energetic proton/electron intensity channel; method ("poisson" default, or "zscore"); component (int, default 0); bg_hours (background window length in hours from the start, default 2.0); robust (median/MAD background, default True); n_sigma (out-of-control level, default 2.0); h_sigma (nominal decision threshold, default 2.0); h (explicit decision threshold in the selected CUSUM units, default None); m_consecutive (finite samples that must stay above threshold, default 30); gap_reset (consecutive NaNs that reset the finite-sample run counter, default 5); units (flux units for exported raw CUSUM; otherwise flux.units or "")
+# run: run_recipe("sep_onset_poisson_cusum", inputs={"flux": "load_data('<flux>')"})
 # outputs: cusum, onset_index
 # reference: Huttunen-Heikinmaa, Valtonen & Laitinen (2005), A&A 442, 673, doi:10.1051/0004-6361:20042620; Page (1954), Biometrika 41, 100, doi:10.1093/biomet/41.1-2.100; Rousseeuw & Croux (1993), J. Am. Stat. Assoc. 88, 1273, doi:10.1080/01621459.1993.10476408
 
@@ -31,10 +32,8 @@ counter and the CUSUM state. After a gap longer than ``gap_reset`` samples the
 detector restarts; an onset that straddles such a gap is reported as
 indeterminate through ``onset_indeterminate``.
 
-Usage inside run_python:
-    flux = load_data("erne_protons")
-    method = "poisson"
-    # then run this script
+Usage:
+    run_recipe("sep_onset_poisson_cusum", inputs={"flux": "load_data('erne_protons')", "method": "poisson"})
 """
 
 import numpy as np

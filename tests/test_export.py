@@ -852,6 +852,23 @@ def test_the_code_view_of_a_recipe_run_is_its_own_lines_and_still_runs(capsys):
     assert "theta_bn: shape=(1,) min=60 deg max=60 deg mean=60 deg" in capsys.readouterr().out
 
 
+def test_the_code_view_of_a_rankine_hugoniot_run_without_a_call_still_runs(capsys):
+    """rankine_hugoniot runs through its own run block now, with no `call`: the short view
+    of such a step binds the inputs, reads the shipped recipe and computes the same jump."""
+    from helioai.config import _PKG_RECIPES
+    from helioai.export import recipe_run_view
+    from helioai.tools.recipes import recipe_script
+
+    means = {"n_u": 17.43, "n_d": 45.12, "V_u": 411.3, "V_d": 514.1, "B_u": 10.0, "B_d": 25.27}
+    means |= {"T_u": 8.34, "T_d": 45.0}
+    source = (_PKG_RECIPES / "rankine_hugoniot.py").read_text(encoding="utf-8")
+    view = recipe_run_view(recipe_script("rankine_hugoniot", source, means, None), {"datasets": {}})
+
+    assert view is not None and "def rh_jump(" not in view
+    exec(compile(view, "<code view>", "exec"), {})
+    assert "V_shock: shape=(1,) min=578" in capsys.readouterr().out
+
+
 def test_a_recipe_that_is_not_the_one_shipped_is_shown_in_full():
     """The short view reads the recipe from the installed package; when what ran is not
     that text, reading it would run another recipe — the view falls back to the script."""

@@ -214,7 +214,7 @@ async def test_a_run_that_produces_nothing_carries_the_recipes_notice(tmp_path, 
     assert result.get("error") is None, result.get("stderr", "")
     assert not result.get("exports") and not (result.get("stdout") or "").strip()
     notice = result["recipe_notice"]
-    assert notice["run_with"].startswith("run_recipe('mvab', inputs={'B': ...})")
+    assert notice["run_with"].startswith('run_recipe("mvab", inputs={"B": ')
     assert notice["usage"] and any(f["signature"].startswith("mvab(") for f in notice["functions"])
 
     bound = await run_recipe(
@@ -233,7 +233,7 @@ async def test_an_input_that_is_not_a_python_name_is_refused(recipes_dir, monkey
     monkeypatch.setattr("helioai.tools.sandbox.run_python", lambda *a, **k: spawned.append(a) or {})
     result = await run_recipe("theta_bn", inputs={"B up": "1"}, _plot_dir="/nonexistent")
     assert "not a valid Python name" in result["error"] and spawned == []
-    assert result["recipe_notice"]["run_with"].startswith("run_recipe('theta_bn'")
+    assert result["recipe_notice"]["run_with"].startswith('run_recipe("theta_bn"')
     result = await run_recipe("theta_bn", inputs={"B_up": "  "}, _plot_dir="/nonexistent")
     assert "has no value" in result["error"] and spawned == []
 

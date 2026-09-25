@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import httpx
 import numpy as np
@@ -125,6 +126,42 @@ def test_an_interrupted_import_leaves_no_staging_and_the_previous_index(tmp_path
     target = settings.rag.chroma_dir
     assert not target.with_name(target.name + ".partial").exists()
     assert len(_content(target, settings.rag.collection_name)[0]) == 3
+
+
+def test_a_failed_swap_puts_the_previous_index_back(tmp_path, monkeypatch):
+    _build(tmp_path / "source")
+    index_snapshot.export_index(tmp_path / "snap", tmp_path / "source")
+    target = settings.rag.chroma_dir
+    _build(target, products=3, catalogs=0)
+    rename = Path.rename
+
+    def locked(self, to):
+        if self.name.endswith(".partial"):
+            raise PermissionError("the index is open in another process")
+        return rename(self, to)
+
+    with monkeypatch.context() as m, pytest.raises(PermissionError):
+        m.setattr(Path, "rename", locked)
+        index_snapshot.import_index(tmp_path / "snap", verbose=False)
+
+    assert len(_content(target, settings.rag.collection_name)[0]) == 3
+    assert not target.with_name(target.name + ".previous").exists()
+    assert not target.with_name(target.name + ".partial").exists()
+
+
+def test_an_index_set_aside_by_an_earlier_crash_is_never_deleted(tmp_path):
+    _build(tmp_path / "source")
+    index_snapshot.export_index(tmp_path / "snap", tmp_path / "source")
+    target = settings.rag.chroma_dir
+    aside = target.with_name(target.name + ".previous")
+    _build(aside, products=2, catalogs=0)
+    _build(target, products=3, catalogs=0)
+
+    with pytest.raises(OSError):
+        index_snapshot.import_index(tmp_path / "snap", verbose=False)
+
+    assert len(_content(target, settings.rag.collection_name)[0]) == 3
+    assert len(_content(aside, settings.rag.collection_name)[0]) == 2
 
 
 def test_export_refuses_an_absent_or_empty_index(tmp_path):

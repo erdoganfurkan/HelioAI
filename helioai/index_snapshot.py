@@ -195,8 +195,12 @@ def import_index(snapshot_dir: Path, chroma_dir: Path | None = None, verbose: bo
     The collections are filled in a staging directory beside the index and swapped in
     only once complete: an interrupted import leaves the previous index — or none — and
     never a partial one that `helioai index` would then take for up to date and merely
-    top up. The judge's local answers (`judgment_index.jsonl`) are carried across the swap,
-    as `--rebuild` does, since nothing but a paid request can recreate them.
+    top up. The previous index is set aside as `<index>.previous` until the new one is in
+    place, and put back if the swap fails — on Windows a store another process holds open
+    cannot be renamed. A `.previous` already there, left by a crash, is never deleted:
+    the import refuses instead. The judge's local answers (`judgment_index.jsonl`) are
+    carried across the swap, as `--rebuild` does, since nothing but a paid request can
+    recreate them.
 
     Raises:
         ValueError: Unknown format, another embedding model, or a checksum mismatch.
@@ -247,12 +251,23 @@ def import_index(snapshot_dir: Path, chroma_dir: Path | None = None, verbose: bo
         raise
     _release_clients()
 
-    if chroma_dir.exists():
-        kept = chroma_dir / JUDGMENT_RECORDS
-        if kept.exists():
-            shutil.copy2(kept, staging / JUDGMENT_RECORDS)
-        shutil.rmtree(chroma_dir)
-    staging.rename(chroma_dir)
+    previous = chroma_dir.with_name(chroma_dir.name + ".previous")
+    moved = False
+    try:
+        if chroma_dir.exists():
+            kept = chroma_dir / JUDGMENT_RECORDS
+            if kept.exists():
+                shutil.copy2(kept, staging / JUDGMENT_RECORDS)
+            chroma_dir.rename(previous)
+            moved = True
+        staging.rename(chroma_dir)
+    except BaseException:
+        if moved:
+            previous.rename(chroma_dir)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    if moved:
+        shutil.rmtree(previous, ignore_errors=True)
     return total
 
 

@@ -99,9 +99,9 @@ On an empty index this downloads the prebuilt index published for your release o
 (~125 MB, about a minute) instead of building it. CI builds that index from scratch at
 every release, so it is the same one you would get locally. When the download is not
 possible — offline, or nothing published yet — it falls back to building locally: it
-downloads the speasy catalogue and embeds every product, which takes the better part of
-an hour. `HELIOAI_INDEX_REPO` points at another dataset; an empty value turns the
-download off.
+downloads the speasy catalogue and embeds every product, which takes 7 to 10 minutes on a
+recent machine and longer on a modest one. `HELIOAI_INDEX_REPO` points at another
+dataset; an empty value turns the download off.
 
 The index lands in `<repo>/data/` when you are running from a clone, and in
 `~/.local/share/helioai/` when installed from PyPI. Override with `HELIOAI_DATA_DIR`: the
@@ -124,6 +124,9 @@ significant catalogue update.
     untouched and the improvement invisible. After upgrading, run `helioai index
     --download` to replace it with the index built for the new release, or `helioai
     index --rebuild` to build it yourself.
+
+    Stop a running `helioai serve` or MCP server first and start it again after:
+    `--download` replaces the directory it has open.
 
 ## Check it works
 

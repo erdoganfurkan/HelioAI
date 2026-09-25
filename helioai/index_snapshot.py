@@ -1,7 +1,7 @@
 """Share a built index: export it to files, fetch a published one, import it.
 
-Building the index walks the speasy inventory and embeds ~83 000 products — the better part
-of an hour on a laptop, before a researcher can ask a first question. For a given catalogue
+Building the index walks the speasy inventory and embeds ~83 000 products — 7 to 10 minutes
+on a recent machine, longer on a modest one, before a researcher can ask a first question. For a given catalogue
 and embedding model the result is the same on every machine, so CI builds it once per
 release (`.github/workflows/index.yml`) and publishes a snapshot on the Hugging Face Hub;
 `helioai index` on an empty index fetches that snapshot instead of building.

@@ -8,15 +8,6 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
-### Added
-
-- `helioai index` on an empty index downloads the prebuilt index from the Hugging Face Hub
-  (`HELIOAI_INDEX_REPO`, ~125 MB) instead of building it for the better part of an hour,
-  and falls back to the local build when it cannot. `--download` replaces an existing
-  index with the one built for the release; `--export DIR` writes a snapshot. The
-  `Index` workflow builds the index from scratch at every release tag and publishes it,
-  refusing a snapshot that lost more than 5 % of the published products.
-
 ## [0.4.0] — 2026-09-24
 
 Three things changed in this release. **The search finds the product it is asked for.**
@@ -43,10 +34,11 @@ sandboxed run and 1618 tests passing against the installed package.
 
 ### Upgrading from 0.3.0
 
-- **Rebuild the index**: `helioai index --rebuild`. About seven minutes, no API key — the
-  classification the pass paid for ships in the package and is applied byte for byte.
-  The 0.4.0 ranking reads fields a 0.3.0 index does not carry; running 0.4.0 on a 0.3.0
-  index was not measured, so do not.
+- **Replace the index**: `helioai index --download` fetches the index built for 0.4.0
+  (~125 MB, about a minute); `helioai index --rebuild` builds the same one locally — 7 to
+  10 minutes on a recent machine, no API key: the classification the pass paid for ships
+  in the package and is applied byte for byte. The 0.4.0 ranking reads fields a 0.3.0
+  index does not carry; running 0.4.0 on a 0.3.0 index was not measured, so do not.
 - Nothing else. The session store adds its columns on first use, every new behaviour is
   off unless its variable is set (`HELIOAI_JUDGMENT_BACKEND`, `HELIOAI_EXPERIMENTS`), and
   no existing variable changed meaning.
@@ -401,6 +393,14 @@ sandboxed run and 1618 tests passing against the installed package.
 
 ### Added
 
+- **`helioai index` fetches the prebuilt index** on an empty install — the index CI built
+  for the release, from the Hugging Face Hub (`HELIOAI_INDEX_REPO`, ~125 MB, about a
+  minute) — instead of building it locally, which takes 7 to 10 minutes on a recent
+  machine and longer on a modest one. It falls back to the local build when the download
+  is not possible. `--download` replaces an existing index with the release's;
+  `--export DIR` writes a snapshot. The `Index` workflow builds the index from scratch at
+  every release tag and publishes it, refusing a snapshot that lost more than 5 % of the
+  products expected.
 - **A seam for a System One judge beside the loop — `helioai.core.judgment`, in
   observation.** HelioAI verifies itself thoroughly (claims against the ledger, ids against
   the index, code against the recipes, tools against the plan) and nothing verifies it

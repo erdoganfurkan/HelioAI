@@ -327,15 +327,28 @@ def fetch_index(verbose: bool = True) -> int:
     return total
 
 
+def _shipped_product_count() -> int:
+    from helioai.indexer import SHIPPED_JUDGED
+
+    with gzip.open(SHIPPED_JUDGED, "rt", encoding="utf-8") as f:
+        return sum(1 for _ in f) - 1
+
+
 def publish_index(snapshot_dir: Path, repo: str, tag: str | None = None) -> str:
     """Upload a snapshot to `main` of the Hub dataset `repo`, and tag it with a release.
 
     The upload is refused when the new snapshot holds fewer than `MIN_KEPT` of the
-    products the published one does. The build walks five archives over the network, and
-    one of them answering 502 for the length of the walk yields an index without that
-    archive and no error; published, it would replace a complete index for every new
-    install. A tag already on the dataset is moved to the new commit, so re-running a
-    release publishes that release's index.
+    products expected. The build walks five archives over the network, and one of them
+    answering 502 for the length of the walk yields an index without that archive and no
+    error; published, it would replace a complete index for every new install. Expected
+    is what the dataset already holds, or — for the first publication, which happens
+    unattended at a release tag — the products the shipped classification answered for
+    (`judged_products.jsonl.gz`, one line per product the paid pass saw). A tag already
+    on the dataset is looked up and moved to the new commit, so re-running a release
+    publishes that release's index; nothing depends on which error the Hub raises for
+    an absent tag. The dataset card (`README.md`, from `.github/hf-index-card.md`) goes
+    with the snapshot when its directory holds one, so the card is reviewed in the
+    repository rather than edited on the Hub.
 
     Args:
         snapshot_dir: What `export_index` wrote.
@@ -346,7 +359,6 @@ def publish_index(snapshot_dir: Path, repo: str, tag: str | None = None) -> str:
         The commit id on the Hub.
     """
     from huggingface_hub import HfApi
-    from huggingface_hub.errors import RevisionNotFoundError
 
     snapshot_dir = Path(snapshot_dir)
     manifest = json.loads((snapshot_dir / MANIFEST).read_text(encoding="utf-8"))
@@ -356,23 +368,22 @@ def publish_index(snapshot_dir: Path, repo: str, tag: str | None = None) -> str:
         published = json.loads(
             Path(api.hf_hub_download(repo, MANIFEST, repo_type="dataset")).read_text("utf-8")
         )
-        previous = published["collections"]["products"]["count"]
-        if count < MIN_KEPT * previous:
-            raise ValueError(
-                f"{count} products against {previous} published: an archive is missing, "
-                "not publishing"
-            )
+        expected = published["collections"]["products"]["count"]
+    else:
+        expected = _shipped_product_count()
+    if count < MIN_KEPT * expected:
+        raise ValueError(
+            f"{count} products against {expected} expected: an archive is missing, not publishing"
+        )
     commit = api.upload_folder(
         repo_id=repo,
         repo_type="dataset",
         folder_path=snapshot_dir,
-        allow_patterns=[MANIFEST, "*.jsonl.gz", "*.npy"],
+        allow_patterns=[MANIFEST, "README.md", "*.jsonl.gz", "*.npy"],
         commit_message=f"HelioAI {manifest['helioai']}: {count} products",
     )
     if tag:
-        try:
+        if tag in {t.name for t in api.list_repo_refs(repo, repo_type="dataset").tags}:
             api.delete_tag(repo, tag=tag, repo_type="dataset")
-        except RevisionNotFoundError:
-            pass
         api.create_tag(repo, tag=tag, revision=commit.oid, repo_type="dataset")
     return commit.oid

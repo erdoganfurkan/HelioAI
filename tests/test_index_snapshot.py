@@ -267,14 +267,15 @@ class _FakeHub:
         self.uploads.append(kw)
         return SimpleNamespace(oid=f"commit{len(self.uploads)}")
 
-    def delete_tag(self, repo, *, tag, repo_type):
-        from huggingface_hub.errors import RevisionNotFoundError
+    def list_repo_refs(self, repo, *, repo_type):
+        from types import SimpleNamespace
 
-        if tag not in self.tags:
-            raise RevisionNotFoundError(
-                "absent",
-                response=httpx.Response(404, request=httpx.Request("GET", "https://hf.co")),
-            )
+        return SimpleNamespace(
+            tags=[SimpleNamespace(name=t) for t in self.tags if isinstance(t, str)]
+        )
+
+    def delete_tag(self, repo, *, tag, repo_type):
+        assert tag in self.tags, "the Hub raises on a tag that is not there"
         self.tags.discard(tag)
 
     def create_tag(self, repo, *, tag, revision, repo_type):
@@ -292,6 +293,7 @@ def snapshot(tmp_path):
 def test_publish_uploads_and_tags_the_release(snapshot, tmp_path, monkeypatch, published, tags):
     import huggingface_hub
 
+    monkeypatch.setattr(index_snapshot, "_shipped_product_count", lambda: 7)
     hub = _FakeHub(tmp_path, published, tags)
     monkeypatch.setattr(huggingface_hub, "HfApi", hub)
 
@@ -300,6 +302,7 @@ def test_publish_uploads_and_tags_the_release(snapshot, tmp_path, monkeypatch, p
     assert upload["repo_id"] == "org/idx" and upload["repo_type"] == "dataset"
     assert "7 products" in upload["commit_message"]
     assert hub.tags == {("v1.0.0", "commit1")}, "a re-run moves the release's tag"
+    assert "README.md" in upload["allow_patterns"], "the dataset card ships with the snapshot"
 
 
 def test_publish_refuses_a_snapshot_that_lost_an_archive(snapshot, tmp_path, monkeypatch):
@@ -311,3 +314,21 @@ def test_publish_refuses_a_snapshot_that_lost_an_archive(snapshot, tmp_path, mon
     with pytest.raises(ValueError, match="7 products against 100"):
         index_snapshot.publish_index(snapshot, "org/idx", tag="v1.0.0")
     assert hub.uploads == [] and hub.tags == set()
+
+
+def test_the_first_publication_is_checked_against_the_shipped_classification(
+    snapshot, tmp_path, monkeypatch
+):
+    import huggingface_hub
+
+    hub = _FakeHub(tmp_path, published=None)
+    monkeypatch.setattr(huggingface_hub, "HfApi", hub)
+    monkeypatch.setattr(index_snapshot, "_shipped_product_count", lambda: 100)
+
+    with pytest.raises(ValueError, match="7 products against 100"):
+        index_snapshot.publish_index(snapshot, "org/idx", tag="v1.0.0")
+    assert hub.uploads == [] and hub.tags == set()
+
+
+def test_the_shipped_classification_counts_the_products_of_the_paid_pass():
+    assert index_snapshot._shipped_product_count() > 80_000

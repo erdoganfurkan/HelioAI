@@ -32,6 +32,7 @@ DIMENSIONLESS: dict[str, str] = {
     "r_predicted": "compression ratio predicted from M_ms",
     "r_mismatch": "relative gap between r and r_predicted, a fraction",
     "compression_ratio": "|B_dn|/|B_up|",
+    "epoch_median_peak_tau": "normalized epoch of the median's maximum, 0 to 1",
     "shock_normal": "unit vector",
     "mvab_ratio_int_min": "eigenvalue ratio",
     "mvab_normal": "unit vector",
@@ -209,6 +210,7 @@ EXPECTED_DIMENSION: dict[str, str] = {
 # Exports whose unit is whatever the input data carried: checked against the input.
 INHERITED_FROM_INPUT: dict[str, str] = {
     "epoch_median": "nT",
+    "epoch_median_peak": "nT",
     "epoch_q25": "nT",
     "epoch_q75": "nT",
     "epoch_ci_low": "nT",

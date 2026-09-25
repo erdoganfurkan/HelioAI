@@ -761,6 +761,9 @@ sandboxed run and 1618 tests passing against the installed package.
   The usage notes of seven recipes — the `usage` `load_recipe` returns — still read
   "Usage inside run_python: … then run this script"; they show the `run_recipe` call
   now, and the test that scans what the model reads covers the recipes' own text.
+- **`superposed_epoch` exports the peak of its median profile** (`epoch_median_peak`, in
+  the data's unit) and its normalized epoch (`epoch_median_peak_tau`). A SEA is asked for
+  its peak; every session computed it by hand, reaching into the recipe's internals.
 - **`theta_bn` averages over 13-minute windows, the Harvard-CfA convention, instead of
   8-minute ones.** The CfA shock database publishes θ_Bn method by method, and its
   magnetic-coplanarity (MC) entries rest on 260 field samples per side — 13 min at 3 s — so

@@ -263,6 +263,12 @@ sandboxed run and 1618 tests passing against the installed package.
   unjudged rather than accused. On that run, 3 backed / 6 unsourced becomes 6 / 3 — the
   three left are the standard deviations and the missing fraction, which the script
   printed and never exported, and which the model itself marked `asserted`.
+- **`theta_bn` exports |B_up| and |B_dn|.** It returned the two mean vectors and their
+  ratio; the two magnitudes every θ_Bn report quotes were missing, and on both live runs
+  of 2026-09-25 (the quickstart, a free Wind 2004-11-07 question) the analyst wrote one
+  more `run_python` to export them. `B_up_mag_nT` and `B_dn_mag_nT` are the magnitudes of
+  the mean vectors — the pair `compression_ratio` divides — not the mean of |B|, which
+  fluctuations make larger.
 - `import helioai` no longer creates directories: the session store now creates its
   database and schema on first use rather than at import.
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the

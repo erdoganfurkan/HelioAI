@@ -244,6 +244,14 @@ sandboxed run and 1618 tests passing against the installed package.
   in the exported notebook raised `ValueError` on the same call — the live quickstart's
   plot cell, `export('t_shock_iso', str(t_shock))`, drew its figure and then failed. The
   exported helper prints such a value as it is.
+- **A number rounded to the digits it shows is no longer "contradicted".** The live
+  quickstart of 2026-09-25 wrote "B·n̂ std 1.5 nT" for a recorded `Bn_std_nT` of 1.5153,
+  and the provenance line under the answer read `contradicted`: the prose check allowed
+  only its 0.5 % tolerance, while the claims check of the same answer already accepted a
+  value rounded to its shown digits. The prose check now applies that rounding rule to
+  the scalar the wording names, so one answer is held to one rule; a digit further off
+  ("1.6 nT") is still contradicted, and a negative claim is not the rounding of a
+  positive record, in either check.
 - `import helioai` no longer creates directories: the session store now creates its
   database and schema on first use rather than at import.
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the

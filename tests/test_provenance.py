@@ -683,3 +683,30 @@ def test_concurrent_records_keep_every_value(tmp_path, monkeypatch):
 
     names = {v["name"] for v in provenance.read_ledger(tmp_path)["values"]}
     assert names == {f"v{i:02d}" for i in range(16)}
+
+
+def test_a_named_scalar_rounded_to_the_digits_shown_is_matched_not_contradicted():
+    """Live run, 2026-09-25, quickstart step 3: the recipe exported Bn_std_nT = 1.5153 nT,
+    the reply wrote "B·n̂ std 1.5 nT" and the line under the answer read `contradicted`.
+    1.5 is 1.5153 rounded to the digit the reply shows — the rule the claims validator
+    already applies to the same answer. A digit further off is still a different number.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [
+            {
+                "name": "Bn_std_nT",
+                "units": "nT",
+                "mean": 1.5153055875923644,
+                "shape": [1],
+                "sample": [1.5153055875923644],
+            }
+        ]
+    }
+    rounded = verify(extract_claims("normal spread 2.0°, B·n̂ std 1.5 nT"), ledger)
+    assert rounded.contradicted == 0, rounded.details
+    assert rounded.matched == 1
+
+    wrong = verify(extract_claims("normal spread 2.0°, B·n̂ std 1.6 nT"), ledger)
+    assert wrong.contradicted == 1

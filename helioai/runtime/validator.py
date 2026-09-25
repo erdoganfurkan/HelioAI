@@ -22,7 +22,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from helioai import provenance
-from helioai.core.provenance_check import RTOL, _is_scalar, _states, check_reply
+from helioai.core.provenance_check import (
+    RTOL,
+    _is_scalar,
+    _states,
+    _within_rounding,
+    check_reply,
+)
 from helioai.core.tool_exec import _flag_recipe_bypass, _flag_unknown_ids
 from helioai.logging_config import get_logger
 
@@ -274,30 +280,6 @@ def _in_ledger_units(value: float, claim_units: str, ledger_units: str) -> float
         return float((value * ua).to(ub).value)
     except Exception:
         return _INCOMPATIBLE
-
-
-def _within_rounding(entry: dict, value: float) -> bool:
-    """Whether the claim is the entry's mean rounded to the digits the claim shows, or —
-    for an entry that summarises a series — within its spread. `2.5` states a recorded
-    `2.519`; `60` states `59.95`; a mean quoted inside one standard deviation of a time
-    series is not a different number."""
-    mean = entry.get("mean")
-    if not isinstance(mean, (int, float)) or isinstance(mean, bool):
-        return False
-    tol = 0.5 * 10 ** (-_decimals(value))
-    if abs(abs(mean) - abs(value)) <= tol:
-        return True
-    std = entry.get("std")
-    if not _is_scalar(entry) and isinstance(std, (int, float)) and std > 0:
-        return abs(abs(mean) - abs(value)) <= std
-    return False
-
-
-def _decimals(value: float) -> int:
-    text = repr(float(value))
-    if "e" in text or "E" in text:
-        return 0
-    return len(text.split(".")[1].rstrip("0")) if "." in text else 0
 
 
 def _ledger_value(entry: dict) -> object:

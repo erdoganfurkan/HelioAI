@@ -618,9 +618,13 @@ def _recipe_functions(code: str) -> set[str]:
 
     Private helpers are left out: `_rh_core` is the recipe's business, `rh_jump` is
     the contract. A script-shaped recipe with no public `def` (solar_mach,
-    superposed_epoch) has nothing to call and is not judged on this signal.
+    superposed_epoch) has nothing to call and is not judged on this signal. So is
+    `export`: theta_bn, mvab and walen_test define a stand-in for the sandbox helper
+    under `__main__`, and counting it made every hand-written copy that exported its
+    result a "call" of the recipe — since 2026-09-15 the check could not fire on the
+    theta_bn source a live run actually loads.
     """
-    return {n for n in _DEF_LINE.findall(code) if not n.startswith("_")}
+    return {n for n in _DEF_LINE.findall(code) if not n.startswith("_") and n != "export"}
 
 
 def _calls_any(code: str, names: set[str]) -> bool:

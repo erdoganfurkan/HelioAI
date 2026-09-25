@@ -76,6 +76,13 @@ hundred and is what the model actually reasons over.
 
 Needs `ADS_API_TOKEN` (free). Used heavily by the `librarian` sub-agent.
 
+ADS requires every bare word of a query, and a model writes many: a query that returns
+fewer papers than asked is sent once more with its bare words made optional — fielded
+terms (`author:`, `title:`), quoted phrases and negations stay required — restricted to
+refereed astronomy papers and ranked by relevance. The exact hits come first; the result
+says `relaxed: true` and gives the `relaxed_query`. A query with explicit `AND`/`OR`/`NOT`
+is sent as written.
+
 ## Recipes
 
 | Tool | What it does |
@@ -99,7 +106,7 @@ one tool that is not in the registry — the agent loop intercepts it directly.
 | `parameter_hunter` | vague description → speasy IDs | search only | 4 |
 | `data_analyst` | download, analyse, plot, detect | data + sandbox | 12 |
 | `plasma_physicist` | PlasmaPy calculations, sanity checks | sandbox | 4 |
-| `librarian` | multi-round ADS literature search | `find_papers` | 4 |
+| `librarian` | multi-round ADS literature search | `find_papers` | 5 |
 
 Delegation exists for context isolation, not parallelism: a parameter search that reads
 forty candidate descriptions should not leave forty descriptions sitting in the main

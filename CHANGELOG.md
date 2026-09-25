@@ -278,6 +278,19 @@ sandboxed run and 1618 tests passing against the installed package.
   the installed package ships: otherwise the short view would run another recipe than the
   session did, and the panel shows the full script as before — which is what a session run
   on an earlier `theta_bn` shows after this release.
+- **`find_papers` widens a query that starves.** ADS requires every bare word of a query,
+  and the model writes eight to twelve of them: on a live web turn of 2026-09-25, ten of
+  the twelve queries about the 2015 St. Patrick's Day shock returned 0–3 papers — each
+  extra word ("driver", "in situ", "ACE") removing some — the two librarians found one
+  paper between them, and the lead ran five searches of its own. A query that returns
+  fewer papers than asked is now sent once more with its bare words made optional (one
+  `OR` group; fielded terms, quoted phrases and negations stay required), restricted to
+  refereed papers of the astronomy database and ranked by relevance: by citations, "any
+  of these words" is headed by *Deep learning*, and the heliophysics collection holds
+  almost nothing before 2024. The exact hits come first, the result carries `relaxed` and
+  the `relaxed_query`, and a query with explicit `AND`/`OR`/`NOT` is sent as written.
+  Replayed against ADS through the tool (no model call): those twelve queries return 96
+  papers against 27, eight each, the two the answer finally cited among them.
 - `import helioai` no longer creates directories: the session store now creates its
   database and schema on first use rather than at import.
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the

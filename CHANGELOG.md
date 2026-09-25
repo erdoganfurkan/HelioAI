@@ -291,6 +291,11 @@ sandboxed run and 1618 tests passing against the installed package.
   the `relaxed_query`, and a query with explicit `AND`/`OR`/`NOT` is sent as written.
   Replayed against ADS through the tool (no model call): those twelve queries return 96
   papers against 27, eight each, the two the answer finally cited among them.
+- **A value exactly half-way between two roundings is stated by either.** A recipe
+  exported a window spread of 1.45° and the answer said "± 1.5°": the claims verdict
+  called it `contradicted`, because |1.45 − 1.5| is 0.050000000000000044 in floating
+  point, a hair over the half-digit. The bound now leaves room for the last bits; one
+  digit further is still another number.
 - **The recipe check fires on the `theta_bn` a session actually loads.** `theta_bn`, `mvab`
   and `walen_test` define a stand-in `export()` under `__main__`, and the "loaded but never
   called" signal counted it among the recipe's functions — so the `export(...)` that ends

@@ -371,7 +371,9 @@ def _within_rounding(entry: dict, value: float) -> bool:
         return False
     if value < 0 and mean > 0:
         return False
-    tol = 0.5 * 10 ** (-_decimals(value))
+    # The half-digit itself is a rounding: 1.45 stated 1.5 or 1.4. In floating point
+    # |1.45 - 1.5| is 0.050000000000000044, so the bound needs room for the last bits.
+    tol = 0.5 * 10 ** (-_decimals(value)) * (1 + 1e-9)
     if abs(abs(mean) - abs(value)) <= tol:
         return True
     std = entry.get("std")

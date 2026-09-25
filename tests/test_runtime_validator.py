@@ -248,6 +248,23 @@ def test_the_claims_tolerance_is_the_prose_checkers():
     assert status == "contradicted", "0.5 % is still the line"
 
 
+@pytest.mark.parametrize("stated", [1.5, 1.4])
+def test_a_value_exactly_half_way_rounds_either_way(stated):
+    """Bench session 7f6d7577, 2026-09-25: the recipe exported
+    theta_bn_window_spread_deg = 1.45 and the answer said "± 1.5°" — `contradicted`
+    under a correct number. |1.45 − 1.5| is 0.050000000000000044 in floating point, a
+    hair over the half-digit 0.05, so a value exactly half-way matched neither of its
+    two roundings."""
+    ledger = [_entry("theta_bn_window_spread_deg", 1.45, "deg")]
+    claim = _claim("theta_Bn window spread", stated, "deg", "theta_bn_window_spread_deg")
+    status, _ = judge_claim(claim, ledger)
+    assert status == "matched"
+    status, _ = judge_claim({**claim, "value": 1.6}, ledger)
+    assert status == "contradicted", "one digit further is another number"
+    status, _ = judge_claim({**claim, "value": 1.46}, ledger)
+    assert status == "contradicted", "two digits shown, two digits held to"
+
+
 # ── what the SEA live run taught (2026-09-15, 099f5c2) ─────────────────────────────
 
 

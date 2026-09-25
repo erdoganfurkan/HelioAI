@@ -280,8 +280,8 @@ registry.register(
     name="list_recipes",
     description=(
         "List available derived scientific recipes (reusable Python scripts). "
-        "Returns a catalogue with name, description, inputs and outputs for each recipe. "
-        "Use before load_recipe to discover what is available."
+        "Returns name, description, inputs, outputs and run_with (the exact run_recipe "
+        "call) for each recipe; load_recipe returns one's source."
     ),
     parameters={"type": "object", "properties": {}},
 )(_rcp.list_recipes)
@@ -492,7 +492,8 @@ registry.register(
         "recipe that is a library of functions (rankine_hugoniot, pressure_balance, "
         "shock_timing_2sc), pass `call`: one expression applying its function to the inputs. "
         "Returns the recipe's own export() values, stdout and figures, and records the recipe "
-        "and its reference as the method used. Download data with get_timeseries first."
+        "and its reference as the method used. A run that fails or yields nothing returns "
+        "recipe_notice (usage, signatures, run_with). Download data with get_timeseries first."
     ),
     parameters={
         "type": "object",

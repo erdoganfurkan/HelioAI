@@ -155,6 +155,37 @@ async def test_a_recipe_that_guards_its_demo_behind_main_does_not_run_the_demo(
 async def test_an_unknown_recipe_is_an_error_that_points_at_list_recipes(recipes_dir):
     result = await run_recipe("no_such_recipe", _plot_dir="/nonexistent")
     assert "not found" in result["error"] and "list_recipes" in result["error"]
+    assert "theta_bn" in result["recipes"], "the names there are, without another call"
+
+
+async def test_a_run_that_produces_nothing_carries_the_recipes_notice(tmp_path, recipes_dir):
+    """mvab reads `B` with `globals().get` and, bound under another name, does nothing at
+    all: no export, no figure, no line of output, no error. The model had no way to tell a
+    wrong binding from a quiet recipe; the result now says how the recipe is called."""
+    t = np.datetime64("2015-03-17T04:00:00", "s") + np.arange(20) * np.timedelta64(3, "s")
+    _save(
+        tmp_path / "data",
+        "b",
+        t,
+        np.random.default_rng(0).normal(size=(20, 3)),
+        "nT",
+        ["x", "y", "z"],
+    )
+
+    result = await run_recipe(
+        "mvab", inputs={"field": "load_data('b').values"}, _plot_dir=str(tmp_path), _run_idx=0
+    )
+
+    assert result.get("error") is None, result.get("stderr", "")
+    assert not result.get("exports") and not (result.get("stdout") or "").strip()
+    notice = result["recipe_notice"]
+    assert notice["run_with"].startswith("run_recipe('mvab', inputs={'B': ...})")
+    assert notice["usage"] and any(f["signature"].startswith("mvab(") for f in notice["functions"])
+
+    bound = await run_recipe(
+        "mvab", inputs={"B": "load_data('b').values"}, _plot_dir=str(tmp_path), _run_idx=1
+    )
+    assert bound.get("exports") and "recipe_notice" not in bound, "a run that computed says nothing"
 
 
 @pytest.mark.parametrize("name", ["../../etc/passwd", "../recipes/theta_bn", ""])
@@ -167,6 +198,7 @@ async def test_an_input_that_is_not_a_python_name_is_refused(recipes_dir, monkey
     monkeypatch.setattr("helioai.tools.sandbox.run_python", lambda *a, **k: spawned.append(a) or {})
     result = await run_recipe("theta_bn", inputs={"B up": "1"}, _plot_dir="/nonexistent")
     assert "not a valid Python name" in result["error"] and spawned == []
+    assert result["recipe_notice"]["run_with"].startswith("run_recipe('theta_bn'")
     result = await run_recipe("theta_bn", inputs={"B_up": "  "}, _plot_dir="/nonexistent")
     assert "has no value" in result["error"] and spawned == []
 

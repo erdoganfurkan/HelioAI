@@ -732,6 +732,13 @@ sandboxed run and 1618 tests passing against the installed package.
   A/B, two loaded `rankine_hugoniot` and rewrote it by hand (`not_called`). Every text now
   names `run_recipe`; copying is named for its one use, a script that runs outside
   HelioAI. A test scans everything the model reads for an instruction to copy a recipe.
+- **From the catalogue straight to the run.** `list_recipes` gives each recipe its
+  `run_with` — the `run_recipe` call with its own input names — so a recipe can be run
+  without being loaded first. When a run fails, or produces nothing at all, `run_recipe`
+  returns the recipe's notice (`recipe_notice`: usage, signatures, `run_with`). Six
+  recipes read their inputs with `globals().get` and, bound under a wrong name, did
+  nothing — no export, no output, no error — which the model could not tell from a quiet
+  recipe. An unknown recipe name comes back with the names there are.
 - **`theta_bn` averages over 13-minute windows, the Harvard-CfA convention, instead of
   8-minute ones.** The CfA shock database publishes θ_Bn method by method, and its
   magnetic-coplanarity (MC) entries rest on 260 field samples per side — 13 min at 3 s — so

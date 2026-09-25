@@ -78,6 +78,29 @@ async def test_load_recipe_returns_code(recipes_dir):
     assert len(result["code"]) > 0
 
 
+async def test_the_catalogue_gives_each_recipe_the_call_that_runs_it():
+    """From `list_recipes` straight to `run_recipe`: one LLM call per recipe saved, and
+    each call re-sends the whole context."""
+    listing = await _rcp.list_recipes()
+    by_name = {r["name"]: r for r in listing["recipes"]}
+    assert set(by_name) >= {"theta_bn", "superposed_epoch", "rankine_hugoniot"}
+    for name, entry in by_name.items():
+        assert entry["run_with"].startswith(f"run_recipe({name!r}"), entry
+        assert "above" not in entry["run_with"], "no source sits above a catalogue entry"
+    assert "'events': ..." in by_name["superposed_epoch"]["run_with"]
+
+
+async def test_every_shipped_recipe_has_a_notice_to_hand_back():
+    """`run_recipe` returns the recipe's notice when a run fails or yields nothing; each
+    shipped recipe must have usage notes and a call to put in it."""
+    from helioai.config import _PKG_RECIPES
+
+    for path in sorted(_PKG_RECIPES.glob("*.py")):
+        notice = _rcp._describe(path.stem, path.read_text(encoding="utf-8"))
+        assert notice["usage"], f"{path.stem}: no module docstring to show"
+        assert notice["run_with"], path.stem
+
+
 async def test_load_recipe_returns_metadata_with_reference(recipes_dir):
     result = await _rcp.load_recipe("theta_bn")
     assert "metadata" in result

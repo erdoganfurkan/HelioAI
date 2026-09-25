@@ -87,9 +87,9 @@ is sent as written.
 
 | Tool | What it does |
 |---|---|
-| `list_recipes` | Catalogue of the shipped scientific recipes. |
-| `load_recipe` | Load a recipe's source and its citation. |
-| `run_recipe` | Run a recipe as shipped on the session's data: inputs bound first, source verbatim, one optional `call`. |
+| `list_recipes` | Catalogue of the shipped scientific recipes, each with `run_with`, the exact `run_recipe` call. |
+| `load_recipe` | Load a recipe's source, its citation and its `run_with` line — to read the method. |
+| `run_recipe` | Run a recipe as shipped on the session's data: inputs bound first, source verbatim, one optional `call`. A run that fails or produces nothing returns the recipe's notice (`recipe_notice`). |
 
 `run_recipe` is the one that keeps a recipe's calibration intact: the agent binds the
 inputs (`{"B_up": "load_data('b3gsm').values[m_up]"}`), the recipe's own `export()` calls

@@ -81,15 +81,20 @@ def _parse_header(text: str) -> dict[str, str]:
 
 
 async def list_recipes() -> dict:
-    """List all available derived recipes with their name and description.
+    """List all available derived recipes with their name, description and the call that runs them.
+
+    Each entry carries `run_with`, the `run_recipe(...)` call with the recipe's own input
+    names or functions, so a model can go from the catalogue straight to running one:
+    loading a recipe first cost one LLM call per recipe, and the call is where a session
+    pays — every one re-sends the whole context.
 
     Returns dict with 'recipes' list (sorted by name). Each entry has
-    'name', 'description', 'inputs', 'outputs' (when present in header).
+    'name', 'description', 'inputs', 'outputs' (when present in header) and 'run_with'.
     Returns {"recipes": []} when the recipes directory does not exist.
 
     Example:
         >>> await list_recipes()
-        {'recipes': [{'name': 'fill_values', 'description': '...'},
+        {'recipes': [{'name': 'fill_values', 'description': '...', 'run_with': '...'},
                      {'name': 'mvab', ...}, {'name': 'rankine_hugoniot', ...}, ...]}
     """
     try:
@@ -105,6 +110,7 @@ async def list_recipes() -> dict:
                 for field in ("description", "inputs", "outputs"):
                     if field in meta:
                         entry[field] = meta[field]
+                entry["run_with"] = run_with(entry["name"], text)
                 entries.append(entry)
             except OSError as exc:
                 log.warning("recipe_read_error", path=str(path), error=str(exc))
@@ -154,6 +160,37 @@ async def load_recipe(name: str) -> dict:
         return {"error": str(e)}
 
 
+def _describe(name: str, code: str) -> dict:
+    """What calling a recipe needs: its usage notes, its public signatures, its call."""
+    tree = ast.parse(code)
+    return {
+        "usage": ast.get_docstring(tree) or "",
+        "functions": _public_functions(tree),
+        "run_with": run_with(name, code),
+    }
+
+
+def _public_functions(tree: ast.Module) -> list[dict]:
+    """Signature and first docstring paragraph of each top-level public function.
+
+    The first paragraph only: the rest of a recipe's docstrings is its calibration record
+    (which shock, which database entry, which window moved the angle by how much), which
+    matters to whoever edits the recipe, not to whoever calls it.
+    """
+    functions = []
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if node.name.startswith("_"):
+            continue
+        signature = f"{node.name}({ast.unparse(node.args)})"
+        if node.returns is not None:
+            signature += f" -> {ast.unparse(node.returns)}"
+        doc = (ast.get_docstring(node) or "").split("\n\n")[0].strip()
+        functions.append({"signature": signature, "doc": doc})
+    return functions
+
+
 _GLOBALS_GET = re.compile(r"""globals\(\)\.get\(\s*["']([A-Za-z_]\w*)["']""")
 _PUBLIC_DEF = re.compile(r"^def\s+([A-Za-z]\w*)\s*\(", re.MULTILINE)
 
@@ -179,8 +216,8 @@ def run_with(name: str, code: str) -> str:
         bound = ", ".join(f"{i!r}: ..." for i in inputs)
         return (
             f"run_recipe({name!r}, inputs={{{bound}}}) — bind the inputs you have (each a "
-            f"Python expression such as \"load_data('name')\" or a literal); the source above "
-            f"then runs verbatim on the session's data"
+            f"Python expression such as \"load_data('name')\" or a literal); the recipe's "
+            f"source then runs verbatim on the session's data"
         )
     functions = [f for f in _PUBLIC_DEF.findall(code) if f != "export"]
     if functions:
@@ -190,7 +227,8 @@ def run_with(name: str, code: str) -> str:
             f"({', '.join(functions[:6])}); bind their arguments as inputs and name the call"
         )
     return (
-        f"run_recipe({name!r}, inputs={{...}}) runs the source above verbatim on the session's data"
+        f"run_recipe({name!r}, inputs={{...}}) runs the recipe's source verbatim on the "
+        f"session's data"
     )
 
 
@@ -297,21 +335,29 @@ async def run_recipe(
     Returns:
         The `run_python` result — stdout, exports, figures, `code_path` — plus
         `recipe` (`name`, `reference`, `description`), `inputs` as bound, and a
-        `method_used` card. `{"error": ...}` for an unknown recipe or an input that is
-        not a Python name.
+        `method_used` card. When the run failed, or produced nothing at all — six of
+        the recipes read their inputs with `globals().get` and do nothing, silently,
+        when a name is bound wrong — it also carries `recipe_notice`: the recipe's
+        usage, public signatures and `run_with`, what `load_recipe` would have said.
+        `{"error": ...}` for an unknown recipe (with the names there are) or an input
+        that is not a Python name (with the notice).
     """
     from helioai.tools.sandbox import run_python
 
     path = _recipe_path(name)
     if path is None:
-        return {"error": f"recipe {name!r} not found; call list_recipes for the names"}
+        names = sorted(p.stem for p in settings.recipes.recipes_dir.glob("*.py"))
+        return {
+            "error": f"recipe {name!r} not found; call list_recipes for the names",
+            "recipes": names,
+        }
     code = path.read_text(encoding="utf-8")
     meta = _parse_header(code)
     bound = dict(inputs or {})
     try:
         script = recipe_script(name, code, bound, call)
     except ValueError as e:
-        return {"error": str(e)}
+        return {"error": str(e), "recipe_notice": _describe(meta.get("name", name), code)}
 
     result = await run_python(
         script, timeout=timeout, _plot_dir=_plot_dir, _run_idx=_run_idx, _no_net=_no_net
@@ -323,6 +369,11 @@ async def run_recipe(
     }
     result["recipe"] = recipe
     result["inputs"] = bound
+    produced = (
+        result.get("exports") or result.get("figure_paths") or (result.get("stdout") or "").strip()
+    )
+    if "error" in result or not produced:
+        result["recipe_notice"] = _describe(recipe["name"], code)
     if "error" not in result:
         result.setdefault("cards", []).append(
             {

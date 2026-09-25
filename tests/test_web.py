@@ -338,7 +338,8 @@ def test_code_of_a_recipe_run_shows_its_own_lines_and_the_full_script_on_request
     code_file = code_dir / "code_0.py"
     recipe = (_PKG_RECIPES / "theta_bn.py").read_text(encoding="utf-8")
     code_file.write_text(
-        recipe_script("theta_bn", recipe, {"B_up": [5, 0, 8.66], "B_dn": [5, 0, 21.65]}, None)
+        recipe_script("theta_bn", recipe, {"B_up": [5, 0, 8.66], "B_dn": [5, 0, 21.65]}, None),
+        encoding="utf-8",
     )
 
     short = web_client.get(f"/code?path={code_file}")

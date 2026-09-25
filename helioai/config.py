@@ -268,6 +268,10 @@ class RAGConfig:
     carries a small penalty, and two accepted products dropped out of the top-k
     altogether. The product the raise was meant to rescue (`ssc/mms1`, rank 54 in BM25)
     is reached through the dense channel instead, once `ef_search` looks wide enough.
+
+    `index_repo` is the Hugging Face dataset `helioai index` fetches a prebuilt index
+    from when the local one is empty (`helioai.index_snapshot`). It is a setting so that
+    a lab can point at its own mirror, and an empty value turns fetching off.
     """
 
     chroma_dir: Path = field(default_factory=lambda: _DATA / "chroma")
@@ -277,6 +281,7 @@ class RAGConfig:
     hybrid_enabled: bool = True
     hybrid_fetch_k: int = 50
     rrf_k: int = 60
+    index_repo: str = "erdoganfurkan/helioai-speasy-index"
 
 
 @dataclass
@@ -579,7 +584,11 @@ def _load() -> Settings:
             timeout_s=float(os.environ.get("HELIOAI_JUDGMENT_TIMEOUT_S", "2.0")),
             api_key=os.environ.get("TYPESAFE_API_KEY", ""),
         ),
-        rag=RAGConfig(chroma_dir=data_dir / "chroma", hybrid_enabled=hybrid_enabled),
+        rag=RAGConfig(
+            chroma_dir=data_dir / "chroma",
+            hybrid_enabled=hybrid_enabled,
+            index_repo=os.environ.get("HELIOAI_INDEX_REPO", RAGConfig.index_repo).strip(),
+        ),
         dev=DevConfig(token=dev_token),
         llm=LLMConfig(
             provider=provider,

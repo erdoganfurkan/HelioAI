@@ -6,7 +6,9 @@ Usage:
     helioai --resume              # pick a past session and continue it
     helioai history               # list sessions
     helioai history delete <id>   # delete a session and its workspace
-    helioai index [--rebuild --classify]   # (re)index the speasy catalog; --classify fills measurement types and regions
+    helioai index [--rebuild --classify]   # fetch the prebuilt index when empty, else (re)index locally; --classify fills measurement types and regions
+    helioai index --download      # replace the index with the one published for this release
+    helioai index --export DIR    # write the index as a snapshot (what CI publishes)
     helioai export [id]           # export a session as a reproducible .ipynb
     helioai profile               # edit the user profile
     helioai mcp-install [--write] # MCP client config pointing at this install
@@ -370,9 +372,39 @@ async def _run_query(query: str, *, restricted: bool = True) -> None:
         await judgment.aclose()
 
 
-def _run_index(rebuild: bool = False, classify: bool = False) -> None:
+def _run_index(
+    rebuild: bool = False,
+    classify: bool = False,
+    download: bool = False,
+    export: str | None = None,
+) -> None:
+    """Fetch the published index when there is none locally, otherwise build or top it up.
+
+    `--rebuild` and `--classify` always build locally: the first is how CI produces the
+    snapshot, the second asks questions about the local products. `--download` replaces
+    the index with the snapshot and fails when it cannot; the implicit fetch of an empty
+    index falls back to a local build, so an offline install still gets one.
+    """
+    from pathlib import Path
+
+    from helioai import index_snapshot
+    from helioai.config import settings
     from helioai.indexer import build_index  # helioai/indexer.py
 
+    if export:
+        manifest = index_snapshot.export_index(Path(export))
+        counts = ", ".join(f"{r}: {c['count']}" for r, c in manifest["collections"].items())
+        print(f"[indexer] snapshot written to {export} ({counts})")
+        return
+    implicit = not (rebuild or classify) and settings.rag.index_repo
+    if download or (implicit and index_snapshot.index_is_empty()):
+        try:
+            index_snapshot.fetch_index()
+            return
+        except Exception as e:
+            if download:
+                sys.exit(f"[indexer] cannot fetch the prebuilt index: {e}")
+            print(f"[indexer] prebuilt index unavailable ({e}) — building locally")
     build_index(rebuild=rebuild, classify=classify)
 
 
@@ -708,10 +740,15 @@ def _run_command(command: str, argv: list[str]) -> None:
         else:
             _show_history()
     elif command == "index":
-        p.add_argument("--rebuild", action="store_true")
+        mode = p.add_mutually_exclusive_group()
+        mode.add_argument("--rebuild", action="store_true")
+        mode.add_argument("--download", action="store_true")
+        mode.add_argument("--export", metavar="DIR")
         p.add_argument("--classify", action="store_true")
         ns = p.parse_args(argv)
-        _run_index(rebuild=ns.rebuild, classify=ns.classify)
+        if ns.classify and (ns.download or ns.export):
+            p.error("--classify builds locally: it cannot be combined with --download or --export")
+        _run_index(rebuild=ns.rebuild, classify=ns.classify, download=ns.download, export=ns.export)
     elif command == "profile":
         p.parse_args(argv)
         _run_profile()

@@ -384,15 +384,111 @@ def test_index_rebuild_flag(monkeypatch):
 
     seen = {}
     monkeypatch.setattr(ws, "set_user", lambda u: None)
-    monkeypatch.setattr(
-        cli, "_run_index", lambda rebuild, classify: seen.update(rebuild=rebuild, classify=classify)
-    )
+    monkeypatch.setattr(cli, "_run_index", lambda **kw: seen.update(kw))
     monkeypatch.setattr(sys, "argv", ["helioai", "index", "--rebuild"])
     cli.main()
-    assert seen == {"rebuild": True, "classify": False}
+    assert seen == {"rebuild": True, "classify": False, "download": False, "export": None}
     monkeypatch.setattr(sys, "argv", ["helioai", "index", "--classify"])
     cli.main()
-    assert seen == {"rebuild": False, "classify": True}
+    assert seen == {"rebuild": False, "classify": True, "download": False, "export": None}
+    monkeypatch.setattr(sys, "argv", ["helioai", "index", "--export", "out"])
+    cli.main()
+    assert seen == {"rebuild": False, "classify": False, "download": False, "export": "out"}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["--rebuild", "--download"], ["--download", "--classify"], ["--export", "d", "--classify"]],
+)
+def test_index_refuses_flags_that_contradict(argv, monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(cli, "_run_index", lambda **kw: pytest.fail("ran"))
+    monkeypatch.setattr(sys, "argv", ["helioai", "index", *argv])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2
+
+
+@pytest.fixture
+def index_calls(monkeypatch):
+    """`_run_index` with the fetch, the local build and the emptiness probe recorded."""
+    from helioai import index_snapshot, indexer
+
+    calls: dict = {"fetch": 0, "build": [], "empty": True, "fetch_error": None}
+
+    def fetch():
+        calls["fetch"] += 1
+        if calls["fetch_error"]:
+            raise calls["fetch_error"]
+        return 9
+
+    monkeypatch.setattr(index_snapshot, "fetch_index", fetch)
+    monkeypatch.setattr(index_snapshot, "index_is_empty", lambda: calls["empty"])
+    monkeypatch.setattr(indexer, "build_index", lambda **kw: calls["build"].append(kw))
+    return calls
+
+
+def test_an_empty_index_is_fetched_not_built(index_calls):
+    from helioai.interfaces.cli import _run_index
+
+    _run_index()
+    assert index_calls["fetch"] == 1 and index_calls["build"] == []
+
+
+def test_a_failed_fetch_falls_back_to_a_local_build(index_calls, capsys):
+    from helioai.interfaces.cli import _run_index
+
+    index_calls["fetch_error"] = OSError("offline")
+    _run_index()
+    assert index_calls["build"] == [{"rebuild": False, "classify": False}]
+    assert "offline" in capsys.readouterr().out
+
+
+def test_download_fails_loudly_instead_of_building(index_calls):
+    from helioai.interfaces.cli import _run_index
+
+    index_calls["empty"] = False
+    index_calls["fetch_error"] = OSError("offline")
+    with pytest.raises(SystemExit, match="offline"):
+        _run_index(download=True)
+    assert index_calls["build"] == []
+
+
+@pytest.mark.parametrize(
+    "kwargs, empty",
+    [({}, False), ({"rebuild": True}, True), ({"classify": True}, True)],
+)
+def test_a_populated_index_a_rebuild_and_a_classification_build_locally(index_calls, kwargs, empty):
+    from helioai.interfaces.cli import _run_index
+
+    index_calls["empty"] = empty
+    _run_index(**kwargs)
+    assert index_calls["fetch"] == 0 and len(index_calls["build"]) == 1
+
+
+def test_no_fetch_when_the_repository_setting_is_empty(index_calls, monkeypatch):
+    from helioai.config import settings
+    from helioai.interfaces.cli import _run_index
+
+    monkeypatch.setattr(settings.rag, "index_repo", "")
+    _run_index()
+    assert index_calls["fetch"] == 0 and len(index_calls["build"]) == 1
+
+
+def test_export_writes_a_snapshot(monkeypatch, tmp_path, capsys):
+    from helioai import index_snapshot
+    from helioai.interfaces.cli import _run_index
+
+    monkeypatch.setattr(
+        index_snapshot,
+        "export_index",
+        lambda out: {"collections": {"products": {"count": 7}, "catalogs": {"count": 2}}},
+    )
+    _run_index(export=str(tmp_path))
+    assert "products: 7, catalogs: 2" in capsys.readouterr().out
 
 
 def test_global_options_may_follow_the_question(monkeypatch):

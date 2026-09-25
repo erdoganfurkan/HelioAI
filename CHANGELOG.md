@@ -8,6 +8,15 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
+### Added
+
+- `helioai index` on an empty index downloads the prebuilt index from the Hugging Face Hub
+  (`HELIOAI_INDEX_REPO`, ~125 MB) instead of building it for the better part of an hour,
+  and falls back to the local build when it cannot. `--download` replaces an existing
+  index with the one built for the release; `--export DIR` writes a snapshot. The
+  `Index` workflow builds the index from scratch at every release tag and publishes it,
+  refusing a snapshot that lost more than 5 % of the published products.
+
 ## [0.4.0] — 2026-09-24
 
 Three things changed in this release. **The search finds the product it is asked for.**

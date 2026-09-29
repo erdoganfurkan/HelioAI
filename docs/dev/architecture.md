@@ -43,6 +43,7 @@ helioai/
 │   └── mcp_client.py       mounts remote MCP servers into the registry
 ├── data/recipes/           shipped scientific recipes (inside the package)
 └── interfaces/
+    ├── errors.py           one actionable sentence for a failed turn, shared by all three
     ├── cli.py              readline CLI
     ├── jupyter_magic.py    %%helioai
     └── web/                FastAPI + SSE + vanilla JS

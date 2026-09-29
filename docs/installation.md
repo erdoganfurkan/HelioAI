@@ -138,4 +138,5 @@ helioai "what missions are available"
 You should get a list of providers and missions without any data being downloaded. If you
 see `OPENCODE_API_KEY is not set`, `HELIOAI_LLM_PROVIDER` is still on its `opencode`
 default — set it to the provider you configured. `helioai doctor` checks the key, the
-index and the sandbox in one go.
+index and the sandbox in one go, and [Troubleshooting](troubleshooting.md) explains each
+message.

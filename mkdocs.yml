@@ -74,6 +74,7 @@ nav:
       - Installation: installation.md
       - Quickstart: quickstart.md
       - Configuration: configuration.md
+      - Troubleshooting: troubleshooting.md
   - User guide:
       - Interfaces: guide/interfaces.md
       - Agent tools: guide/tools.md

@@ -147,6 +147,28 @@ uv sync --extra dev
 
 ---
 
+## How to cite
+
+If HelioAI contributes to published work, please cite it:
+
+```bibtex
+@software{erdogan_helioai,
+  author  = {Erdogan, Furkan},
+  title   = {{HelioAI}: a natural-language agent for heliophysics data discovery and analysis},
+  year    = {2026},
+  version = {0.4.0},
+  url     = {https://github.com/erdoganfurkan/HelioAI},
+  license = {MIT}
+}
+```
+
+GitHub's *Cite this repository* button gives the same from [CITATION.cff](CITATION.cff).
+Please also cite the data providers you used (AMDA/CDPP, CDAWeb/NASA, CSA/ESA) and the
+method references each exported notebook lists in its *Methods & data acknowledgements*
+cell.
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

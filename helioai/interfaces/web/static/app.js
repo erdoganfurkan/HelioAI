@@ -22,6 +22,10 @@ const devIndicator  = document.getElementById('dev-indicator');
 const activityDock  = document.getElementById('activity-dock');
 const adBody        = document.getElementById('ad-body');
 const adSummary     = document.getElementById('ad-summary');
+const sidebar       = document.getElementById('sidebar');
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+const tokenRow      = document.getElementById('token-row');
+const tokenLabel    = document.getElementById('token-label');
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -85,7 +89,19 @@ function mountView(view) {
   document.querySelectorAll('.session-item').forEach(i =>
     i.classList.toggle('active', i.dataset.sid === view.sid));
   closeCodePanel();
+  closeSidebar();
   scrollBottom();
+}
+
+// Below 900px the sidebar is a drawer over the chat, opened from the top bar.
+function openSidebar() {
+  sidebar.classList.add('open');
+  sidebarBackdrop.classList.add('open');
+}
+
+function closeSidebar() {
+  sidebar.classList.remove('open');
+  sidebarBackdrop.classList.remove('open');
 }
 
 function argsStr(args) {
@@ -96,9 +112,13 @@ function argsStr(args) {
   }).join(', ');
 }
 
-// ── Dev token ────────────────────────────────────────────────────────────────
+// ── Token ────────────────────────────────────────────────────────────────────
 
+// One field, two jobs, decided by the server (/api/config): with HELIOAI_USERS it is the
+// access token every request needs; with only HELIOAI_DEV_TOKEN, the optional dev token
+// that lifts the scope guard; with neither it is hidden.
 const DEV_TOKEN_KEY = 'helioai_dev_token';
+let tokenMode = 'none';
 
 function getDevToken() {
   return localStorage.getItem(DEV_TOKEN_KEY) || '';
@@ -115,13 +135,28 @@ window.fetch = (url, opts = {}) => {
 
 function updateDevIndicator() {
   const token = devTokenInput.value.trim();
-  if (token) {
-    devIndicator.classList.add('unlocked');
-    devIndicator.title = 'Dev mode — scope guardrail bypassed';
+  devIndicator.classList.toggle('unlocked', !!token);
+  if (tokenMode === 'access') {
+    devIndicator.title = token ? 'Token set' : 'No token — the server will refuse requests';
   } else {
-    devIndicator.classList.remove('unlocked');
-    devIndicator.title = 'Dev mode off (restricted)';
+    devIndicator.title = token ? 'Dev mode — scope guardrail bypassed' : 'Dev mode off (restricted)';
   }
+}
+
+function configureToken(cfg) {
+  tokenMode = cfg.auth ? 'access' : (cfg.dev_token ? 'dev' : 'none');
+  tokenRow.hidden = tokenMode === 'none' && !getDevToken();
+  tokenLabel.textContent = tokenMode === 'access' ? 'Access token' : 'Dev token';
+  devTokenInput.placeholder = tokenMode === 'access' ? 'required' : '(optional)';
+  updateDevIndicator();
+}
+
+function askForToken() {
+  tokenMode = 'access';
+  tokenRow.hidden = false;
+  tokenLabel.textContent = 'Access token';
+  updateDevIndicator();
+  openSidebar();
 }
 
 devTokenInput.value = getDevToken();
@@ -130,6 +165,7 @@ devTokenInput.addEventListener('input', () => {
   localStorage.setItem(DEV_TOKEN_KEY, devTokenInput.value.trim());
   updateDevIndicator();
 });
+devTokenInput.addEventListener('change', () => loadHistory());
 
 // ── Activity dock ────────────────────────────────────────────────────────────
 
@@ -217,6 +253,7 @@ function renderEvent(view, ev) {
     // The live path shows the question the instant it is sent (see sendMessage), before
     // the server answers; the event then confirms the bubble already there. On a replay
     // nothing is pending, so the bubble is drawn here — the same code path as live.
+    startTurn(view);
     if (view.pendingUser) {
       view.pendingUser = null;
     } else {
@@ -379,7 +416,7 @@ function renderEvent(view, ev) {
     const bubble = view.liveReply || el('div', 'msg-ai');
     view.liveReply = null;
     bubble.classList.remove('msg-ai-live');
-    bubble.innerHTML = DOMPurify.sanitize(marked.parse(data.text || ''));
+    fillReply(bubble, data.text || '');
     if (!bubble.parentNode) view.chat.append(bubble);
     if (isActive(view)) scrollBottom();
 
@@ -388,13 +425,69 @@ function renderEvent(view, ev) {
     if (view.tools > 0) parts.push(`${view.tools} tools`);
     if (view.subagents > 0) parts.push(`${view.subagents} sub-agents`);
     closeDock(view, parts.join(' · '));
+    finishTurn(view);
     loadHistory();
 
   } else if (event === 'error') {
-    const banner = el('div', 'error-banner', `Error: ${data.message}`);
+    const banner = el('div', 'error-banner', `⚠ ${data.message}`);
     view.chat.append(banner);
     if (isActive(view)) scrollBottom();
   }
+}
+
+// ── Turns: the data cards of one question, and what to do with its answer ────
+
+function startTurn(view) {
+  view.cardGroup = null;
+  view.cardKeys = new Set();
+}
+
+// A turn's parameter cards share one folding box, so a question that loads six series
+// does not push the answer a screen down. It stays open while the turn runs and folds
+// at the end once it holds more than two.
+function cardGroup(view) {
+  if (!view.cardGroup) {
+    const box = el('details', 'data-used');
+    box.open = true;
+    box.append(el('summary', 'data-used-summary', 'Data used'));
+    view.chat.append(box);
+    view.cardGroup = box;
+  }
+  return view.cardGroup;
+}
+
+function finishTurn(view) {
+  const group = view.cardGroup;
+  if (group) {
+    const n = group.children.length - 1;
+    group.querySelector('.data-used-summary').textContent = `Data used (${n})`;
+    if (n > 2) group.open = false;
+  }
+  view.chat.querySelectorAll('.turn-actions').forEach(e => e.remove());
+  const bar = el('div', 'turn-actions');
+  const btn = el('button', 'btn-turn', '↓ Export session as notebook');
+  btn.title = 'A standalone .ipynb that re-runs this session';
+  btn.addEventListener('click', () => exportSession(view.sid));
+  bar.append(btn);
+  view.chat.append(bar);
+}
+
+function fillReply(bubble, text) {
+  bubble.innerHTML = DOMPurify.sanitize(marked.parse(text));
+  const copy = el('button', 'msg-copy', 'Copy');
+  copy.title = 'Copy the answer as Markdown';
+  copy.addEventListener('click', () => copyText(text, copy));
+  bubble.append(copy);
+}
+
+async function copyText(text, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = 'Copied';
+  } catch {
+    button.textContent = 'Copy failed';
+  }
+  setTimeout(() => { button.textContent = 'Copy'; }, 1500);
 }
 
 // The joins of the intent event that disagreed — the same phrases as the CLI's `_intent_line`.
@@ -473,10 +566,12 @@ function renderArtifact(view, data) {
       img.alt = 'Figure';
       img.addEventListener('click', () => openLightbox(url));
       img.onerror = () => {
-        const fallback = el('div', 'figure-fallback');
-        fallback.innerHTML = `⚠ Figure non accessible dans le navigateur.<br>`
-          + `<a href="${url}" target="_blank" rel="noopener">Ouvrir directement</a>`
-          + ` · <code>${path}</code>`;
+        const fallback = el('div', 'figure-fallback', '⚠ This figure could not be loaded — its file is gone or moved. ');
+        const link = el('a', null, 'Open it directly');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        fallback.append(link, ' · ', el('code', null, path.split(/[\\/]/).pop()));
         wrap.replaceChildren(fallback);
       };
       const fname = path.split('/').pop() || 'figure.png';
@@ -499,6 +594,12 @@ function renderArtifact(view, data) {
     });
     if (isActive(view)) scrollBottom();
   } else if (data.kind === 'parameter_card') {
+    // The same series often arrives twice in a turn: once from get_timeseries, once when
+    // the analysis script reads it. The first card says it all.
+    if (!view.cardKeys) startTurn(view);
+    const key = data.start ? `${data.param_id}|${data.start}|${data.stop}` : data.param_id;
+    if (view.cardKeys.has(key) || (!data.start && [...view.cardKeys].some(k => k.startsWith(`${data.param_id}|`)))) return;
+    view.cardKeys.add(key);
     const card = el('div', 'parameter-card');
 
     const header = document.createElement('div');
@@ -518,8 +619,10 @@ function renderArtifact(view, data) {
           ? `${comps.slice(0, COMP_MAX).join(', ')} +${comps.length - COMP_MAX} more`
           : comps.join(', '))
       : null;
+    // A card built inside the sandbox carries the dataset id where the mission goes.
+    const dataset = (data.param_id || '').split('/')[1];
     const chipDefs = [
-      { label: 'Mission', value: data.mission },
+      { label: data.mission && data.mission === dataset ? 'Dataset' : 'Mission', value: data.mission },
       { label: 'Instrument', value: data.instrument },
       { label: 'Units', value: data.units },
       { label: 'Cadence', value: data.cadence },
@@ -552,7 +655,9 @@ function renderArtifact(view, data) {
       if (data.coverage_note) card.append(el('div', 'pc-period pc-note', data.coverage_note));
     }
 
-    view.chat.append(card);
+    const group = cardGroup(view);
+    group.append(card);
+    group.querySelector('.data-used-summary').textContent = `Data used (${group.children.length - 1})`;
     if (isActive(view)) scrollBottom();
   } else if (data.kind === 'code' && data.code_path) {
     const chip = el('div', 'artifact-code');
@@ -662,7 +767,7 @@ async function openCodePanel(path, name, full = false) {
   document.getElementById('code-panel').classList.add('open');
   try {
     const r = await fetch(`/code?path=${encodeURIComponent(path)}${full ? '&full=true' : ''}`);
-    content.textContent = r.ok ? await r.text() : `⚠ Code non accessible (${r.status})`;
+    content.textContent = r.ok ? await r.text() : `⚠ This script could not be loaded (HTTP ${r.status})`;
     if (r.ok) {
       content.className = 'language-python';
       Prism.highlightElement(content);
@@ -694,6 +799,7 @@ async function sendMessage() {
   scrollBottom();
   resetDock(view);
   openDock(view);
+  startTurn(view);
   view.streaming = true;
   setStreaming(true);
 
@@ -714,6 +820,10 @@ async function sendMessage() {
       signal: view.abort.signal,
     });
 
+    if (resp.status === 401) {
+      askForToken();
+      throw new Error('this server needs an access token — paste it in the sidebar and ask again');
+    }
     if (!resp.ok) {
       throw new Error(resp.status === 409
         ? 'a reply is already streaming for this session — wait for it to finish'
@@ -740,7 +850,7 @@ async function sendMessage() {
     }
   } catch (err) {
     const banner = el('div', 'error-banner',
-      err.name === 'AbortError' ? 'Cancelled.' : `Connection error: ${err.message}`);
+      err.name === 'AbortError' ? 'Cancelled.' : `⚠ ${err.message}`);
     view.chat.append(banner);
     if (isActive(view)) scrollBottom();
   } finally {
@@ -767,6 +877,11 @@ function newSession() {
 async function loadHistory() {
   try {
     const resp = await fetch('/api/sessions');
+    if (resp.status === 401) {
+      sessList.replaceChildren(el('span', 'empty', 'Paste your access token above to see your sessions.'));
+      askForToken();
+      return;
+    }
     const sessions = await resp.json();
     sessList.innerHTML = '';
     if (!sessions.length) {
@@ -777,25 +892,42 @@ async function loadHistory() {
       const item = el('div', 'session-item');
       item.dataset.sid = s.session_id;
       if (s.session_id === sessionId) item.classList.add('active');
-      const preview = el('div', 's-preview', s.first_message || '(empty)');
-      const meta = el('div', 's-meta', `${s.updated_at.slice(0, 16).replace('T', ' ')} · ${s.n_messages} msgs`);
+      const title = s.first_message || '(empty)';
+      const preview = el('div', 's-preview', title);
+      preview.title = title;
+      const meta = el('div', 's-meta', `${localTime(s.updated_at)} · ${s.n_messages} msgs`);
+      const actions = el('div', 's-actions');
       const btnExport = el('button', 'btn-export', '↓');
       btnExport.title = 'Export as reproducible notebook (.ipynb)';
+      btnExport.setAttribute('aria-label', 'Export this session as a notebook');
       btnExport.addEventListener('click', e => {
         e.stopPropagation();
         exportSession(s.session_id);
       });
       const btnDel = el('button', 'btn-delete', '×');
       btnDel.title = 'Delete session';
+      btnDel.setAttribute('aria-label', 'Delete this session');
       btnDel.addEventListener('click', async e => {
         e.stopPropagation();
+        const shown = title.length > 80 ? title.slice(0, 77) + '…' : title;
+        if (!confirm(`Delete this session?\n\n“${shown}”\n\nIts figures, scripts and downloaded data are deleted with it.`)) return;
         await deleteSession(s.session_id);
       });
-      item.append(preview, meta, btnExport, btnDel);
+      actions.append(btnExport, btnDel);
+      item.append(preview, meta, actions);
       item.addEventListener('click', () => resumeSession(s.session_id, item));
       sessList.append(item);
     });
   } catch { /* sidebar is non-critical */ }
+}
+
+// The server sends UTC; the sidebar shows the reader's own clock.
+function localTime(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 16).replace('T', ' ');
+  const opts = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleString([], opts);
 }
 
 function exportSession(sid) {
@@ -850,6 +982,7 @@ async function resumeSession(sid, itemEl) {
     const messages = data.messages || data;
     messages.forEach(m => {
       if (m.role === 'user') {
+        startTurn(view);
         view.chat.append(el('div', 'msg-user', m.content));
       } else if (m.role === 'system') {
         view.chat.append(el('div', 'msg-system', m.content));
@@ -865,7 +998,7 @@ async function resumeSession(sid, itemEl) {
         }
         if (m.content) {
           const div = el('div', 'msg-ai');
-          div.innerHTML = DOMPurify.sanitize(marked.parse(m.content));
+          fillReply(div, m.content);
           view.chat.append(div);
         }
       }
@@ -883,7 +1016,62 @@ document.getElementById('cp-close').addEventListener('click',
   () => document.getElementById('code-panel').classList.remove('open'));
 document.getElementById('lb-close').addEventListener('click', closeLightbox);
 document.getElementById('lb-backdrop').addEventListener('click', closeLightbox);
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  closeLightbox();
+  closeProfile();
+  closeSidebar();
+});
+
+document.getElementById('btn-menu').addEventListener('click', openSidebar);
+sidebarBackdrop.addEventListener('click', closeSidebar);
+document.getElementById('cp-copy').addEventListener('click', e =>
+  copyText(document.getElementById('code-content').textContent, e.target));
+
+// ── Profile ──────────────────────────────────────────────────────────────────
+
+const profileModal  = document.getElementById('profile-modal');
+const profileText   = document.getElementById('profile-text');
+const profileStatus = document.getElementById('profile-status');
+
+async function openProfile() {
+  profileStatus.textContent = 'Loading…';
+  profileText.value = '';
+  profileModal.hidden = false;
+  try {
+    const r = await fetch('/api/profile');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    profileText.value = (await r.json()).content || '';
+    profileStatus.textContent = '';
+    profileText.focus();
+  } catch (err) {
+    profileStatus.textContent = `Could not load the profile (${err.message})`;
+  }
+}
+
+function closeProfile() {
+  profileModal.hidden = true;
+}
+
+async function saveProfile() {
+  profileStatus.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/profile', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: profileText.value }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    closeProfile();
+  } catch (err) {
+    profileStatus.textContent = `Not saved (${err.message})`;
+  }
+}
+
+document.getElementById('btn-profile').addEventListener('click', openProfile);
+document.getElementById('profile-cancel').addEventListener('click', closeProfile);
+document.getElementById('profile-backdrop').addEventListener('click', closeProfile);
+document.getElementById('profile-save').addEventListener('click', saveProfile);
 
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -899,21 +1087,31 @@ input.addEventListener('input', () => {
 
 // Init
 // The <select> lists providers in markup order, so without this the browser sent
-// whichever came first — azure — and silently overrode the server's own setting.
-async function syncProvider() {
+// whichever came first and silently overrode the server's own setting. A provider the
+// server has no key for is labelled and disabled rather than offered — unless it is the
+// server's own default, which stays selectable so its error can be read.
+async function syncConfig() {
   try {
     const r = await fetch('/api/config');
     if (!r.ok) return;
-    const { provider } = await r.json();
-    if (provider && [...provSel.options].some(o => o.value === provider)) {
-      provSel.value = provider;
+    const cfg = await r.json();
+    const ready = cfg.providers || {};
+    for (const o of provSel.options) {
+      if (!o.dataset.label) o.dataset.label = o.textContent;
+      const missing = o.value in ready && !ready[o.value];
+      o.disabled = missing && o.value !== cfg.provider;
+      o.textContent = missing ? `${o.dataset.label} — not configured` : o.dataset.label;
+    }
+    if (cfg.provider && [...provSel.options].some(o => o.value === cfg.provider)) {
+      provSel.value = cfg.provider;
     }
     provSel.dataset.synced = '1';
+    configureToken(cfg);
   } catch { /* leave the markup default; a failed probe must not block the UI */ }
 }
 
 provSel.addEventListener('change', () => { provSel.dataset.touched = '1'; });
 
-syncProvider();
+syncConfig();
 loadHistory();
 newSession();

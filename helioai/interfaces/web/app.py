@@ -166,13 +166,39 @@ async def health():
 
 @app.get("/api/config")
 async def api_config():
-    """Server-side settings the UI cannot know on its own.
+    """Server-side settings the UI cannot know on its own — never a secret, only whether
+    one is set.
 
     The provider selector used to default to whichever option came first in the markup
     — `azure` — and sent it on every message, so a server configured for another
-    provider was quietly overridden by the browser.
+    provider was quietly overridden by the browser. `providers` says which of them this
+    server can actually reach, so the selector stops offering a key nobody set.
+
+    `auth` and `dev_token` decide what the sidebar's token field is for: with
+    `HELIOAI_USERS` it is the access token every request needs, with only
+    `HELIOAI_DEV_TOKEN` it is the optional dev token, and with neither it is hidden —
+    a field asking a local user for a token that does not exist was the first thing a
+    newcomer asked about.
     """
-    return {"provider": settings.llm.provider}
+    return {
+        "provider": settings.llm.provider,
+        "providers": _provider_status(),
+        "auth": bool(settings.web_auth.users),
+        "dev_token": bool(settings.dev.token),
+    }
+
+
+def _provider_status() -> dict[str, bool]:
+    from helioai.core.llm.factory import OPENAI_COMPAT
+
+    llm = settings.llm
+    ready = {
+        "azure": bool(llm.azure.api_key and llm.azure.endpoint),
+        "gemini": bool(llm.gemini.api_key),
+    }
+    for name, spec in OPENAI_COMPAT.items():
+        ready[name] = not spec["key_env"] or bool(getattr(llm, spec["config"]).api_key)
+    return {name: ok and setup_problem(name) is None for name, ok in ready.items()}
 
 
 @app.post("/chat/stream")

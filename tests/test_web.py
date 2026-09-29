@@ -643,8 +643,11 @@ def test_index_html_loads_no_external_cdn_scripts():
 def test_app_js_sanitizes_markdown_before_innerHTML():
     """LLM/tool output rendered as markdown must go through DOMPurify before innerHTML."""
     js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
-    assert js.count("DOMPurify.sanitize(marked.parse(") >= 2  # live reply + history replay
+    # One renderer, fillReply, for the live reply and the history replay alike.
+    assert js.count("DOMPurify.sanitize(marked.parse(") == 1
+    assert js.count("fillReply(") >= 3  # its definition, the live reply, the replay
     assert "= marked.parse(" not in js  # no unsanitized innerHTML assignment left
+    assert "innerHTML = `" not in js  # no HTML assembled from strings
 
 
 def test_every_streamed_event_has_a_web_handler():
@@ -856,6 +859,25 @@ def test_streams_stay_bound_to_their_session_in_the_real_app_js():
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     assert "OK web session streams" in proc.stdout
+
+
+def test_a_turn_renders_its_cards_answer_and_export_in_the_real_app_js():
+    """Folding data box without repeats, copy and export buttons, provider and token
+    fields driven by /api/config — tests/web/test_turn_ui.js."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    proc = subprocess.run(
+        [node, str(Path(__file__).parent / "web" / "test_turn_ui.js")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    assert "OK web turn ui" in proc.stdout
 
 
 # ── an injected correction replays as a system note, not as the user's question ──
@@ -1124,3 +1146,50 @@ def test_a_provider_that_cannot_answer_is_reported_in_words(web_client, monkeypa
     events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
     assert events[-1]["event"] == "error"
     assert "HELIOAI_OPENCODE_MODEL" in events[-1]["data"]["message"]
+
+
+# ── /api/config: what the sidebar needs, never a secret ─────────────────────────
+
+
+def test_config_says_which_providers_can_answer_without_revealing_keys(web_client, monkeypatch):
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.llm.groq, "api_key", "gsk-secret")
+    monkeypatch.setattr(settings.llm.gemini, "api_key", "")
+    monkeypatch.setattr(settings.llm.opencode, "api_key", "oc-secret")
+    monkeypatch.setattr(settings.llm.opencode, "model", "")
+
+    r = web_client.get("/api/config")
+
+    ready = r.json()["providers"]
+    assert ready["groq"] is True and ready["gemini"] is False and ready["ollama"] is True
+    assert ready["opencode"] is False, "a key without a model cannot answer"
+    assert "secret" not in r.text
+
+
+@pytest.mark.parametrize(
+    ("users", "dev", "expected"),
+    [
+        ({}, "", (False, False)),
+        ({}, "s3cr3t-dev", (False, True)),
+        ({"s3cr3t-user": "alice"}, "", (True, False)),
+    ],
+)
+def test_config_says_what_the_token_field_is_for(web_client, monkeypatch, users, dev, expected):
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.web_auth, "users", users)
+    monkeypatch.setattr(settings.dev, "token", dev)
+
+    body = web_client.get("/api/config").json()
+
+    assert (body["auth"], body["dev_token"]) == expected
+    assert "s3cr3t" not in str(body)
+
+
+def test_the_page_has_no_french_left():
+    """The UI is English; two fallbacks were still in French."""
+    js = (Path(__file__).parent.parent / "helioai/interfaces/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+    assert "non accessible" not in js and "Ouvrir" not in js

@@ -39,7 +39,7 @@ class Element {
   get childNodes() { return this.children; }
   get firstChild() { return this.children[0] || null; }
   get textContent() {
-    return this.children.length ? this.children.map(c => c.textContent).join('') : this._text;
+    return this._text + this.children.map(c => c.textContent).join('');
   }
   set textContent(v) { this.children = []; this._text = String(v); }
   get innerHTML() { return this.textContent; }
@@ -82,10 +82,12 @@ function mk(tag, id, parent = body) {
 // The ids app.js resolves at load time — mirrors index.html.
 ['chat-area', 'input', 'btn-send', 'btn-cancel', 'btn-new', 'session-list', 'dev-token-input',
  'dev-indicator', 'activity-dock', 'ad-body', 'ad-summary', 'ad-header', 'code-panel', 'code-content',
- 'cp-close', 'lightbox', 'lb-img', 'lb-download', 'lb-pdf', 'lb-close', 'lb-backdrop']
+ 'cp-close', 'lightbox', 'lb-img', 'lb-download', 'lb-pdf', 'lb-close', 'lb-backdrop',
+ 'sidebar', 'sidebar-backdrop', 'token-row', 'token-label', 'btn-menu', 'cp-copy', 'btn-profile',
+ 'profile-modal', 'profile-backdrop', 'profile-text', 'profile-status', 'profile-cancel', 'profile-save']
   .forEach(id => mk('div', id));
 const sel = mk('select', 'provider-select');
-for (const v of ['azure', 'groq', 'gemini', 'opencode', 'ollama']) {
+for (const v of ['opencode', 'groq', 'gemini', 'azure', 'ollama']) {
   const o = new Element('option'); o.value = v; o.tagName = 'OPTION'; sel.append(o);
 }
 const cpTitle = new Element('span'); cpTitle.className = 'cp-title'; body.append(cpTitle);

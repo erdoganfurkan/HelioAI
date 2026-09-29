@@ -50,10 +50,13 @@ sandboxed run and 1618 tests passing against the installed package.
   documentation says so and answers 400 otherwise. HelioAI never read the field, so it
   never sent it back; the rule was enforced intermittently (0 rejections in 204 calls on
   2026-09-25, 2 in ~51 on 2026-09-28/29, one on the lead's sixth call of a question). The
-  reasoning is now kept on the assistant message, streamed or not, sent back only when the
-  provider returned one — no other provider sees the field — and stored with the session,
-  so a reloaded conversation keeps it too. It is never displayed. Sessions saved before
-  this release have none to send.
+  reasoning is now kept on the assistant message, sent back only when the provider returned
+  one — no other provider sees the field — and stored with the session, so a reloaded
+  conversation keeps it too. It is never displayed. Every model call is now streamed,
+  sub-agents included: the OpenCode gateway drops `reasoning_content` from non-streamed
+  replies (0 of 24 turns on 2026-09-29, 24 of 24 streamed), which is why the sub-agents
+  still died after the lead was fixed; an endpoint that refuses streaming is asked again
+  without it. Sessions saved before this release have no reasoning to send.
 - **A search ranks the same in every process.** Chroma persists its HNSW graph only every
   `sync_threshold` writes — 1000 by default — and replays whatever followed the last persist
   into the in-memory graph at every start, in an order that varies. Measured on 2026-09-22

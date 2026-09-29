@@ -28,7 +28,7 @@ class _FakeCompletions:
 
     async def create(self, **kwargs):
         self.calls.append(kwargs)
-        return self.response
+        return _respond(kwargs, self.response)
 
 
 class _FakeOpenAIClient:
@@ -52,6 +52,37 @@ def _openai_response(content: str | None = None, tool_calls: list[tuple] | None 
     ]
     message = SimpleNamespace(content=content, tool_calls=tcs or None)
     return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+def _respond(kwargs: dict, response):
+    """What the SDK hands back for `kwargs`: chunks when the request streams.
+
+    `chat()` streams underneath, so a whole completion is replayed as the chunks a
+    streaming endpoint would send — reasoning, text, tool calls, finish, usage.
+    """
+    if not kwargs.get("stream") or isinstance(response, _Stream):
+        return response
+    choice = response.choices[0]
+    msg = choice.message
+    tcs = msg.tool_calls or []
+    chunks = []
+    if getattr(msg, "reasoning_content", None):
+        chunks.append(_chunk(reasoning=msg.reasoning_content))
+    if msg.content:
+        chunks.append(_chunk(content=msg.content))
+    if tcs:
+        chunks.append(
+            _chunk(
+                tool_calls=[
+                    (i, tc.id, tc.function.name, tc.function.arguments) for i, tc in enumerate(tcs)
+                ]
+            )
+        )
+    finish = getattr(choice, "finish_reason", None) or ("tool_calls" if tcs else "stop")
+    chunks.append(_chunk(finish_reason=finish))
+    if getattr(response, "usage", None):
+        chunks.append(_chunk(usage=response.usage))
+    return _Stream(chunks)
 
 
 def _groq_client():
@@ -728,7 +759,7 @@ async def test_a_rejected_tool_choice_falls_back_to_auto():
             raise BadRequestError(
                 "Thinking mode does not support this tool_choice", response=_Resp(), body=None
             )
-        return _openai_response(content="ok")
+        return _respond(kwargs, _openai_response(content="ok"))
 
     fake.completions.create = flaky
     tools = [ToolDef(name="t", description="d", parameters={"type": "object", "properties": {}})]
@@ -750,7 +781,7 @@ async def test_an_empty_turn_is_retried_once():
 
     async def flaky(**kwargs):
         fake.completions.calls.append(kwargs)
-        return replies[len(fake.completions.calls) - 1]
+        return _respond(kwargs, replies[len(fake.completions.calls) - 1])
 
     fake.completions.create = flaky
     msg = await client.chat([Message(role="user", content="hi")], [])
@@ -919,19 +950,66 @@ async def test_streaming_holds_back_an_inline_reasoning_block():
     assert final.content == "θ_Bn ≈ 60°."
 
 
-async def test_a_streamed_turn_with_nothing_in_it_is_retried_through_chat():
-    client, fake = _streaming_client([_chunk(content=""), _chunk(finish_reason="stop")])
-    retried = _openai_response(content="second try")
-    calls_before = len(fake.calls)
+async def test_a_streamed_turn_with_nothing_in_it_is_retried_once_still_streamed():
+    """The retry streams too: a non-streamed reply loses `reasoning_content` on the
+    OpenCode gateway, and DeepSeek then rejects the next request."""
+    client, fake = _groq_client()
+    streams = [
+        _Stream([_chunk(content=""), _chunk(finish_reason="stop")]),
+        _Stream(
+            [_chunk(reasoning="r"), _chunk(content="second try"), _chunk(finish_reason="stop")]
+        ),
+    ]
 
     async def create(**kwargs):
         fake.calls.append(kwargs)
-        return retried if not kwargs.get("stream") else _Stream([_chunk(finish_reason="stop")])
+        return streams[len(fake.calls) - 1]
 
     fake.completions.create = create
     deltas, final = await _collect(client)
-    assert final.content == "second try"
-    assert len(fake.calls) == calls_before + 2 and fake.calls[-1].get("stream") is None
+    assert final.content == "second try" and final.reasoning == "r"
+    assert [c.get("stream") for c in fake.calls] == [True, True]
+
+
+async def test_chat_streams_underneath_so_the_reasoning_is_not_lost():
+    """0 of 24 non-streamed DeepSeek replies carried `reasoning_content` through the
+    OpenCode gateway on 2026-09-29, 24 of 24 streamed ones did; the sub-agents call
+    `chat()`, and died on the 400 that followed."""
+    client, fake = _streaming_client(
+        [
+            _chunk(reasoning="Wind first."),
+            _chunk(tool_calls=[(0, "c1", "get_timeseries", "{}")]),
+            _chunk(finish_reason="tool_calls"),
+        ]
+    )
+    reply = await client.chat([Message(role="user", content="q")], [])
+    assert fake.calls[-1]["stream"] is True
+    assert reply.reasoning == "Wind first." and reply.tool_calls[0].id == "c1"
+
+
+async def test_an_endpoint_that_refuses_streaming_is_asked_again_without_it():
+    from openai import BadRequestError
+
+    client, fake = _groq_client()
+
+    class _Resp:
+        status_code = 400
+        headers: dict = {}
+        request = None
+
+        def json(self):
+            return {"error": {"message": "stream is not supported"}}
+
+    async def create(**kwargs):
+        fake.calls.append(kwargs)
+        if kwargs.get("stream"):
+            raise BadRequestError("stream is not supported", response=_Resp(), body=None)
+        return _openai_response(content="whole")
+
+    fake.completions.create = create
+    reply = await client.chat([Message(role="user", content="q")], [])
+    assert reply.content == "whole"
+    assert [c.get("stream") for c in fake.calls] == [True, None]
 
 
 async def test_a_client_without_streaming_support_yields_the_reply_whole():

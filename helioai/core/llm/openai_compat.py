@@ -278,6 +278,13 @@ class OpenAICompatClient(LLMClient):
     ) -> Message:
         """Send one chat turn and return the assistant's reply.
 
+        Streamed underneath, with the deltas discarded. The OpenCode gateway drops
+        `reasoning_content` from every non-streamed DeepSeek reply (0 of 24 turns on
+        2026-09-29, 24 of 24 streamed), and DeepSeek then rejects a later request that
+        does not send it back — so the sub-agents, which do not stream to anyone, died
+        where the lead did not. Streaming is the one shape every provider here already
+        serves to the lead, so asking it of every call costs nothing.
+
         Args:
             messages: Conversation history.
             tools: Tools the model may call.
@@ -287,18 +294,24 @@ class OpenAICompatClient(LLMClient):
         Returns:
             The assistant reply, carrying `tool_calls` when the model requested any.
         """
+        reply = None
+        async for item in self.stream_chat(messages, tools, system_prompt, tool_choice):
+            if isinstance(item, Message):
+                reply = item
+        assert reply is not None, "stream_chat must end with the reply"
+        return reply
+
+    async def _chat_unstreamed(
+        self,
+        messages: list[Message],
+        tools: list[ToolDef],
+        system_prompt: str | None,
+        tool_choice: str,
+    ) -> Message:
         kwargs = self._request(messages, tools, system_prompt, tool_choice)
         response = await self._create(kwargs, tool_choice)
         reply = from_openai_response(response, self._provider)
         if not (reply.content or "").strip() and not reply.tool_calls:
-            # A turn with neither text nor a tool call is not an answer, and on a
-            # reasoning model it is not rare either: the whole output allowance can go
-            # into hidden reasoning and leave nothing to emit. It is also transient —
-            # the identical request, replayed, came back with two tool calls in half
-            # the wall time. The loop above treats this as fatal and abandons the
-            # question, so two acts of a six-act notebook were lost to a condition that
-            # one more attempt clears. Retried once, not in a loop: if the second is
-            # empty too, the caller's error is the honest outcome.
             log.warning("%s empty turn, retrying once: %s", self._provider, self._model)
             response = await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
             reply = from_openai_response(response, self._provider)
@@ -353,12 +366,15 @@ class OpenAICompatClient(LLMClient):
         """Send one chat turn, yielding the reply's text as it arrives, then the reply.
 
         Text deltas are yielded as the provider sends them, with an inline
-        `<think>` block held back until it closes. Tool-call fragments are
-        reassembled by index and parsed exactly as `chat()` parses a finished call;
-        the usage comes from the final chunk (`stream_options.include_usage`). An
-        endpoint that rejects the streaming request falls back to `chat()`, and a
-        streamed turn that ends with neither text nor a tool call is retried once
-        through `chat()`, as `chat()` retries its own.
+        `<think>` block held back until it closes, and a separate `reasoning_content`
+        kept whole on `Message.reasoning`, never yielded. Tool-call fragments are
+        reassembled by index and parsed as a finished call is; the usage comes from
+        the final chunk (`stream_options.include_usage`). An endpoint that rejects the
+        streaming request is asked again without it. A turn that ends with neither
+        text nor a tool call is retried once, streamed again: on a reasoning model the
+        whole allowance can go into hidden reasoning, and the identical request,
+        replayed, came back with two tool calls — the loop above treats an empty turn
+        as fatal, so without the retry the question was abandoned.
 
         Args:
             messages: Conversation history.
@@ -369,71 +385,71 @@ class OpenAICompatClient(LLMClient):
         Yields:
             Text deltas, then the final `Message`.
         """
-        kwargs = self._request(messages, tools, system_prompt, tool_choice)
-        kwargs["stream"] = True
-        kwargs["stream_options"] = {"include_usage": True}
-        try:
-            stream = await self._create(kwargs, tool_choice)
-        except BadRequestError as e:
-            if "stream" not in str(e).lower():
-                raise
-            log.warning("%s rejected streaming, falling back to chat(): %s", self._provider, e)
-            yield await self.chat(messages, tools, system_prompt, tool_choice)
-            return
+        for attempt in range(2):
+            kwargs = self._request(messages, tools, system_prompt, tool_choice)
+            kwargs["stream"] = True
+            kwargs["stream_options"] = {"include_usage": True}
+            try:
+                stream = await self._create(kwargs, tool_choice)
+            except BadRequestError as e:
+                if "stream" not in str(e).lower():
+                    raise
+                log.warning("%s rejected streaming, falling back to chat(): %s", self._provider, e)
+                yield await self._chat_unstreamed(messages, tools, system_prompt, tool_choice)
+                return
 
-        raw = ""
-        reasoning = ""
-        sent = 0
-        calls: dict[int, dict] = {}
-        usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0}
-        finish_reason = None
-        async for chunk in stream:
-            if getattr(chunk, "usage", None):
-                usage = _usage(chunk)
-            choices = getattr(chunk, "choices", None) or []
-            if not choices:
-                continue
-            choice = choices[0]
-            finish_reason = getattr(choice, "finish_reason", None) or finish_reason
-            delta = getattr(choice, "delta", None)
-            if delta is None:
-                continue
-            if getattr(delta, "reasoning_content", None):
-                reasoning += delta.reasoning_content
-            if getattr(delta, "content", None):
-                raw += delta.content
-                visible = _visible_so_far(raw)
-                if len(visible) > sent:
-                    yield visible[sent:]
-                    sent = len(visible)
-            for frag in getattr(delta, "tool_calls", None) or []:
-                slot = calls.setdefault(
-                    getattr(frag, "index", 0) or 0, {"id": None, "name": None, "arguments": ""}
+            raw = ""
+            reasoning = ""
+            sent = 0
+            calls: dict[int, dict] = {}
+            usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0}
+            finish_reason = None
+            async for chunk in stream:
+                if getattr(chunk, "usage", None):
+                    usage = _usage(chunk)
+                choices = getattr(chunk, "choices", None) or []
+                if not choices:
+                    continue
+                choice = choices[0]
+                finish_reason = getattr(choice, "finish_reason", None) or finish_reason
+                delta = getattr(choice, "delta", None)
+                if delta is None:
+                    continue
+                if getattr(delta, "reasoning_content", None):
+                    reasoning += delta.reasoning_content
+                if getattr(delta, "content", None):
+                    raw += delta.content
+                    visible = _visible_so_far(raw)
+                    if len(visible) > sent:
+                        yield visible[sent:]
+                        sent = len(visible)
+                for frag in getattr(delta, "tool_calls", None) or []:
+                    slot = calls.setdefault(
+                        getattr(frag, "index", 0) or 0, {"id": None, "name": None, "arguments": ""}
+                    )
+                    if getattr(frag, "id", None):
+                        slot["id"] = frag.id
+                    fn = getattr(frag, "function", None)
+                    if fn is not None:
+                        if getattr(fn, "name", None):
+                            slot["name"] = fn.name
+                        if getattr(fn, "arguments", None):
+                            slot["arguments"] += fn.arguments
+
+            content = _strip_reasoning(raw)
+            tool_calls = [
+                _parse_tool_call(
+                    c["id"] or f"call_{i}",
+                    c["name"] or "",
+                    c["arguments"],
+                    finish_reason,
+                    self._provider,
                 )
-                if getattr(frag, "id", None):
-                    slot["id"] = frag.id
-                fn = getattr(frag, "function", None)
-                if fn is not None:
-                    if getattr(fn, "name", None):
-                        slot["name"] = fn.name
-                    if getattr(fn, "arguments", None):
-                        slot["arguments"] += fn.arguments
-
-        content = _strip_reasoning(raw)
-        tool_calls = [
-            _parse_tool_call(
-                c["id"] or f"call_{i}",
-                c["name"] or "",
-                c["arguments"],
-                finish_reason,
-                self._provider,
-            )
-            for i, c in sorted(calls.items())
-        ]
-        if not content.strip() and not tool_calls:
+                for i, c in sorted(calls.items())
+            ]
+            if content.strip() or tool_calls or attempt:
+                break
             log.warning("%s empty streamed turn, retrying once: %s", self._provider, self._model)
-            yield await self.chat(messages, tools, system_prompt, tool_choice)
-            return
         yield Message(
             role="assistant",
             content=content,

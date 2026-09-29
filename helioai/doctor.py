@@ -27,11 +27,17 @@ OK, WARN, FAIL = "ok", "warn", "fail"
 
 @dataclass
 class Check:
-    """One line of the report."""
+    """One line of the report.
+
+    `quiet` marks a line that only restates a default nobody changed: it stays in
+    `--json`, for scripts, and leaves the human report, whose reader is looking for
+    what needs doing.
+    """
 
     name: str
     status: str
     detail: str
+    quiet: bool = False
 
     @property
     def blocking(self) -> bool:
@@ -101,7 +107,10 @@ def check_experiments() -> Check:
     except RuntimeError as e:
         return Check("experiments", FAIL, str(e))
     return Check(
-        "experiments", OK, ", ".join(sorted(names)) if names else "none (default behaviour)"
+        "experiments",
+        OK,
+        ", ".join(sorted(names)) if names else "none (default behaviour)",
+        quiet=not names,
     )
 
 
@@ -113,7 +122,7 @@ def check_judgment() -> Check:
     except RuntimeError as e:
         return Check("judgment", FAIL, str(e))
     if backend == "null":
-        return Check("judgment", OK, "null (abstains; default behaviour)")
+        return Check("judgment", OK, "null (abstains; default behaviour)", quiet=True)
     if not settings.judgment.api_key:
         return Check("judgment", FAIL, f"{backend}: TYPESAFE_API_KEY is not set")
     try:
@@ -172,7 +181,7 @@ def check_judged() -> Check:
     if not shipped:
         return Check("judged products", WARN, "no shipped answers: `helioai index` types nothing")
     detail = (
-        f"{len(shipped)} products asked, snapshot {shipped_meta.get('date', '?')} "
+        f"{len(shipped)} products classified for the index, snapshot {shipped_meta.get('date', '?')} "
         f"({', '.join(shipped_meta.get('models') or ['?'])})"
     )
     local_meta, local = load_judged(local_judged_path())
@@ -264,7 +273,6 @@ def check_extras() -> Check:
     found = []
     for module, extra in (
         ("solarmach", "solarmach"),
-        ("sentence_transformers", "index"),
         ("typesafe_sdk", "judgment"),
     ):
         try:
@@ -318,8 +326,9 @@ _ICON = {OK: "✓", WARN: "!", FAIL: "✗"}
 
 def format_report(checks: list[Check]) -> str:
     """The human report: one aligned line per check."""
-    width = max(len(c.name) for c in checks)
-    lines = [f"{_ICON[c.status]} {c.name.ljust(width)}  {c.detail}" for c in checks]
+    shown = [c for c in checks if not (c.quiet and c.status == OK)]
+    width = max(len(c.name) for c in shown)
+    lines = [f"{_ICON[c.status]} {c.name.ljust(width)}  {c.detail}" for c in shown]
     failing = sum(c.blocking for c in checks)
     lines.append("")
     lines.append(

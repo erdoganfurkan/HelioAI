@@ -37,6 +37,15 @@ def fake_stream():
     return _gen
 
 
+@pytest.fixture(autouse=True)
+def _configured_default_provider(monkeypatch):
+    """A server whose default provider can answer: OpenCode, the default, has no model
+    until one is set, and the stream refuses to start without it."""
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.llm.opencode, "model", "test-model")
+
+
 @pytest.fixture
 def web_client(monkeypatch, fake_stream, tmp_path):
     """TestClient with stream_chat and build_llm_client monkeypatched."""
@@ -1100,3 +1109,18 @@ def test_a_session_without_a_journal_is_served_empty_so_the_browser_falls_back(
         "user",
         "assistant",
     ]
+
+
+def test_a_provider_that_cannot_answer_is_reported_in_words(web_client, monkeypatch):
+    """The banner used to carry the SDK's bare `Connection error.`; it now says the fix."""
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.llm.opencode, "model", "")
+    r = web_client.post(
+        "/chat/stream",
+        json={"message": "hi", "session_id": "s-missing-model", "provider": "opencode"},
+    )
+
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    assert events[-1]["event"] == "error"
+    assert "HELIOAI_OPENCODE_MODEL" in events[-1]["data"]["message"]

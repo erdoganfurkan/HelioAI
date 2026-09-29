@@ -12,7 +12,7 @@ provider's key is checked when a client is built.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `HELIOAI_LLM_PROVIDER` | `azure` | `azure`, `groq`, `gemini`, `opencode` or `ollama`. |
+| `HELIOAI_LLM_PROVIDER` | `opencode` | `opencode`, `groq`, `gemini`, `azure` or `ollama`. Until 0.4.0 the default was `azure`. |
 | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` | — | Azure OpenAI credentials; both required for `azure`. |
 | `AZURE_OPENAI_DEPLOYMENT` | `models-gpt-53-chat` | Deployment name (Azure routes by deployment, not model). |
 | `AZURE_OPENAI_API_VERSION` | `2024-12-01-preview` | Azure API version. |

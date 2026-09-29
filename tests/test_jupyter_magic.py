@@ -91,6 +91,9 @@ def _run_cell_and_capture_provider(magic, monkeypatch) -> list:
     async def fake_stream_chat(llm, user_id, session_id, text, *, restricted=True):
         yield {"event": "done", "data": {"n_iterations": 0}}
 
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.llm.opencode, "model", "test-model")
     monkeypatch.setattr("helioai.core.llm.factory.build_llm_client", fake_build_llm_client)
     monkeypatch.setattr("helioai.core.agent_loop.stream_chat", fake_stream_chat)
     monkeypatch.setattr(jm, "setup_logging", lambda *a, **k: None, raising=False)

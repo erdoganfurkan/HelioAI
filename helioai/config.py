@@ -145,9 +145,15 @@ class OllamaConfig:
 
 @dataclass
 class LLMConfig:
-    """Which provider to use, and the settings for each one."""
+    """Which provider to use, and the settings for each one.
 
-    provider: str = "azure"
+    `opencode` is the default because it is what the README tells a new user to set up:
+    one key reaches hosted reasoning models. The default was
+    `azure` until 0.4.0, an enterprise deployment no newcomer has, so the first error
+    anyone saw named a key they had never heard of.
+    """
+
+    provider: str = "opencode"
     azure: AzureOpenAIConfig = field(default_factory=AzureOpenAIConfig)
     gemini: GeminiConfig = field(default_factory=GeminiConfig)
     groq: GroqConfig = field(default_factory=GroqConfig)
@@ -535,7 +541,7 @@ def _parse_headers(raw: str) -> dict[str, str]:
 
 
 def _load() -> Settings:
-    provider = os.environ.get("HELIOAI_LLM_PROVIDER", "azure").lower()
+    provider = os.environ.get("HELIOAI_LLM_PROVIDER", "opencode").lower()
     max_iterations = int(os.environ.get("HELIOAI_MAX_ITERATIONS", "10"))
     # One knob for every provider rather than four: what a user wants when a long
     # generation comes back empty is simply "give the model more room", and the

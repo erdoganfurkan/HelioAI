@@ -9,7 +9,7 @@ Cell magic:
 
 Line magics:
     %helioai_session new|reset|delete <id>
-    %helioai_provider groq|gemini|azure
+    %helioai_provider [opencode|groq|gemini|azure|ollama]
     %helioai_history
     %helioai_resume <session_id>
     %helioai_export [session_id]
@@ -245,7 +245,7 @@ def _render_jupyter_event(ev: dict) -> None:
         display(HTML(f"<small style='color:#8b949e'>📂 {ws}</small>"))
 
     elif name == "error":
-        print(f"✗ Error: {data.get('message', '')}")
+        print(f"✗ {data.get('message', '')}")
 
 
 @magics_class
@@ -275,17 +275,31 @@ class HelioAIMagics(Magics):
         """
         import helioai.tools.setup  # noqa: F401
         from helioai.core.agent_loop import stream_chat
+        from helioai.interfaces.errors import describe_llm_error, setup_problem
         from helioai.logging_config import setup_logging
 
-        setup_logging("WARNING")
+        setup_logging("WARNING", tracebacks=False)
+
+        def _error(message: str) -> None:
+            _render_jupyter_event({"event": "error", "data": {"message": message}})
 
         async def _run():
-            llm = _get_llm(self._provider)
+            problem = setup_problem(self._provider)
+            if problem:
+                _error(problem)
+                return
+            try:
+                llm = _get_llm(self._provider)
+            except RuntimeError as e:
+                _error(describe_llm_error(e, self._provider))
+                return
             try:
                 async for ev in stream_chat(
                     llm, _USER_ID, _SESSION_ID, cell.strip(), restricted=_dev_restricted
                 ):
                     _render_jupyter_event(ev)
+            except Exception as e:
+                _error(describe_llm_error(e, self._provider))
             finally:
                 # Must happen inside this loop: the pool is bound to it, and
                 # `_run_async` closes the loop the moment this returns.

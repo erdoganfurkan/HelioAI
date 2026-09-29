@@ -80,12 +80,16 @@ def check_env_file() -> Check:
 
 def check_provider() -> Check:
     from helioai.core.llm.factory import build_llm_client
+    from helioai.interfaces.errors import setup_problem
 
     provider = settings.llm.provider
     try:
         build_llm_client(provider)
     except RuntimeError as e:
-        return Check("llm provider", FAIL, f"{provider}: {e}")
+        return Check("llm provider", FAIL, f"{provider}: {str(e).replace(' in .env', '')}")
+    problem = setup_problem(provider)
+    if problem:
+        return Check("llm provider", FAIL, f"{provider}: {problem}")
     return Check("llm provider", OK, f"{provider}: configured")
 
 

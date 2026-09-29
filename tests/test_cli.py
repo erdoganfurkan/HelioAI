@@ -503,3 +503,106 @@ def test_global_options_may_follow_the_question(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["helioai", "plot", "IMF", "Bz", "--session", "abc"])
     cli.main()
     assert seen["q"] == "plot IMF Bz" and cli._SESSION_ID == "abc"
+
+
+# ── a failed turn: one line, and the prompt survives ─────────────────────────
+
+
+@pytest.fixture
+def offline_query(monkeypatch):
+    """`_run_query` with no MCP discovery and a provider whose model is set."""
+    import helioai.interfaces.cli as cli
+    from helioai.config import settings
+
+    async def _nothing():
+        return None
+
+    monkeypatch.setattr("helioai.tools.mcp_client.discover_and_register", _nothing)
+    monkeypatch.setattr(settings.llm, "provider", "ollama")
+    return cli
+
+
+def test_a_missing_key_is_one_line_and_a_failure(offline_query, monkeypatch, capsys):
+    import asyncio
+
+    cli = offline_query
+
+    def _no_key():
+        raise RuntimeError("AZURE_OPENAI_API_KEY is not set in .env")
+
+    monkeypatch.setattr(cli, "_build_llm_client", _no_key)
+
+    assert asyncio.run(cli._run_query("hello")) is False
+    err = capsys.readouterr().err
+    assert "AZURE_OPENAI_API_KEY is not set" in err and "helioai doctor" in err
+    assert "Traceback" not in err
+
+
+def test_an_unreachable_server_does_not_raise_out_of_the_query(offline_query, monkeypatch, capsys):
+    import asyncio
+
+    import httpx
+    import openai
+
+    cli = offline_query
+
+    class _Client:
+        async def aclose(self):
+            return None
+
+    async def _crash(*a, **kw):
+        raise openai.APIConnectionError(
+            request=httpx.Request("POST", "http://localhost:11434/v1/chat/completions")
+        )
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(cli, "_build_llm_client", lambda: _Client())
+    monkeypatch.setattr("helioai.core.agent_loop.stream_chat", _crash)
+
+    assert asyncio.run(cli._run_query("hello")) is False
+    assert "ollama serve" in capsys.readouterr().err
+
+
+def test_a_one_shot_that_failed_exits_non_zero(monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    async def _failed(q, **kw):
+        return False
+
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(ws, "cleanup_old_runs", lambda: None)
+    monkeypatch.setattr(cli, "_run_query", _failed)
+    monkeypatch.setattr(sys, "argv", ["helioai", "what is the solar wind"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 1
+
+
+def test_the_interactive_prompt_survives_a_failed_turn(monkeypatch, tmp_path):
+    import builtins
+
+    import helioai.interfaces.cli as cli
+
+    asked = []
+
+    async def _failed(q, **kw):
+        asked.append(q)
+        return False
+
+    answers = iter(["first", "second"])
+
+    def _input(prompt=""):
+        try:
+            return next(answers)
+        except StopIteration:
+            raise EOFError from None
+
+    monkeypatch.setattr(cli, "_run_query", _failed)
+    monkeypatch.setattr(builtins, "input", _input)
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    cli._interactive()
+
+    assert asked == ["first", "second"]

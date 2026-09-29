@@ -347,17 +347,38 @@ def _render_event(ev: dict) -> None:
         print(f"  \033[90m({n} iteration(s))\033[0m")
 
 
-async def _run_query(query: str, *, restricted: bool = True) -> None:
+def _print_error(message: str) -> None:
+    _streamed.clear()
+    print(f"\n\033[91m✗ {message}\033[0m\n", file=sys.stderr)
+
+
+async def _run_query(query: str, *, restricted: bool = True) -> bool:
+    """Answer one question; False when it failed, after saying why in one line.
+
+    A failure is reported, not raised: the interactive prompt runs one query per
+    `asyncio.run`, and an exception escaping here used to end the whole session on the
+    first unreachable server — the traceback, then the shell prompt.
+    """
     import helioai.tools.setup  # noqa: F401  registers all tools
     from helioai.core import judgment
     from helioai.core.agent_loop import stream_chat
+    from helioai.interfaces.errors import describe_llm_error, setup_problem
     from helioai.logging_config import setup_logging
     from helioai.tools.mcp_client import discover_and_register
 
-    setup_logging("WARNING")
-    await discover_and_register()
+    setup_logging("WARNING", tracebacks=False)
 
-    llm = _build_llm_client()
+    problem = setup_problem()
+    if problem:
+        _print_error(problem)
+        return False
+    try:
+        llm = _build_llm_client()
+    except RuntimeError as e:
+        _print_error(describe_llm_error(e))
+        return False
+
+    await discover_and_register()
     try:
         async for ev in stream_chat(llm, _USER_ID, _SESSION_ID, query, restricted=restricted):
             _render_event(ev)
@@ -365,11 +386,15 @@ async def _run_query(query: str, *, restricted: bool = True) -> None:
                 from helioai.workspace import get_session_dir
 
                 print(f"  \033[90m📂 workspace: {_tilde(get_session_dir())}\033[0m")
+    except Exception as e:
+        _print_error(describe_llm_error(e))
+        return False
     finally:
         # The interactive loop runs one asyncio.run per query, so the pool must be
         # released here rather than left for the garbage collector.
         await llm.aclose()
         await judgment.aclose()
+    return True
 
 
 def _run_index(
@@ -838,7 +863,8 @@ def main() -> None:
         _interactive(restricted=restricted)
         return
 
-    asyncio.run(_run_query(" ".join(rest), restricted=restricted))
+    if not asyncio.run(_run_query(" ".join(rest), restricted=restricted)):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -56,6 +56,17 @@ def test_a_provider_without_its_key_fails_with_the_factory_message(quiet_install
     assert llm.status == doctor.FAIL and "GROQ_API_KEY" in llm.detail
 
 
+def test_opencode_without_a_model_fails_before_any_question(quiet_install, monkeypatch):
+    """The key alone builds a client; the gateway then rejects the empty model id."""
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.llm, "provider", "opencode")
+    monkeypatch.setattr(settings.llm.opencode, "api_key", "sk-test")
+    monkeypatch.setattr(settings.llm.opencode, "model", "")
+    (llm,) = [c for c in doctor.run_checks() if c.name == "llm provider"]
+    assert llm.status == doctor.FAIL and "HELIOAI_OPENCODE_MODEL" in llm.detail
+
+
 def test_a_built_index_reports_its_product_count(quiet_install):
     import chromadb
 

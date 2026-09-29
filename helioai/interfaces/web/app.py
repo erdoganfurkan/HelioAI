@@ -23,6 +23,7 @@ from helioai.config import dev_unlock, settings
 from helioai.core.agent_loop import stream_chat
 from helioai.core.llm.factory import build_llm_client
 from helioai.core.session import store
+from helioai.interfaces.errors import describe_llm_error, setup_problem
 from helioai.interfaces.web.legacy_replay import messages_view
 from helioai.logging_config import get_logger
 from helioai.workspace import is_under_workspace, user_home
@@ -205,13 +206,17 @@ async def chat_stream(
     async def gen():
         llm = None
         try:
+            problem = setup_problem(req.provider)
+            if problem:
+                raise RuntimeError(problem)
             llm = build_llm_client(req.provider)
             async for ev in stream_chat(
                 llm, user_id, req.session_id, req.message, restricted=restricted
             ):
                 yield f"data: {json.dumps(ev)}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'event': 'error', 'data': {'message': str(e)}})}\n\n"
+            message = describe_llm_error(e, req.provider)
+            yield f"data: {json.dumps({'event': 'error', 'data': {'message': message}})}\n\n"
         finally:
             # One client per request, so the pool has to be released per request —
             # including when the browser disconnects mid-stream and this generator

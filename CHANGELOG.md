@@ -56,7 +56,12 @@ sandboxed run and 1618 tests passing against the installed package.
   sub-agents included: the OpenCode gateway drops `reasoning_content` from non-streamed
   replies (0 of 24 turns on 2026-09-29, 24 of 24 streamed), which is why the sub-agents
   still died after the lead was fixed; an endpoint that refuses streaming is asked again
-  without it. Sessions saved before this release have no reasoning to send.
+  without it. And because the gateway routes one model to backends that disagree — one
+  streams no reasoning at all, the next refuses the history that follows (a lead died on
+  its fourth call, both earlier turns empty) — the first such refusal makes the client fill
+  every missing `reasoning_content` with an empty string, which the rule accepts, replay
+  the request, and keep doing so. No other provider ever sees the field, so sessions saved
+  before this release, which carry no reasoning, continue too.
 - **A search ranks the same in every process.** Chroma persists its HNSW graph only every
   `sync_threshold` writes — 1000 by default — and replays whatever followed the last persist
   into the in-memory graph at every start, in an order that varies. Measured on 2026-09-22

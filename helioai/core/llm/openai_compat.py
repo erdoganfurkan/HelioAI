@@ -97,6 +97,13 @@ def to_openai_messages(messages: list[Message]) -> list[dict]:
     return out
 
 
+def _carry_reasoning(openai_messages: list[dict]) -> None:
+    """Give every assistant message a `reasoning_content`, empty when there was none."""
+    for m in openai_messages:
+        if m["role"] == "assistant" and "reasoning_content" not in m:
+            m["reasoning_content"] = ""
+
+
 def to_openai_tools(tools: list[ToolDef]) -> list[dict]:
     """Convert tool definitions to OpenAI function-calling schemas.
 
@@ -270,6 +277,7 @@ class OpenAICompatClient(LLMClient):
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
         self._provider = provider
+        self._reasoning_required = False
 
     async def aclose(self) -> None:
         """Close the httpx pool held by the SDK client."""
@@ -315,7 +323,7 @@ class OpenAICompatClient(LLMClient):
         tool_choice: str,
     ) -> Message:
         kwargs = self._request(messages, tools, system_prompt, tool_choice)
-        response = await self._create(kwargs, tool_choice)
+        response = await self._create(kwargs)
         reply = from_openai_response(response, self._provider)
         if not (reply.content or "").strip() and not reply.tool_calls:
             log.warning("%s empty turn, retrying once: %s", self._provider, self._model)
@@ -334,6 +342,8 @@ class OpenAICompatClient(LLMClient):
         if system_prompt:
             openai_messages.append({"role": self._system_role, "content": system_prompt})
         openai_messages.extend(to_openai_messages(messages))
+        if self._reasoning_required:
+            _carry_reasoning(openai_messages)
 
         kwargs: dict = {
             "model": self._model,
@@ -347,20 +357,36 @@ class OpenAICompatClient(LLMClient):
             kwargs["tool_choice"] = tool_choice
         return kwargs
 
-    async def _create(self, kwargs: dict, tool_choice: str) -> Any:
-        try:
-            return await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
-        except BadRequestError as e:
-            # Forcing a tool call is a preference, never worth losing the turn over.
-            # DeepSeek v4 in thinking mode rejects `required` outright ("Thinking mode
-            # does not support this tool_choice"), which killed a sub-agent on its very
-            # first turn. Whether a model accepts it depends on the model and its
-            # reasoning mode, not on the provider, so it is asked rather than tabulated.
-            if tool_choice == "auto" or "tool_choice" not in str(e):
+    async def _create(self, kwargs: dict) -> Any:
+        while True:
+            try:
+                return await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
+            except BadRequestError as e:
+                # DeepSeek in thinking mode wants `reasoning_content` on every earlier
+                # assistant turn of a request with tools, and an empty string satisfies
+                # it. HelioAI sends back what it received, but the OpenCode gateway
+                # routes a model to backends that disagree: one streams no reasoning at
+                # all (0 of 24 turns in one batch on 2026-09-29, 23–24 of 24 in five
+                # others), the next rejects the history that follows — a lead died on its
+                # fourth call with both earlier turns empty. Asked of the provider, not
+                # tabulated: the first such refusal fills the missing fields and replays,
+                # and this client fills them from then on.
+                if "reasoning_content" in str(e) and not self._reasoning_required:
+                    log.warning("reasoning_content_required: %s", self._model)
+                    self._reasoning_required = True
+                    _carry_reasoning(kwargs["messages"])
+                    continue
+                # Forcing a tool call is a preference, never worth losing the turn over.
+                # DeepSeek v4 in thinking mode rejects `required` outright ("Thinking
+                # mode does not support this tool_choice"), which killed a sub-agent on
+                # its very first turn. Whether a model accepts it depends on the model
+                # and its reasoning mode, not on the provider, so it is asked rather
+                # than tabulated.
+                if kwargs.get("tool_choice") == "required" and "tool_choice" in str(e):
+                    log.warning("tool_choice_rejected_falling_back_to_auto: %s", self._model)
+                    kwargs["tool_choice"] = "auto"
+                    continue
                 raise
-            log.warning("tool_choice_rejected_falling_back_to_auto: %s", self._model)
-            kwargs["tool_choice"] = "auto"
-            return await call_with_retry(lambda: self._client.chat.completions.create(**kwargs))
 
     async def stream_chat(
         self,
@@ -396,7 +422,7 @@ class OpenAICompatClient(LLMClient):
             kwargs["stream"] = True
             kwargs["stream_options"] = {"include_usage": True}
             try:
-                stream = await self._create(kwargs, tool_choice)
+                stream = await self._create(kwargs)
             except BadRequestError as e:
                 if not _REFUSES_STREAMING.search(str(e)):
                     raise

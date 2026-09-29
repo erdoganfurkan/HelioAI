@@ -1112,7 +1112,7 @@ async def test_a_relayed_upstream_error_is_not_read_as_a_refusal_to_stream():
         def json(self):
             return {}
 
-    message = "Upstream request failed: [invalid_request_error] reasoning_content ..."
+    message = "Upstream request failed: [invalid_request_error] maximum context length exceeded"
 
     async def create(**kwargs):
         fake.calls.append(kwargs)
@@ -1122,3 +1122,80 @@ async def test_a_relayed_upstream_error_is_not_read_as_a_refusal_to_stream():
     with pytest.raises(BadRequestError):
         await client.chat([Message(role="user", content="q")], [])
     assert [c.get("stream") for c in fake.calls] == [True]
+
+
+def _bad_request(message: str):
+    from openai import BadRequestError
+
+    class _Resp:
+        status_code = 400
+        headers: dict = {}
+        request = None
+
+        def json(self):
+            return {}
+
+    return BadRequestError(message, response=_Resp(), body=None)
+
+
+_REASONING_400 = (
+    "Upstream request failed: [invalid_request_error] The `reasoning_content` in the "
+    "thinking mode must be passed back to the API."
+)
+
+
+async def test_a_refusal_for_missing_reasoning_fills_it_empty_and_replays():
+    """The OpenCode gateway can stream a DeepSeek turn with no reasoning at all, then route
+    the next request to a backend that refuses it: a lead died on its fourth call. An
+    empty `reasoning_content` satisfies the rule."""
+    client, fake = _groq_client()
+    history = [
+        Message(role="user", content="q"),
+        Message(role="assistant", tool_calls=[ToolCall(id="c1", name="t", arguments={})]),
+        Message(role="tool", tool_call_id="c1", content="{}"),
+        Message(role="assistant", content="kept", reasoning="real"),
+        Message(role="user", content="q2"),
+    ]
+
+    async def create(**kwargs):
+        fake.calls.append(kwargs)
+        assistants = [m for m in kwargs["messages"] if m["role"] == "assistant"]
+        if any("reasoning_content" not in m for m in assistants):
+            raise _bad_request(_REASONING_400)
+        return _respond(kwargs, _openai_response(content="ok"))
+
+    fake.completions.create = create
+    tools = [ToolDef(name="t", description="d")]
+    reply = await client.chat(history, tools)
+
+    assert reply.content == "ok" and len(fake.calls) == 2
+    sent = [
+        m.get("reasoning_content") for m in fake.calls[-1]["messages"] if m["role"] == "assistant"
+    ]
+    assert sent == ["", "real"]
+
+    await client.chat(history, tools)
+    assert len(fake.calls) == 3, "once refused, the client fills the field up front"
+
+
+async def test_a_second_refusal_for_reasoning_is_raised_not_looped():
+    client, fake = _groq_client()
+
+    async def create(**kwargs):
+        fake.calls.append(kwargs)
+        raise _bad_request(_REASONING_400)
+
+    fake.completions.create = create
+    history = [Message(role="user", content="q"), Message(role="assistant", content="a")]
+    with pytest.raises(Exception, match="reasoning_content"):
+        await client.chat(history, [ToolDef(name="t", description="d")])
+    assert len(fake.calls) == 2
+
+
+async def test_no_provider_sees_an_empty_reasoning_field_before_asking_for_one():
+    client, fake = _groq_client()
+    await client.chat(
+        [Message(role="user", content="q"), Message(role="assistant", content="a")],
+        [ToolDef(name="t", description="d")],
+    )
+    assert "reasoning_content" not in fake.calls[-1]["messages"][1]

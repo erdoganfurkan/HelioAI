@@ -1,4 +1,9 @@
-# HelioAI
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/erdoganfurkan/HelioAI/main/docs/assets/logo/helioai-logo-dark.png">
+    <img alt="HelioAI — heliophysics agent" src="https://raw.githubusercontent.com/erdoganfurkan/HelioAI/main/docs/assets/logo/helioai-logo-light.png" width="460">
+  </picture>
+</p>
 
 **AI agent for heliophysics and space plasma data analysis.**
 

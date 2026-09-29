@@ -1,4 +1,7 @@
-# HelioAI
+# HelioAI { .hai-title }
+
+![HelioAI — heliophysics agent](assets/logo/helioai-logo-light.png#only-light){ width="460" }
+![HelioAI — heliophysics agent](assets/logo/helioai-logo-dark.png#only-dark){ width="460" }
 
 **AI agent for heliophysics and space plasma data analysis.**
 

@@ -180,6 +180,12 @@ async def index():
     return FileResponse(_STATIC / "index.html")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """The icon browsers ask for at the root whatever the page links, and 404'd on."""
+    return FileResponse(_STATIC / "favicon.ico", media_type="image/x-icon")
+
+
 @app.get("/health")
 async def health():
     """Liveness probe. Returns `{"status": "ok"}`."""

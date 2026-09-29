@@ -1262,3 +1262,11 @@ def test_the_page_has_no_french_left():
         encoding="utf-8"
     )
     assert "non accessible" not in js and "Ouvrir" not in js
+
+
+def test_the_favicon_is_served_where_browsers_look(web_client):
+    r = web_client.get("/favicon.ico")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/x-icon"
+    html = web_client.get("/").text
+    assert "/static/favicon.ico" in html and "/static/icon.png" in html
+    assert web_client.get("/static/icon.png").status_code == 200

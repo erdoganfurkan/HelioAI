@@ -34,7 +34,8 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Sego
   overflow-y: auto;
 }
 
-.sidebar h1 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
+.sidebar h1 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; display: flex; align-items: center; gap: 8px; }
+.brand-icon { width: 26px; height: 26px; border-radius: 6px; flex-shrink: 0; }
 .sidebar h1 span { color: var(--accent); }
 
 .sidebar label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 4px; display: block; }
@@ -619,7 +620,8 @@ select:focus { border-color: var(--accent); }
     display: flex; align-items: center; gap: 10px;
     padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--sidebar-bg);
   }
-  .topbar-title { font-size: 16px; font-weight: 700; }
+  .topbar-title { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
+  .topbar-title .brand-icon { width: 22px; height: 22px; }
   .topbar-title span { color: var(--accent); }
   .btn-menu {
     background: none; border: 1px solid var(--border); border-radius: 6px;

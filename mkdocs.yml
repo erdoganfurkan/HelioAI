@@ -7,6 +7,8 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  logo: assets/logo/helioai-icon.png
+  favicon: assets/logo/favicon.png
   icon:
     repo: fontawesome/brands/github
   features:
@@ -31,6 +33,9 @@ theme:
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
+
+extra_css:
+  - stylesheets/extra.css
 
 plugins:
   - search

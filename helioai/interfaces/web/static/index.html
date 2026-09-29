@@ -4,13 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HelioAI</title>
+  <link rel="icon" href="/static/favicon.ico" sizes="any" />
+  <link rel="apple-touch-icon" href="/static/icon.png" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <div class="layout">
     <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
     <aside class="sidebar" id="sidebar">
-      <h1>Helio<span>AI</span></h1>
+      <h1><img class="brand-icon" src="/static/icon.png" alt="" />Helio<span>AI</span></h1>
 
       <div>
         <label for="provider-select">LLM Provider</label>
@@ -46,7 +48,7 @@
     <main class="main">
       <div class="topbar">
         <button class="btn-menu" id="btn-menu" aria-label="Show sessions" aria-controls="sidebar">☰</button>
-        <span class="topbar-title">Helio<span>AI</span></span>
+        <span class="topbar-title"><img class="brand-icon" src="/static/icon.png" alt="" />Helio<span>AI</span></span>
       </div>
       <div class="chat-area" id="chat-area"></div>
 

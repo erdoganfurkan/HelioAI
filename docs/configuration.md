@@ -60,7 +60,8 @@ provider's key is checked when a client is built.
 | `HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC` | `0` | Lets `serve --web` bind a non-loopback address with no users. Only for a container whose port the host publishes on loopback (`docker-compose.yml` sets it). |
 | `HELIOAI_MCP_TOKEN` | — | Bearer token for `helioai-mcp --http`; a non-loopback bind without it is refused. |
 | `HELIOAI_LOG_FORMAT` | `console` | `console` or `json` (structlog). |
-| `HELIOAI_LOG_LEVEL` | per entry point | Overrides the level the CLI, the web server or the MCP server set. |
+| `HELIOAI_LOG_LEVEL` | per entry point | Overrides the level the CLI, the web server or the MCP server set. `DEBUG` also shows the traceback behind a CLI error. |
+| `NO_COLOR` | unset | Any value turns off the CLI's colours ([no-color.org](https://no-color.org)). Output that is not a terminal never gets them. |
 
 Also read: `XDG_DATA_HOME` (the installed-package data root and speasy's own inventory
 location), `EDITOR` (`helioai profile`), and the sandbox's environment allow-list, which is

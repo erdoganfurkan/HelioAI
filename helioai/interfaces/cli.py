@@ -1,7 +1,7 @@
 """Interactive CLI for HelioAI.
 
 Usage:
-    helioai                       # interactive readline session
+    helioai                       # interactive session (/help lists its commands)
     helioai "your query"          # one-shot query
     helioai --resume              # pick a past session and continue it
     helioai history               # list sessions
@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import re
 import sys
 import uuid
@@ -41,25 +42,64 @@ _SESSION_ID = str(uuid.uuid4())
 _USER_ID = "cli"
 
 
+_ANSI = re.compile(r"\033\[[0-9;]*m")
+
+
+def _colour() -> bool:
+    """Whether escape codes reach the terminal: a tty, and no `NO_COLOR` (no-color.org).
+
+    Asked at every print rather than once, because the answer belongs to the stream —
+    `helioai history > sessions.txt` wrote the codes into the file as literal bytes.
+    """
+    return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+
+def _print(*values, **kwargs) -> None:
+    if not _colour():
+        values = tuple(_ANSI.sub("", v) if isinstance(v, str) else v for v in values)
+    print(*values, **kwargs)
+
+
+def _match_session(prefix: str) -> str | None:
+    """The one session `prefix` names, or None after saying why there is none.
+
+    A prefix that fits several sessions used to pick the first silently — for
+    `history delete` that meant deleting a session nobody named. An exact id wins; an
+    ambiguous prefix lists the candidates and does nothing.
+    """
+    from helioai.core.session import store
+
+    ids = store.all_sessions(_USER_ID)
+    if prefix in ids:
+        return prefix
+    matches = [s for s in ids if s.startswith(prefix)]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        _print(f"No session matching {prefix!r}.")
+    else:
+        shown = ", ".join(m[:12] for m in matches[:5])
+        more = f" and {len(matches) - 5} more" if len(matches) > 5 else ""
+        _print(f"{prefix!r} matches {len(matches)} sessions ({shown}{more}); give more of the id.")
+    return None
+
+
 def _delete_session(prefix: str) -> None:
     import shutil
 
     from helioai.core.session import store
     from helioai.workspace import _root as _ws_root
 
-    all_ids = store.all_sessions(_USER_ID)
-    matches = [s for s in all_ids if s.startswith(prefix)]
-    if not matches:
-        print(f"No session matching {prefix!r}.")
+    sid = _match_session(prefix)
+    if sid is None:
         return
-    sid = matches[0]
     wdir = store.get_workspace_dir(_USER_ID, sid)
     store.reset(_USER_ID, sid)
     if wdir:
         ws_path = _ws_root() / wdir
         if ws_path.exists():
             shutil.rmtree(ws_path, ignore_errors=True)
-    print(f"Session {sid[:8]} deleted.")
+    _print(f"Session {sid[:8]} deleted.")
 
 
 def _show_history() -> None:
@@ -67,15 +107,15 @@ def _show_history() -> None:
 
     summaries = store.list_summaries(_USER_ID)
     if not summaries:
-        print("No sessions found.")
+        _print("No sessions found.")
         return
-    print(f"{'Session':<10}  {'Updated':<16}  {'Msgs':>4}  {'Tokens':>7}  First message")
-    print("-" * 80)
+    _print(f"{'Session':<10}  {'Updated':<16}  {'Msgs':>4}  {'Tokens':>7}  First message")
+    _print("-" * 80)
     for s in summaries:
         sid = s["session_id"][:8]
         ts = s["updated_at"][:16].replace("T", " ")
         tokens = _fmt_tokens(s.get("tokens", 0))
-        print(f"{sid:<10}  {ts:<16}  {s['n_messages']:>4}  {tokens:>7}  {s['first_message']}")
+        _print(f"{sid:<10}  {ts:<16}  {s['n_messages']:>4}  {tokens:>7}  {s['first_message']}")
 
 
 def _fmt_tokens(n: int) -> str:
@@ -92,18 +132,18 @@ def _pick_session() -> str | None:
 
     summaries = store.list_summaries(_USER_ID, limit=10)
     if not summaries:
-        print("No previous sessions found.")
+        _print("No previous sessions found.")
         return None
-    print("\nRecent sessions:")
+    _print("\nRecent sessions:")
     for i, s in enumerate(summaries, 1):
         ts = s["updated_at"][:16].replace("T", " ")
         wdir = s.get("workspace_dir") or ""
         winfo = f"  📂 {wdir}" if wdir else ""
-        print(f"  [{i}] {ts}  ({s['n_messages']} msgs)  {s['first_message']}{winfo}")
+        _print(f"  [{i}] {ts}  ({s['n_messages']} msgs)  {s['first_message']}{winfo}")
     try:
         choice = input(f"\nResume [1-{len(summaries)} or session id, Enter to skip]: ").strip()
     except (EOFError, KeyboardInterrupt):
-        print()
+        _print()
         return None
     if not choice:
         return None
@@ -131,8 +171,6 @@ def _open_file(path: str) -> None:
         if sys.platform == "darwin":
             subprocess.Popen(["open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         elif sys.platform == "win32":
-            import os
-
             os.startfile(path)  # type: ignore[attr-defined]
         else:
             subprocess.Popen(
@@ -217,8 +255,8 @@ def _render_event(ev: dict) -> None:
 
     elif name == "reply_delta":
         if not _streamed:
-            print("\n\033[92m", end="")
-        print(data["text"], end="", flush=True)
+            _print("\n\033[92m", end="")
+        _print(data["text"], end="", flush=True)
         _streamed.append(data["text"])
 
     elif name == "reply":
@@ -226,15 +264,15 @@ def _render_event(ev: dict) -> None:
         _streamed.clear()
         text = data["text"]
         if streamed and text.startswith(streamed):
-            print(f"{text[len(streamed) :]}\033[0m\n")
+            _print(f"{text[len(streamed) :]}\033[0m\n")
         elif streamed and _same_words(streamed, text):
             # The model wrote its answer as text, then called final_answer with the
             # same words minus some markdown: one answer, already on screen.
-            print("\033[0m\n")
+            _print("\033[0m\n")
         elif streamed:
-            print(f"\033[0m\n\n\033[92m{text}\033[0m\n")
+            _print(f"\033[0m\n\n\033[92m{text}\033[0m\n")
         else:
-            print(f"\n\033[92m{text}\033[0m\n")
+            _print(f"\n\033[92m{text}\033[0m\n")
 
     elif name == "tool_call":
         tool = data["name"]
@@ -242,48 +280,48 @@ def _render_event(ev: dict) -> None:
         if detail is None:
             args = data.get("arguments") or {}
             detail = ", ".join(f"{k}={repr(v)[:60]}" for k, v in args.items())
-        print(f"{pad}\033[90m→ {tool}{' ' + detail if detail else ''}\033[0m")
+        _print(f"{pad}\033[90m→ {tool}{' ' + detail if detail else ''}\033[0m")
 
     elif name == "tool_result":
         detail = data.get("display") or data.get("summary", "")
-        print(f"{pad}\033[90m← {data['name']}: {detail}\033[0m")
+        _print(f"{pad}\033[90m← {data['name']}: {detail}\033[0m")
 
     elif name == "sub_agent_start":
-        print(f"  \033[94m⚡ spawning {data['role']}...\033[0m")
+        _print(f"  \033[94m⚡ spawning {data['role']}...\033[0m")
 
     elif name == "sub_agent_end":
         from helioai.core.event_display import describe_sub_agent_end
 
         text, tone = describe_sub_agent_end(data)
         icon, colour = {"ok": ("✓", "94"), "capped": ("◔", "93"), "error": ("✗", "91")}[tone]
-        print(f"  \033[{colour}m{icon} {text}\033[0m")
+        _print(f"  \033[{colour}m{icon} {text}\033[0m")
         for line in describe_findings(data.get("findings")):
-            print(f"      \033[94m{line}\033[0m")
+            _print(f"      \033[94m{line}\033[0m")
 
     elif name == "skill_loaded":
-        print(f"{pad}\033[95m📖 skill: {data['name']}\033[0m")
+        _print(f"{pad}\033[95m📖 skill: {data['name']}\033[0m")
 
     elif name == "artifact":
         kind = data.get("kind", "")
         if kind == "image":
             paths = data.get("figure_paths", [])
-            print(f"{pad}\033[93m📊 {len(paths)} figure(s)\033[0m")
+            _print(f"{pad}\033[93m📊 {len(paths)} figure(s)\033[0m")
             if data.get("stdout"):
                 # Printed in the default colour, not the dim grey used for tool traffic:
                 # this is the science the reader came for, and it was previously as faint
                 # as the plumbing around it.
-                print(_capped_output(data["stdout"], pad))
+                _print(_capped_output(data["stdout"], pad))
             for path in paths:
-                print(f"{pad}\033[93m  → {_tilde(path)}\033[0m")
+                _print(f"{pad}\033[93m  → {_tilde(path)}\033[0m")
                 _open_file(path)
 
     elif name == "plan":
-        print(f"\n{pad}\033[96m📋 {data.get('title', 'Plan')}\033[0m")
+        _print(f"\n{pad}\033[96m📋 {data.get('title', 'Plan')}\033[0m")
         for n, step in enumerate(data.get("steps") or [], 1):
             tool = step.get("tool")
             suffix = f"  \033[90m[{tool}]\033[0m" if tool else ""
-            print(f"{pad}  \033[96m{n}.\033[0m {step.get('description', '')}{suffix}")
-        print()
+            _print(f"{pad}  \033[96m{n}.\033[0m {step.get('description', '')}{suffix}")
+        _print()
 
     elif name == "plan_report":
         from helioai.core.event_display import describe_plan_report
@@ -291,13 +329,13 @@ def _render_event(ev: dict) -> None:
         capped = any(d.get("capped") for d in data.get("delegations") or [])
         flagged = data.get("missed_tools") or data.get("unplanned_tools") or capped
         colour = "93" if flagged else "90"
-        print(f"{pad}\033[{colour}m📋 {describe_plan_report(data)}\033[0m")
+        _print(f"{pad}\033[{colour}m📋 {describe_plan_report(data)}\033[0m")
 
     elif name == "figure_review":
-        print(f"{pad}\033[95m🔍 figure review: {data.get('text', '')}\033[0m")
+        _print(f"{pad}\033[95m🔍 figure review: {data.get('text', '')}\033[0m")
 
     elif name == "intent":
-        print(f"{pad}\033[2m🎯 intent: {_intent_line(data)}\033[0m")
+        _print(f"{pad}\033[2m🎯 intent: {_intent_line(data)}\033[0m")
 
     elif name == "provenance":
         counts = (
@@ -305,53 +343,53 @@ def _render_event(ev: dict) -> None:
             f"{data.get('unsourced', 0)} unsourced, {data.get('derived', 0)} derived"
         )
         colour = "91" if data.get("contradicted") or data.get("unsourced") else "90"
-        print(f"{pad}\033[{colour}m📐 provenance — {counts}\033[0m")
+        _print(f"{pad}\033[{colour}m📐 provenance — {counts}\033[0m")
         for d in data.get("details") or []:
             origin = f" (session computed {d['name']})" if d.get("name") else ""
-            print(f"{pad}  \033[{colour}m{d['status']}: {d['text']}{origin}\033[0m")
+            _print(f"{pad}  \033[{colour}m{d['status']}: {d['text']}{origin}\033[0m")
 
     elif name == "verdict":
         from helioai.core.event_display import describe_verdict
 
         summary, lines = describe_verdict(data)
         colour = "91" if data.get("contradicted") else "90"
-        print(f"{pad}\033[{colour}m⚖ {summary}\033[0m")
+        _print(f"{pad}\033[{colour}m⚖ {summary}\033[0m")
         for line in lines:
-            print(f"{pad}  \033[{colour}m{line}\033[0m")
+            _print(f"{pad}  \033[{colour}m{line}\033[0m")
 
     elif name == "correction":
         ids = ", ".join(data.get("ids") or [])
-        print(
+        _print(
             f"{pad}\033[90m↩ correction sent to the model — ids not in the catalogue: {ids}\033[0m"
         )
 
     elif name == "invalid_ids":
-        print(f"\n{pad}\033[91m⚠ ids not in the catalogue — do not use:\033[0m")
+        _print(f"\n{pad}\033[91m⚠ ids not in the catalogue — do not use:\033[0m")
         for pid in data.get("ids") or []:
-            print(f"{pad}  \033[91m✗ {pid}\033[0m")
-        print()
+            _print(f"{pad}  \033[91m✗ {pid}\033[0m")
+        _print()
 
     elif name == "recipe_bypassed":
-        print(f"\n{pad}\033[93m⚠ recipe check:\033[0m")
+        _print(f"\n{pad}\033[93m⚠ recipe check:\033[0m")
         for r in data.get("recipes") or []:
             reason = {
                 "not_loaded": "never loaded",
                 "not_called": "loaded but never called",
             }.get(r.get("reason"), "loaded but outputs missing")
-            print(f"{pad}  \033[93m→ {r.get('recipe')} ({reason})\033[0m")
-        print()
+            _print(f"{pad}  \033[93m→ {r.get('recipe')} ({reason})\033[0m")
+        _print()
 
     elif name == "error":
-        print(f"\n\033[91m✗ {data['message']}\033[0m\n")
+        _print(f"\n\033[91m✗ {data['message']}\033[0m\n")
 
     elif name == "done":
         n = data.get("n_iterations", 0)
-        print(f"  \033[90m({n} iteration(s))\033[0m")
+        _print(f"  \033[90m({n} iteration(s))\033[0m")
 
 
 def _print_error(message: str) -> None:
     _streamed.clear()
-    print(f"\n\033[91m✗ {message}\033[0m\n", file=sys.stderr)
+    _print(f"\n\033[91m✗ {message}\033[0m\n", file=sys.stderr)
 
 
 async def _run_query(query: str, *, restricted: bool = True) -> bool:
@@ -387,7 +425,7 @@ async def _run_query(query: str, *, restricted: bool = True) -> bool:
             if ev["event"] == "done":
                 from helioai.workspace import get_session_dir
 
-                print(f"  \033[90m📂 workspace: {_tilde(get_session_dir())}\033[0m")
+                _print(f"  \033[90m📂 workspace: {_tilde(get_session_dir())}\033[0m")
     except Exception as e:
         _print_error(describe_llm_error(e))
         return False
@@ -440,23 +478,20 @@ def _run_export(prefix: str | None = None) -> None:
     from helioai.export import export_session_notebook
 
     if prefix:
-        matches = [s for s in store.all_sessions(_USER_ID) if s.startswith(prefix)]
-        if not matches:
-            print(f"No session matching {prefix!r}.")
+        session_id = _match_session(prefix)
+        if session_id is None:
             return
-        session_id = matches[0]
     else:
         sessions = store.all_sessions(_USER_ID)
         if not sessions:
-            print("No sessions to export.")
+            _print("No sessions to export.")
             return
         session_id = sessions[0]
     path = export_session_notebook(_USER_ID, session_id)
-    print(f"Exported session {session_id[:8]} → {path}")
+    _print(f"Exported session {session_id[:8]} → {path}")
 
 
 def _run_profile() -> None:
-    import os
     import subprocess
 
     from helioai.workspace import user_home
@@ -472,35 +507,84 @@ def _run_profile() -> None:
     subprocess.run([editor, str(p)])
 
 
+_REPL_HELP = """\
+  /new       start a new session (the current one stays in /history)
+  /history   list your sessions
+  /export    export this session as a reproducible notebook
+  /help      show this list
+  /quit      leave (or Ctrl+D)"""
+
+
+def _slash_command(line: str) -> bool:
+    """Run one `/command` of the interactive prompt; False when it asks to leave.
+
+    Handled here and never sent on: a line starting with `/` is an instruction to the
+    tool, and the model answering "/export" with an essay about notebooks is the
+    failure this prevents.
+    """
+    global _SESSION_ID
+    from helioai.core.session import store
+
+    command = line.split()[0].lower()
+    if command in ("/quit", "/exit", "/q"):
+        return False
+    if command == "/help":
+        _print(_REPL_HELP)
+    elif command == "/new":
+        _SESSION_ID = str(uuid.uuid4())
+        _print(f"New session {_SESSION_ID[:8]}.")
+    elif command == "/history":
+        _show_history()
+    elif command == "/export":
+        if _SESSION_ID in store.all_sessions(_USER_ID):
+            _run_export(_SESSION_ID)
+        else:
+            _print("Nothing to export yet: ask a question first.")
+    else:
+        _print(f"Unknown command {command}. /help lists them.")
+    return True
+
+
 def _interactive(*, restricted: bool = True) -> None:
-    import readline  # enables history & editing
     from pathlib import Path
 
-    hist = Path.home() / ".helioai_history"
     try:
-        readline.read_history_file(hist)
-    except OSError:
-        pass
+        import readline  # line editing and history; absent from Windows' Python
+    except ImportError:
+        readline = None
+
+    hist = Path.home() / ".helioai_history"
+    if readline is not None:
+        try:
+            readline.read_history_file(hist)
+        except OSError:
+            pass
 
     mode = "" if restricted else " \033[33m[dev mode]\033[0m"
-    print(f"\033[1mHelioAI\033[0m{mode} — type your query, Ctrl+D to exit\n")
+    _print(f"\033[1mHelioAI\033[0m{mode} — ask a question, /help for commands, Ctrl+D to exit\n")
+    prompt = "\033[1m> \033[0m" if _colour() else "> "
     try:
         while True:
             try:
-                query = input("\033[1m> \033[0m").strip()
+                query = input(prompt).strip()
             except (EOFError, KeyboardInterrupt):
-                print()
+                _print()
                 break
             if not query:
                 continue
             if query.lower() in ("exit", "quit"):
                 break
+            if query.startswith("/"):
+                if not _slash_command(query):
+                    break
+                continue
             asyncio.run(_run_query(query, restricted=restricted))
     finally:
-        try:
-            readline.write_history_file(hist)
-        except OSError:
-            pass
+        if readline is not None:
+            try:
+                readline.write_history_file(hist)
+            except OSError:
+                pass
 
 
 def _run_migrate_storage() -> None:
@@ -547,7 +631,7 @@ def _run_migrate_storage() -> None:
             shutil.move(str(legacy_default_profile), str(tgt))
             moved += 1
 
-    print(f"migrate-storage: moved {moved} file(s) into data/users/")
+    _print(f"migrate-storage: moved {moved} file(s) into data/users/")
 
 
 def _migrate_split_data_dir() -> int:
@@ -578,7 +662,7 @@ def _migrate_split_data_dir() -> int:
         if src.exists() and not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(src), str(dst))
-            print(f"migrate-storage: {src} -> {dst}")
+            _print(f"migrate-storage: {src} -> {dst}")
             moved += 1
     return moved
 
@@ -639,8 +723,6 @@ def _mcp_config_path(client: str):
                 / ("claude_desktop_config.json")
             )
         if _sys.platform == "win32":
-            import os
-
             base = os.environ.get("APPDATA", str(Path.home()))
             return Path(base) / "Claude" / "claude_desktop_config.json"
         return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
@@ -700,31 +782,31 @@ def _run_mcp_install(args: list[str]) -> None:
     write = "--write" in args
 
     if client is not None and client not in _MCP_CLIENTS:
-        print(f"Unknown client {client!r}. Valid clients: {', '.join(_MCP_CLIENTS)}")
+        _print(f"Unknown client {client!r}. Valid clients: {', '.join(_MCP_CLIENTS)}")
         return
 
     targets = [client] if client else list(_MCP_CLIENTS)
     for name in targets:
         path = _mcp_config_path(name)
-        print(f"\n=== {name} ===")
+        _print(f"\n=== {name} ===")
         if path is not None:
-            print(f"config: {path}")
-        print(_mcp_snippet(name))
+            _print(f"config: {path}")
+        _print(_mcp_snippet(name))
 
         if not write:
             continue
         if name == "codex":
-            print("\n(cannot write TOML safely — paste the block above into that file)")
+            _print("\n(cannot write TOML safely — paste the block above into that file)")
             continue
         if path is None:
-            print("\n(run the command above; Claude Code owns its own config)")
+            _print("\n(run the command above; Claude Code owns its own config)")
             continue
         try:
             _write_json_config(path)
         except ValueError as e:
-            print(f"\nNOT written: {e}")
+            _print(f"\nNOT written: {e}")
         else:
-            print(f"\nwritten to {path}")
+            _print(f"\nwritten to {path}")
 
 
 _COMMANDS = (
@@ -855,18 +937,18 @@ def main() -> None:
 
     args = sys.argv[1:]
     if {"-h", "--help"} & set(args):
-        print(__doc__)
+        _print(__doc__)
         return
     if {"-V", "--version"} & set(args):
         from helioai import __version__
 
-        print(f"helioai {__version__}")
+        _print(f"helioai {__version__}")
         return
 
     options, rest = _global_options(args)
     mistake = _not_a_question(rest)
     if mistake:
-        print(mistake, file=sys.stderr)
+        _print(mistake, file=sys.stderr)
         raise SystemExit(2)
 
     if rest and rest[0] in _COMMANDS and rest[0] != "doctor":

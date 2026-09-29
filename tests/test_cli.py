@@ -674,3 +674,117 @@ def test_subcommand_flags_are_not_mistaken_for_typos(monkeypatch):
     cli.main()
 
     assert seen == {"rebuild": True, "classify": False, "download": False, "export": None}
+
+
+# ── the interactive prompt's own commands ─────────────────────────────────────
+
+
+def _drive_prompt(monkeypatch, tmp_path, lines):
+    import builtins
+
+    import helioai.interfaces.cli as cli
+
+    asked = []
+
+    async def _query(q, **kw):
+        asked.append(q)
+        return True
+
+    feed = iter(lines)
+
+    def _input(prompt=""):
+        try:
+            return next(feed)
+        except StopIteration:
+            raise EOFError from None
+
+    monkeypatch.setattr(cli, "_run_query", _query)
+    monkeypatch.setattr(builtins, "input", _input)
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    cli._interactive()
+    return asked
+
+
+def test_slash_lines_never_reach_the_model(monkeypatch, tmp_path, capsys):
+    import helioai.interfaces.cli as cli
+
+    monkeypatch.setattr("helioai.core.session.store", _make_store())
+    before = cli._SESSION_ID
+
+    asked = _drive_prompt(monkeypatch, tmp_path, ["/help", "/new", "/export", "/nope", "Bz?"])
+
+    out = capsys.readouterr().out
+    assert asked == ["Bz?"]
+    assert "/history" in out and "Nothing to export yet" in out and "Unknown command /nope" in out
+    assert cli._SESSION_ID != before
+
+
+def test_slash_quit_leaves_the_prompt(monkeypatch, tmp_path):
+    asked = _drive_prompt(monkeypatch, tmp_path, ["/quit", "never asked"])
+
+    assert asked == []
+
+
+def test_slash_export_exports_the_current_session(monkeypatch, tmp_path):
+    import helioai.interfaces.cli as cli
+
+    exported = []
+    monkeypatch.setattr("helioai.core.session.store", _make_store(all_ids=[cli._SESSION_ID]))
+    monkeypatch.setattr(cli, "_run_export", lambda sid=None: exported.append(sid))
+
+    _drive_prompt(monkeypatch, tmp_path, ["/export"])
+
+    assert exported == [cli._SESSION_ID]
+
+
+def test_the_prompt_runs_without_readline(monkeypatch, tmp_path):
+    """Windows' Python ships no readline; the classifiers promise Windows."""
+    monkeypatch.setitem(sys.modules, "readline", None)
+
+    assert _drive_prompt(monkeypatch, tmp_path, ["Bz?"]) == ["Bz?"]
+
+
+# ── colour only for a terminal that wants it ──────────────────────────────────
+
+
+def test_no_escape_codes_when_output_is_not_a_terminal(capsys):
+    from helioai.interfaces.cli import _print
+
+    _print("\033[92mreply\033[0m")
+
+    assert capsys.readouterr().out == "reply\n"
+
+
+def test_no_color_is_honoured_on_a_terminal(monkeypatch, capsys):
+    import helioai.interfaces.cli as cli
+
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True, raising=False)
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert cli._colour() is False
+
+    monkeypatch.delenv("NO_COLOR")
+    assert cli._colour() is True
+
+
+# ── a session prefix names one session or none ────────────────────────────────
+
+
+def test_an_ambiguous_prefix_deletes_nothing(monkeypatch, capsys):
+    import helioai.interfaces.cli as cli
+
+    store = _make_store(all_ids=["abc111", "abc222"])
+    monkeypatch.setattr("helioai.core.session.store", store)
+
+    cli._delete_session("abc")
+
+    store.reset.assert_not_called()
+    assert "matches 2 sessions" in capsys.readouterr().out
+
+
+def test_an_exact_id_wins_over_a_longer_one(monkeypatch):
+    import helioai.interfaces.cli as cli
+
+    monkeypatch.setattr("helioai.core.session.store", _make_store(all_ids=["abc", "abcdef"]))
+
+    assert cli._match_session("abc") == "abc"
+    assert cli._match_session("abcd") == "abcdef"

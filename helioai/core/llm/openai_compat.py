@@ -33,6 +33,12 @@ log = logging.getLogger(__name__)
 _THINK_BLOCK = re.compile(r"<think>.*?(?:</think>|\Z)", re.DOTALL)
 
 
+# A refusal names streaming as a word. "Upstream request failed", the OpenCode gateway's
+# prefix for every error it relays, contains the letters too, and read as a refusal it
+# re-sent a rejected DeepSeek request unstreamed — the one shape that loses the reasoning.
+_REFUSES_STREAMING = re.compile(r"\bstream", re.IGNORECASE)
+
+
 def _strip_reasoning(content: str) -> str:
     """Remove inline <think>...</think> reasoning from a reply's content."""
     if "<think>" not in content:
@@ -392,7 +398,7 @@ class OpenAICompatClient(LLMClient):
             try:
                 stream = await self._create(kwargs, tool_choice)
             except BadRequestError as e:
-                if "stream" not in str(e).lower():
+                if not _REFUSES_STREAMING.search(str(e)):
                     raise
                 log.warning("%s rejected streaming, falling back to chat(): %s", self._provider, e)
                 yield await self._chat_unstreamed(messages, tools, system_prompt, tool_choice)

@@ -1094,3 +1094,31 @@ async def test_streamed_reasoning_is_kept_whole_and_never_shown():
     assert deltas == ["Loading."]
     assert final.reasoning == "Wind MFI first."
     assert final.content == "Loading."
+
+
+async def test_a_relayed_upstream_error_is_not_read_as_a_refusal_to_stream():
+    """The OpenCode gateway prefixes every relayed error with "Upstream request failed";
+    the letters s-t-r-e-a-m in it sent a DeepSeek 400 back unstreamed, losing the
+    reasoning the retry needed."""
+    from openai import BadRequestError
+
+    client, fake = _groq_client()
+
+    class _Resp:
+        status_code = 400
+        headers: dict = {}
+        request = None
+
+        def json(self):
+            return {}
+
+    message = "Upstream request failed: [invalid_request_error] reasoning_content ..."
+
+    async def create(**kwargs):
+        fake.calls.append(kwargs)
+        raise BadRequestError(message, response=_Resp(), body=None)
+
+    fake.completions.create = create
+    with pytest.raises(BadRequestError):
+        await client.chat([Message(role="user", content="q")], [])
+    assert [c.get("stream") for c in fake.calls] == [True]

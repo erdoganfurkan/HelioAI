@@ -301,6 +301,75 @@ def test_figure_unsupported_type_rejected(web_client, tmp_path, monkeypatch):
     assert r.status_code == 404
 
 
+def test_a_figure_recorded_under_a_moved_data_dir_is_found_in_the_current_one(web_client, tmp_path):
+    """Moving HELIOAI_DATA_DIR left every earlier session showing broken figures."""
+    fig_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
+    fig_dir.mkdir(parents=True)
+    (fig_dir / "fig_0.png").write_bytes(b"\x89PNG\r\n")
+    recorded = "/old/data/users/web/workspace/sess123/fig_0.png"
+
+    r = web_client.get(f"/figure?path={recorded}")
+
+    assert r.status_code == 200 and r.content.startswith(b"\x89PNG")
+
+
+def test_a_copied_data_dir_serves_its_own_files_not_the_originals(web_client, tmp_path):
+    """The original tree may still exist (a copy, not a move): it is outside the root,
+    so it is never served, and the current root's copy is."""
+    old = tmp_path.parent / f"{tmp_path.name}-old" / "users" / "web" / "workspace" / "s1"
+    old.mkdir(parents=True)
+    (old / "fig_0.png").write_bytes(b"\x89PNG old")
+    new = tmp_path / "users" / "web" / "workspace" / "s1"
+    new.mkdir(parents=True)
+    (new / "fig_0.png").write_bytes(b"\x89PNG new")
+
+    r = web_client.get(f"/figure?path={old / 'fig_0.png'}")
+
+    assert r.status_code == 200 and r.content == b"\x89PNG new"
+
+
+def test_a_moved_script_is_found_too(web_client, tmp_path):
+    code_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
+    code_dir.mkdir(parents=True)
+    (code_dir / "code_0.py").write_text("x = 1\n", encoding="utf-8")
+
+    r = web_client.get("/code?path=/old/data/users/web/workspace/sess123/code_0.py")
+
+    assert r.status_code == 200 and "x = 1" in r.text
+
+
+@pytest.mark.parametrize(
+    "recorded",
+    [
+        "/old/users/web/workspace/../../../etc/passwd.png",
+        "/old/users/web/workspace/sess/../../secret.png",
+        "/old/users/web/workspace/",
+        "/etc/passwd.png",
+    ],
+)
+def test_relocation_cannot_leave_the_callers_workspace(web_client, tmp_path, recorded):
+    (tmp_path / "secret.png").write_bytes(b"\x89PNG")
+
+    assert web_client.get(f"/figure?path={recorded}").status_code == 404
+
+
+def test_relocation_lands_in_the_callers_own_workspace(web_client, tmp_path, monkeypatch):
+    """Another user's recorded path re-roots under the caller's home, never theirs."""
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.web_auth, "users", {"tok-alice": "alice", "tok-bob": "bob"})
+    bob = tmp_path / "users" / "bob" / "workspace" / "s1"
+    bob.mkdir(parents=True)
+    (bob / "fig_0.png").write_bytes(b"\x89PNG")
+
+    r = web_client.get(
+        "/figure?path=/old/users/bob/workspace/s1/fig_0.png",
+        headers={"X-Helio-Token": "tok-alice"},
+    )
+
+    assert r.status_code == 404
+
+
 # ── Code endpoint ────────────────────────────────────────────────────────────
 
 

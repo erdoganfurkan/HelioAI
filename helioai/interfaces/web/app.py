@@ -65,6 +65,28 @@ def _profile_path(user_id: str) -> Path:
     return user_home(user_id) / "profile.md"
 
 
+def _relocated(user_id: str, path: str) -> str:
+    """Where a workspace file recorded under another data directory lives now.
+
+    A session records its figures and scripts by absolute path, so moving the data
+    directory — `HELIOAI_DATA_DIR`, `helioai migrate-storage`, a Docker volume, a
+    restored backup — left every earlier session pointing at files that had moved with
+    it, and showed a broken figure for each. A path outside the current storage root is
+    re-rooted by its part after `workspace/` under the caller's own workspace. The result
+    goes through the same containment and ownership checks as any other path, so this can
+    only ever reach the caller's files.
+    """
+    if is_under_workspace(path):
+        return path
+    parts = path.replace("\\", "/").split("/")
+    if "workspace" not in parts:
+        return path
+    tail = parts[len(parts) - parts[::-1].index("workspace") :]
+    if not tail or any(part in ("", ".", "..") for part in tail):
+        return path
+    return str(user_home(user_id).joinpath("workspace", *tail))
+
+
 def _owns_path(user_id: str, path: str) -> bool:
     """True if `path` is physically under the user's own storage home.
 
@@ -437,7 +459,7 @@ async def serve_code(
     Raises:
         HTTPException: 404 for a path outside the caller's workspace or absent.
     """
-    path = path.strip()
+    path = _relocated(user_id, path.strip())
     if not is_under_workspace(path) or not _owns_path(user_id, path):
         log.warning("code_rejected", path=path, reason="outside workspace or not owner")
         raise HTTPException(status_code=404, detail="Not found")
@@ -476,7 +498,7 @@ async def serve_figure(path: str, user_id: str = Depends(require_user)) -> FileR
     Raises:
         HTTPException: 404 outside the caller's workspace, or absent.
     """
-    path = path.strip()
+    path = _relocated(user_id, path.strip())
     if not is_under_workspace(path) or not _owns_path(user_id, path):
         log.warning("figure_rejected", path=path, reason="outside workspace or not owner")
         raise HTTPException(status_code=404, detail="Not found")

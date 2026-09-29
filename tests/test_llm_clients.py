@@ -813,16 +813,18 @@ async def test_a_provider_reporting_no_usage_costs_zero_not_a_crash(build):
 # ── streaming ──────────────────────────────────────────────────────────────────
 
 
-def _chunk(content=None, tool_calls=None, finish_reason=None, usage=None):
+def _chunk(content=None, tool_calls=None, finish_reason=None, usage=None, reasoning=None):
     """One OpenAI-shaped stream chunk. tool_calls entries: (index, id, name, arguments)."""
     frags = [
         SimpleNamespace(index=i, id=tc_id, function=SimpleNamespace(name=name, arguments=args))
         for i, tc_id, name, args in (tool_calls or [])
     ]
     delta = SimpleNamespace(content=content, tool_calls=frags or None)
+    if reasoning is not None:
+        delta.reasoning_content = reasoning
     choices = (
         [SimpleNamespace(delta=delta, finish_reason=finish_reason)]
-        if (content is not None or frags or finish_reason)
+        if (content is not None or frags or finish_reason or reasoning is not None)
         else []
     )
     return SimpleNamespace(choices=choices, usage=usage)
@@ -943,3 +945,74 @@ async def test_a_client_without_streaming_support_yields_the_reply_whole():
 
     items = [item async for item in Plain().stream_chat([], [], system_prompt="s")]
     assert len(items) == 1 and items[0].content == "whole"
+
+
+# ── reasoning_content (DeepSeek thinking mode) ─────────────────────────────────
+
+
+async def test_reasoning_content_is_kept_and_sent_back_with_its_tool_calls():
+    """DeepSeek in thinking mode 400s a request carrying `tools` whose history lacks the
+    `reasoning_content` of an earlier assistant turn. HelioAI dropped it on every reply,
+    so the lead died mid-question on 2 of ~51 calls on 28–29/09."""
+    client, fake = _groq_client()
+    response = _openai_response(tool_calls=[("c1", "search_parameters", '{"queries": ["imf"]}')])
+    response.choices[0].message.reasoning_content = "The user wants IMF data."
+    fake.completions.response = response
+    tools = [ToolDef(name="search_parameters", description="d")]
+
+    reply = await client.chat([Message(role="user", content="q")], tools)
+    assert reply.reasoning == "The user wants IMF data."
+
+    fake.completions.response = _openai_response(content="done")
+    history = [
+        Message(role="user", content="q"),
+        reply,
+        Message(role="tool", tool_call_id="c1", content="{}"),
+    ]
+    await client.chat(history, tools)
+    assistant = fake.calls[-1]["messages"][1]
+    assert assistant["reasoning_content"] == "The user wants IMF data."
+    assert assistant["tool_calls"][0]["id"] == "c1"
+
+
+async def test_reasoning_content_is_sent_back_on_a_plain_answer_too():
+    """The rule covers every earlier assistant turn, not only the ones that called a tool."""
+    client, fake = _groq_client()
+    history = [
+        Message(role="user", content="q"),
+        Message(role="assistant", content="a", reasoning="why a"),
+        Message(role="user", content="q2"),
+    ]
+    await client.chat(history, [ToolDef(name="t", description="d")])
+    assert fake.calls[-1]["messages"][1] == {
+        "role": "assistant",
+        "content": "a",
+        "reasoning_content": "why a",
+    }
+
+
+async def test_a_reply_without_reasoning_sends_no_reasoning_field():
+    """Providers that never emit the field must never receive it."""
+    client, fake = _groq_client()
+    fake.completions.response = _openai_response(content="plain")
+    reply = await client.chat([Message(role="user", content="q")], [])
+    assert reply.reasoning is None
+
+    await client.chat([Message(role="user", content="q"), reply], [])
+    assert fake.calls[-1]["messages"][1] == {"role": "assistant", "content": "plain"}
+
+
+async def test_streamed_reasoning_is_kept_whole_and_never_shown():
+    client, _ = _streaming_client(
+        [
+            _chunk(reasoning="Wind MFI "),
+            _chunk(reasoning="first."),
+            _chunk(content="Loading."),
+            _chunk(tool_calls=[(0, "c1", "get_timeseries", "{}")]),
+            _chunk(finish_reason="tool_calls"),
+        ]
+    )
+    deltas, final = await _collect(client)
+    assert deltas == ["Loading."]
+    assert final.reasoning == "Wind MFI first."
+    assert final.content == "Loading."

@@ -44,6 +44,16 @@ sandboxed run and 1618 tests passing against the installed package.
 
 ### Fixed
 
+- **DeepSeek in thinking mode no longer rejects a question halfway through.** DeepSeek
+  returns its chain of thought as `reasoning_content` and, on any request that carries
+  tools, requires every earlier assistant turn's `reasoning_content` back — its
+  documentation says so and answers 400 otherwise. HelioAI never read the field, so it
+  never sent it back; the rule was enforced intermittently (0 rejections in 204 calls on
+  2026-09-25, 2 in ~51 on 2026-09-28/29, one on the lead's sixth call of a question). The
+  reasoning is now kept on the assistant message, streamed or not, sent back only when the
+  provider returned one — no other provider sees the field — and stored with the session,
+  so a reloaded conversation keeps it too. It is never displayed. Sessions saved before
+  this release have none to send.
 - **A search ranks the same in every process.** Chroma persists its HNSW graph only every
   `sync_threshold` writes — 1000 by default — and replays whatever followed the last persist
   into the in-memory graph at every start, in an order that varies. Measured on 2026-09-22

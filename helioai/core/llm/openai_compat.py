@@ -60,25 +60,26 @@ def to_openai_messages(messages: list[Message]) -> list[dict]:
             out.append({"role": "user", "content": msg.content})
         elif msg.role == "assistant":
             if msg.tool_calls:
-                out.append(
-                    {
-                        "role": "assistant",
-                        "content": msg.content or None,
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.name,
-                                    "arguments": json.dumps(tc.arguments or {}),
-                                },
-                            }
-                            for tc in msg.tool_calls
-                        ],
-                    }
-                )
+                wire = {
+                    "role": "assistant",
+                    "content": msg.content or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments or {}),
+                            },
+                        }
+                        for tc in msg.tool_calls
+                    ],
+                }
             else:
-                out.append({"role": "assistant", "content": msg.content})
+                wire = {"role": "assistant", "content": msg.content}
+            if msg.reasoning:
+                wire["reasoning_content"] = msg.reasoning
+            out.append(wire)
         elif msg.role == "tool":
             out.append(
                 {
@@ -136,7 +137,9 @@ def from_openai_response(response: Any, provider: str = "openai") -> Message:
     whose arguments are not valid JSON degrades to `{}` with a warning rather
     than raising — a malformed model output must not kill the agent loop. An
     inline `<think>...</think>` reasoning block, when a provider emits one, is
-    stripped from the content before it reaches the agent loop or the user.
+    stripped from the content before it reaches the agent loop or the user; a
+    separate `reasoning_content` field is kept on `Message.reasoning`, because
+    DeepSeek requires it back on every later request that carries tools.
 
     Args:
         response: The SDK response object.
@@ -152,6 +155,7 @@ def from_openai_response(response: Any, provider: str = "openai") -> Message:
     content = _strip_reasoning(raw_content)
     tool_calls_raw = getattr(msg, "tool_calls", None) or []
     finish_reason = getattr(choice, "finish_reason", None)
+    reasoning = getattr(msg, "reasoning_content", None) or None
 
     if not tool_calls_raw:
         if not content.strip():
@@ -168,13 +172,15 @@ def from_openai_response(response: Any, provider: str = "openai") -> Message:
                 len(raw_content),
                 len(content),
             )
-        return Message(role="assistant", content=content, **usage)
+        return Message(role="assistant", content=content, reasoning=reasoning, **usage)
 
     tool_calls = [
         _parse_tool_call(tc.id, tc.function.name, tc.function.arguments, finish_reason, provider)
         for tc in tool_calls_raw
     ]
-    return Message(role="assistant", content=content, tool_calls=tool_calls, **usage)
+    return Message(
+        role="assistant", content=content, tool_calls=tool_calls, reasoning=reasoning, **usage
+    )
 
 
 def _parse_tool_call(
@@ -376,6 +382,7 @@ class OpenAICompatClient(LLMClient):
             return
 
         raw = ""
+        reasoning = ""
         sent = 0
         calls: dict[int, dict] = {}
         usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0}
@@ -391,6 +398,8 @@ class OpenAICompatClient(LLMClient):
             delta = getattr(choice, "delta", None)
             if delta is None:
                 continue
+            if getattr(delta, "reasoning_content", None):
+                reasoning += delta.reasoning_content
             if getattr(delta, "content", None):
                 raw += delta.content
                 visible = _visible_so_far(raw)
@@ -425,4 +434,10 @@ class OpenAICompatClient(LLMClient):
             log.warning("%s empty streamed turn, retrying once: %s", self._provider, self._model)
             yield await self.chat(messages, tools, system_prompt, tool_choice)
             return
-        yield Message(role="assistant", content=content, tool_calls=tool_calls or None, **usage)
+        yield Message(
+            role="assistant",
+            content=content,
+            tool_calls=tool_calls or None,
+            reasoning=reasoning or None,
+            **usage,
+        )

@@ -606,3 +606,71 @@ def test_the_interactive_prompt_survives_a_failed_turn(monkeypatch, tmp_path):
     cli._interactive()
 
     assert asked == ["first", "second"]
+
+
+# ── --version, and command lines that are not questions ──────────────────────
+
+
+@pytest.mark.parametrize("flag", ["--version", "-V"])
+def test_version_is_answered_without_running_anything(flag, tripwires, capsys, monkeypatch):
+    from helioai import __version__
+    from helioai.interfaces.cli import main
+
+    monkeypatch.setattr(sys, "argv", ["helioai", flag])
+    main()
+
+    assert capsys.readouterr().out.strip() == f"helioai {__version__}"
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["hsitory"], "Did you mean `helioai history`?"),
+        (["doctr"], "Did you mean `helioai doctor`?"),
+        (["--verison"], "Unknown option '--verison'"),
+        (["plot", "Bz", "--sesion", "x"], "Unknown option '--sesion'"),
+    ],
+)
+def test_a_mistyped_command_line_is_refused_not_asked(
+    argv, expected, tripwires, capsys, monkeypatch
+):
+    from helioai.interfaces.cli import main
+
+    monkeypatch.setattr(sys, "argv", ["helioai", *argv])
+    with pytest.raises(SystemExit) as exit_info:
+        main()
+
+    assert exit_info.value.code == 2
+    assert expected in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["magnetopause"], ["what", "is", "the", "history", "of", "ACE"], ["θ_Bn for the 2005 shock"]],
+)
+def test_real_questions_still_reach_the_model(argv, monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    seen = {}
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(ws, "cleanup_old_runs", lambda: None)
+    monkeypatch.setattr(cli, "_run_query", lambda q, **kw: seen.setdefault("q", q))
+    monkeypatch.setattr(cli.asyncio, "run", lambda coro: coro)
+    monkeypatch.setattr(sys, "argv", ["helioai", *argv])
+    cli.main()
+
+    assert seen["q"] == " ".join(argv)
+
+
+def test_subcommand_flags_are_not_mistaken_for_typos(monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    seen = {}
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(cli, "_run_index", lambda **kw: seen.update(kw))
+    monkeypatch.setattr(sys, "argv", ["helioai", "index", "--rebuild"])
+    cli.main()
+
+    assert seen == {"rebuild": True, "classify": False, "download": False, "export": None}

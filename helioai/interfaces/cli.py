@@ -14,6 +14,7 @@ Usage:
     helioai mcp-install [--write] # MCP client config pointing at this install
     helioai serve --web           # web UI on :7890 (--host, --port)
     helioai serve                 # MCP server on stdio
+    helioai serve --http          # MCP server over HTTP on :8765 (--host, --port)
     helioai migrate-storage       # move legacy data into the per-user layout
     helioai doctor [--online]     # check this install: index, sandbox, keys, .env (--json)
 
@@ -21,6 +22,7 @@ Options:
     --session <id>                # continue a specific session
     --dev                         # supply the dev token, lifting the scope guard
     -h, --help                    # print this and exit
+    -V, --version                 # print the version and exit
 """
 
 from __future__ import annotations
@@ -752,6 +754,32 @@ def _global_options(args: list[str]) -> tuple[argparse.Namespace, list[str]]:
     return p.parse_known_args(args)
 
 
+_FLAG = re.compile(r"^--?[A-Za-z][\w-]*$")
+
+
+def _not_a_question(rest: list[str]) -> str | None:
+    """Why `rest` is a mistyped command line rather than a question, or None.
+
+    Anything the router does not recognise is sent to the model as a question, so
+    `helioai hsitory` or `helioai --verison` used to cost an LLM call, create a session
+    and come back with the model's guess at what the word meant. A lone word close to a
+    command, or a token shaped like an option, cannot be a question; any other word, and
+    any longer line, still goes to the model.
+    """
+    import difflib
+
+    if rest and rest[0] in _COMMANDS:
+        return None
+    for token in rest:
+        if _FLAG.match(token):
+            return f"Unknown option {token!r}. `helioai --help` lists the options."
+    if len(rest) == 1:
+        close = difflib.get_close_matches(rest[0].lower(), _COMMANDS, n=1, cutoff=0.75)
+        if close:
+            return f"Unknown command {rest[0]!r}. Did you mean `helioai {close[0]}`?"
+    return None
+
+
 def _run_command(command: str, argv: list[str]) -> None:
     p = argparse.ArgumentParser(prog=f"helioai {command}", add_help=False)
     if command == "history":
@@ -829,8 +857,17 @@ def main() -> None:
     if {"-h", "--help"} & set(args):
         print(__doc__)
         return
+    if {"-V", "--version"} & set(args):
+        from helioai import __version__
+
+        print(f"helioai {__version__}")
+        return
 
     options, rest = _global_options(args)
+    mistake = _not_a_question(rest)
+    if mistake:
+        print(mistake, file=sys.stderr)
+        raise SystemExit(2)
 
     if rest and rest[0] in _COMMANDS and rest[0] != "doctor":
         # Storage commands need the user bound; doctor must not touch the workspace.

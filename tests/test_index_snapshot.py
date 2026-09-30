@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 import httpx
@@ -133,6 +135,7 @@ def test_a_failed_swap_puts_the_previous_index_back(tmp_path, monkeypatch):
     index_snapshot.export_index(tmp_path / "snap", tmp_path / "source")
     target = settings.rag.chroma_dir
     _build(target, products=3, catalogs=0)
+    monkeypatch.setattr(index_snapshot, "_UNLOCK_WAIT", 0)
     rename = Path.rename
 
     def locked(self, to):
@@ -147,6 +150,50 @@ def test_a_failed_swap_puts_the_previous_index_back(tmp_path, monkeypatch):
     assert len(_content(target, settings.rag.collection_name)[0]) == 3
     assert not target.with_name(target.name + ".previous").exists()
     assert not target.with_name(target.name + ".partial").exists()
+
+
+def _open_files(root: Path) -> list[str]:
+    found = []
+    for fd in os.listdir("/proc/self/fd"):
+        try:
+            target = os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            continue
+        if target.startswith(str(root)):
+            found.append(target)
+    return found
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="counts open files through /proc")
+def test_releasing_closes_the_store_while_a_collection_is_still_referenced(tmp_path):
+    """Windows refuses to rename a directory holding an open file, and the import still holds
+    its collections when it swaps. Linux renames regardless, so the open files are counted."""
+    _, (held,) = open_collections(tmp_path / "chroma", ["held"])
+    held.upsert(ids=["a"], documents=["a"], embeddings=_vectors(np.random.default_rng(0), 1))
+    assert _open_files(tmp_path)
+
+    index_snapshot._release_clients()
+    deadline = time.monotonic() + 2
+    while _open_files(tmp_path) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert _open_files(tmp_path) == []
+
+
+def test_a_swap_waits_for_a_store_still_being_closed(tmp_path, monkeypatch):
+    _build(tmp_path / "source")
+    index_snapshot.export_index(tmp_path / "snap", tmp_path / "source")
+    rename = Path.rename
+    refused = []
+
+    def closing(self, to):
+        if self.name.endswith(".partial") and len(refused) < 2:
+            refused.append(self)
+            raise PermissionError("the store's files are still being closed")
+        return rename(self, to)
+
+    monkeypatch.setattr(Path, "rename", closing)
+    assert index_snapshot.import_index(tmp_path / "snap", verbose=False) == 9
+    assert len(refused) == 2
 
 
 def test_an_index_set_aside_by_an_earlier_crash_is_never_deleted(tmp_path):

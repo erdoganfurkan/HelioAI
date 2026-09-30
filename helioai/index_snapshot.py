@@ -14,10 +14,12 @@ collections through `open_collections`, with the HNSW settings a local build use
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import hashlib
 import json
 import shutil
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,6 +29,7 @@ FORMAT = 1
 MANIFEST = "manifest.json"
 MIN_KEPT = 0.95
 _PAGE = 5000
+_UNLOCK_WAIT = 5.0
 
 
 def _collection_names() -> dict[str, str]:
@@ -47,9 +50,44 @@ def _sha256(path: Path) -> str:
 
 
 def _release_clients() -> None:
+    """Close every store this process opened, so its directory can be renamed or deleted.
+
+    `clear_system_cache` alone only forgets the cached systems: a client or collection still
+    referenced — the import's own, until it returns — keeps the store's files open, and
+    Windows refuses to rename a directory holding an open file, which failed every swap on
+    the Windows runner. Stopping a system closes them; on chromadb 1.x the Rust backend does
+    so a millisecond or two later, which `_retry` waits out. A system whose start failed —
+    a store Chroma cannot open — is cached all the same, holds nothing, and raises when
+    stopped; the others are still stopped.
+    """
     from chromadb.api.client import SharedSystemClient
 
+    for system in list(SharedSystemClient._identifier_to_system.values()):
+        with contextlib.suppress(Exception):
+            system.stop()
     SharedSystemClient.clear_system_cache()
+
+
+def _retry(action, *args):
+    """Run a rename or a delete again while Windows refuses it, for up to `_UNLOCK_WAIT` s.
+
+    A store `_release_clients` just stopped may still hold its files for a moment, and so may
+    an antivirus scanning them; past the wait the refusal is real and is raised.
+    """
+    deadline = time.monotonic() + _UNLOCK_WAIT
+    while True:
+        try:
+            return action(*args)
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
+def _discard(path: Path) -> None:
+    """Delete a staging or set-aside index on the way out; never masks the error in flight."""
+    with contextlib.suppress(OSError):
+        _retry(shutil.rmtree, path)
 
 
 def index_is_empty(chroma_dir: Path | None = None) -> bool:
@@ -247,7 +285,7 @@ def import_index(snapshot_dir: Path, chroma_dir: Path | None = None, verbose: bo
             total += len(records)
     except BaseException:
         _release_clients()
-        shutil.rmtree(staging, ignore_errors=True)
+        _discard(staging)
         raise
     _release_clients()
 
@@ -258,16 +296,16 @@ def import_index(snapshot_dir: Path, chroma_dir: Path | None = None, verbose: bo
             kept = chroma_dir / JUDGMENT_RECORDS
             if kept.exists():
                 shutil.copy2(kept, staging / JUDGMENT_RECORDS)
-            chroma_dir.rename(previous)
+            _retry(chroma_dir.rename, previous)
             moved = True
-        staging.rename(chroma_dir)
+        _retry(staging.rename, chroma_dir)
     except BaseException:
         if moved:
-            previous.rename(chroma_dir)
-        shutil.rmtree(staging, ignore_errors=True)
+            _retry(previous.rename, chroma_dir)
+        _discard(staging)
         raise
     if moved:
-        shutil.rmtree(previous, ignore_errors=True)
+        _discard(previous)
     return total
 
 

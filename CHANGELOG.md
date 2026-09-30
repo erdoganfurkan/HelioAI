@@ -158,7 +158,6 @@ sandboxed run and 1618 tests passing against the installed package.
   none is never demoted for it. On the 30 replayed n1 queries, five processes each: recall@1
   56.7 → 73.3 %, recall@3 90.0 → 96.7 %, recall@5 90.0 → 100 %, MRR 0.736 → 0.847 — read
   with the caveat that those 30 queries are where the failures these rules name were found.
-  second, where a 2026 IMAP position led before.
 - **A sandbox program has no size limit anymore; `run_recipe` works on Windows.** The
   assembled script — a 14 576-character preamble, then the agent's code — travelled to the
   interpreter as the argument of `python -c`, and an argument has a size: 32 767 characters

@@ -64,7 +64,7 @@ Full feature list in the [documentation](https://erdoganfurkan.github.io/HelioAI
 
 ```bash
 pip install helioai-agent
-helioai index          # one-time, ~10 min — indexes 83k products into a local ChromaDB
+helioai index          # one-time — fetches the prebuilt index (~125 MB), or builds it locally
 ```
 
 Then set one LLM provider key (`opencode`, `groq`, `gemini`, `azure` or `ollama` — the

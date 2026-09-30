@@ -88,22 +88,32 @@ Every variable is listed in [Configuration](configuration.md). Any other OpenAI-
 
 ## Build the parameter index
 
-One time, roughly ten minutes, ~83 000 products:
+One time, ~83 000 products:
 
 ```bash
 helioai index
 ```
 
-This downloads the speasy catalogue and indexes it into a local ChromaDB. It lands in
-`<repo>/data/` when you are running from a clone, and in `~/.local/share/helioai/` when
-installed from PyPI. Override with `HELIOAI_DATA_DIR`: the index, the session store,
-the per-user workspaces, the saved catalogues and the profile all live under it.
+On an empty index this downloads the prebuilt index published for your release on the
+[Hugging Face Hub](https://huggingface.co/datasets/erdoganfurkan/helioai-speasy-index)
+(~125 MB, about a minute) instead of building it. CI builds that index from scratch at
+every release, so it is the same one you would get locally. When the download is not
+possible — offline, or nothing published yet — it falls back to building locally: it
+downloads the speasy catalogue and embeds every product, which takes 7 to 10 minutes on a
+recent machine and longer on a modest one. `HELIOAI_INDEX_REPO` points at another
+dataset; an empty value turns the download off.
+
+The index lands in `<repo>/data/` when you are running from a clone, and in
+`~/.local/share/helioai/` when installed from PyPI. Override with `HELIOAI_DATA_DIR`: the
+index, the session store, the per-user workspaces, the saved catalogues and the profile
+all live under it.
 
 !!! note "Upgrading an install that already set `HELIOAI_DATA_DIR`"
     Earlier versions kept the index, the catalogues and the profile under the
     *default* data directory whatever the variable said. Run `helioai migrate-storage`
     once to move them; the `search_parameters` error also tells you when this applies.
 
+Once an index exists, `helioai index` only adds what speasy published since, locally.
 Rebuild from scratch with `helioai index --rebuild` — worth doing when speasy ships a
 significant catalogue update.
 
@@ -112,7 +122,11 @@ significant catalogue update.
     `helioai index` is incremental: it skips every product already in the index, so a
     release that changes *how* products are described leaves your existing index
     untouched and the improvement invisible. After upgrading, run `helioai index
-    --rebuild` to pick those up.
+    --download` to replace it with the index built for the new release, or `helioai
+    index --rebuild` to build it yourself.
+
+    Stop a running `helioai serve` or MCP server first and start it again after:
+    `--download` replaces the directory it has open.
 
 ## Check it works
 

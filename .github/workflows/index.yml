@@ -1,0 +1,85 @@
+name: Index
+
+# Builds the parameter index from scratch and publishes it on the Hugging Face Hub, where
+# `helioai index` fetches it instead of building one (7 to 10 minutes on a recent machine,
+# longer on a modest one). A release tag publishes that release's index and tags it; a
+# manual run refreshes `main`, the snapshot a development install gets. A pull request
+# that touches the indexer rehearses everything but the upload, the token included.
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - "helioai/indexer.py"
+      - "helioai/index_snapshot.py"
+      - "helioai/data/judged_products.jsonl.gz"
+      - ".github/workflows/index.yml"
+      - ".github/hf-index-card.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: index-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      HELIOAI_DATA_DIR: ${{ github.workspace }}/.index-data
+      HELIOAI_JUDGMENT_BACKEND: "null"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: uv sync --locked
+
+      - name: Check the Hub token
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: >
+          .venv/bin/python -c "from huggingface_hub import HfApi;
+          print('token of', HfApi().whoami()['name'])"
+
+      - name: Build the index from scratch
+        run: .venv/bin/helioai index --rebuild
+
+      - name: Export the snapshot
+        run: |
+          .venv/bin/helioai index --export snapshot
+          cp .github/hf-index-card.md snapshot/README.md
+
+      - name: Import it into an empty data directory
+        env:
+          HELIOAI_DATA_DIR: ${{ github.workspace }}/.import-check
+        run: >
+          .venv/bin/python -c "from helioai.index_snapshot import import_index;
+          print(import_index('snapshot', verbose=False), 'entries imported')"
+
+      - name: Publish to the Hugging Face Hub
+        if: github.event_name != 'pull_request'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          .venv/bin/python -c "
+          import os
+          from helioai.config import settings
+          from helioai.index_snapshot import publish_index
+          print(publish_index('snapshot', settings.rag.index_repo, os.environ['TAG'] or None))
+          "

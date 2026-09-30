@@ -50,6 +50,7 @@ helioai/
 ├── datastore.py            npz + manifest.json per session — the basis of reproducible export
 ├── export.py               session -> standalone .ipynb
 ├── indexer.py              speasy catalogue -> ChromaDB
+├── index_snapshot.py       export / fetch / import the prebuilt index (Hugging Face Hub)
 ├── mcp_server.py           MCP stdio + streamable HTTP server
 ├── core/
 │   ├── agent_loop.py       stream_chat — the main agent loop

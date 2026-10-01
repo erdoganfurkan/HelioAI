@@ -8,7 +8,7 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
-## [0.4.0] — 2026-09-24
+## [0.4.0] — 2026-10-01
 
 ### Highlights
 

@@ -280,8 +280,8 @@ registry.register(
     name="list_recipes",
     description=(
         "List available derived scientific recipes (reusable Python scripts). "
-        "Returns a catalogue with name, description, inputs and outputs for each recipe. "
-        "Use before load_recipe to discover what is available."
+        "Returns name, description, inputs, outputs and run_with (the exact run_recipe "
+        "call) for each recipe; load_recipe returns one's source."
     ),
     parameters={"type": "object", "properties": {}},
 )(_rcp.list_recipes)
@@ -465,9 +465,10 @@ registry.register(
 registry.register(
     name="load_recipe",
     description=(
-        "Load the source code of a named derived recipe. "
-        "Use list_recipes() first to discover recipe names. "
-        "Returns the Python source — pass it to run_python to execute it."
+        "Load a named derived recipe: its Python source, its metadata (inputs, outputs, "
+        "reference) and run_with, the exact run_recipe call. Read it to understand the "
+        "method; run it with run_recipe, not by copying it into run_python. "
+        "Use list_recipes() first to discover recipe names."
     ),
     parameters={
         "type": "object",
@@ -487,11 +488,12 @@ registry.register(
         "Run a shipped recipe as shipped on this session's data — no copying its code into "
         "run_python, no rewriting its formula. `inputs` binds the variables the recipe reads: "
         "a string is a Python expression evaluated in the sandbox (e.g. "
-        '{"B_up": "load_data(\'b3gsm\').values[m_up]"}), a number or list is literal. For a '
-        "recipe that is a library of functions (rankine_hugoniot, pressure_balance, "
-        "shock_timing_2sc), pass `call`: one expression applying its function to the inputs. "
+        '{"B": "load_data(\'b3gsm\')"}), a number or list is literal; each recipe\'s run_with '
+        "(list_recipes) names what to bind. `call` is optional: one expression evaluated "
+        "after the recipe, such as one of its functions. "
         "Returns the recipe's own export() values, stdout and figures, and records the recipe "
-        "and its reference as the method used. Download data with get_timeseries first."
+        "and its reference as the method used. A run that fails or yields nothing returns "
+        "recipe_notice (usage, signatures, run_with). Download data with get_timeseries first."
     ),
     parameters={
         "type": "object",

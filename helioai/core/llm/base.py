@@ -161,6 +161,14 @@ class Message:
             was recognised by having `name`, `code` and `metadata` keys at once.
             Recorded here instead, and persisted, so a reader asks the message.
             Not sent to any provider.
+        reasoning: For `assistant` messages, the chain of thought the provider
+            returned beside the content (`reasoning_content` on DeepSeek's thinking
+            mode). Never shown, but sent back: DeepSeek rejects with a 400 any request
+            carrying `tools` whose history lacks an earlier turn's reasoning, and
+            enforces it intermittently, so dropping it cost a lead mid-question on 2
+            of ~51 calls. Persisted by `SessionStore` for the same reason — a reloaded
+            session is a history too. `None` when the provider returned none, which
+            keeps it off the wire for every provider that never emits it.
     """
 
     role: Literal["system", "user", "assistant", "tool"]
@@ -169,6 +177,7 @@ class Message:
     tool_call_id: str | None = None
     origin: str | None = None
     name: str | None = None
+    reasoning: str | None = None
     # Telemetry about the response, not part of the conversation: `SessionStore`
     # deliberately does not persist these, so a reloaded history reports no cost.
     prompt_tokens: int = 0

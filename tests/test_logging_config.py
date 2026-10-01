@@ -188,3 +188,47 @@ def test_speasy_traceback_is_still_visible_at_debug(monkeypatch, capsys):
     speasy_log.warning("Exception: Traceback (most recent call last):\nKeyError: 'master_cdf'")
 
     assert "Traceback" in capsys.readouterr().err
+
+
+def _log_a_crash() -> None:
+    try:
+        raise ConnectionError("All connection attempts failed")
+    except ConnectionError:
+        get_logger("test").exception("agent_loop_crashed", turn=1)
+
+
+def test_tracebacks_off_keeps_one_line_with_the_error(monkeypatch, capsys):
+    """The terminal a person reads gets the verdict, not 264 lines of httpx internals."""
+    monkeypatch.setenv("HELIOAI_LOG_FORMAT", "json")
+    monkeypatch.delenv("HELIOAI_LOG_LEVEL", raising=False)
+    setup_logging("WARNING", tracebacks=False)
+
+    _log_a_crash()
+
+    lines = capsys.readouterr().err.strip().splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["error"] == "ConnectionError: All connection attempts failed"
+    assert "exception" not in payload
+
+
+def test_debug_brings_the_traceback_back(monkeypatch, capsys):
+    monkeypatch.setenv("HELIOAI_LOG_FORMAT", "json")
+    monkeypatch.setenv("HELIOAI_LOG_LEVEL", "DEBUG")
+    setup_logging("WARNING", tracebacks=False)
+
+    _log_a_crash()
+
+    payload = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    assert "Traceback" in payload["exception"]
+
+
+def test_tracebacks_are_on_by_default_for_servers(monkeypatch, capsys):
+    monkeypatch.setenv("HELIOAI_LOG_FORMAT", "json")
+    monkeypatch.delenv("HELIOAI_LOG_LEVEL", raising=False)
+    setup_logging("WARNING")
+
+    _log_a_crash()
+
+    payload = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    assert "Traceback" in payload["exception"]

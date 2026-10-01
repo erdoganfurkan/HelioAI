@@ -1,4 +1,9 @@
-# HelioAI
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/erdoganfurkan/HelioAI/main/docs/assets/logo/helioai-logo-dark.png">
+    <img alt="HelioAI — heliophysics agent" src="https://raw.githubusercontent.com/erdoganfurkan/HelioAI/main/docs/assets/logo/helioai-logo-light.png" width="460">
+  </picture>
+</p>
 
 **AI agent for heliophysics and space plasma data analysis.**
 
@@ -64,7 +69,7 @@ Full feature list in the [documentation](https://erdoganfurkan.github.io/HelioAI
 
 ```bash
 pip install helioai-agent
-helioai index          # one-time, ~10 min — indexes 83k products into a local ChromaDB
+helioai index          # one-time — fetches the prebuilt index (~125 MB), or builds it locally
 ```
 
 Then set one LLM provider key (`opencode`, `groq`, `gemini`, `azure` or `ollama` — the
@@ -139,6 +144,28 @@ uv sync --extra dev
 .venv/bin/python -m pytest      # the whole suite, coverage floor 70%, no exclusions
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
 ```
+
+---
+
+## How to cite
+
+If HelioAI contributes to published work, please cite it:
+
+```bibtex
+@software{erdogan_helioai,
+  author  = {Erdogan, Furkan},
+  title   = {{HelioAI}: a natural-language agent for heliophysics data discovery and analysis},
+  year    = {2026},
+  version = {0.4.0},
+  url     = {https://github.com/erdoganfurkan/HelioAI},
+  license = {MIT}
+}
+```
+
+GitHub's *Cite this repository* button gives the same from [CITATION.cff](CITATION.cff).
+Please also cite the data providers you used (AMDA/CDPP, CDAWeb/NASA, CSA/ESA) and the
+method references each exported notebook lists in its *Methods & data acknowledgements*
+cell.
 
 ---
 

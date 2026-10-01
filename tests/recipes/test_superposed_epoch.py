@@ -193,6 +193,20 @@ def test_superposed_epoch_exports_data_units(recipe):
     assert run.exports["epoch_n"]["units"] == ""
 
 
+def test_superposed_epoch_exports_the_peak_of_its_median_and_where_it_is(recipe):
+    """A SEA is asked for its peak. Every session of the 2026-09-25 A/B computed it by
+    hand, and one asked for the whole source to find the name of the epoch grid; the
+    recipe now exports the maximum of the median and its normalized epoch."""
+    run = recipe("superposed_epoch", events=_events(6), n_grid=21, n_boot=20, units="nT")
+
+    median = run.value("epoch_median")
+    peak = run.value("epoch_median_peak").item()
+    assert peak == pytest.approx(np.nanmax(median))
+    assert run.exports["epoch_median_peak"]["units"] == "nT"
+    assert run.value("epoch_median_peak_tau").item() == pytest.approx(0.5)
+    assert run.exports["epoch_median_peak_tau"]["units"] == ""
+
+
 def test_superposed_epoch_infers_units_from_event_collection(recipe):
     run = recipe("superposed_epoch", events=_events(6, units="nT"), n_grid=21, n_boot=20)
 

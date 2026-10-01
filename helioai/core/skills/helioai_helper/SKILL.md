@@ -43,7 +43,7 @@ User: "find IP shocks in WIND data 2000"
   1. Download B, Vp, Np, Tp for the interval
   2. Compute |B| jump, density compression ratio, velocity step
   3. sliding-window: ΔN/N > 1.5, ΔV > 50 km/s, ΔB > 3 nT → candidate shock
-  4. Compute theta_Bn via recipe theta_bn (load_recipe + run_python)
+  4. Compute theta_Bn with the theta_bn recipe (run_recipe)
 ```
 
 ### 3.3 Magnetic reconnection identification
@@ -88,10 +88,8 @@ User: "proton density at MMS bow-shock crossings in 2017"
 → list_catalogs(region="bow shock") → MMS_Lalti_BScrossings (2797 events)
 → get_events_timeseries(id, "amda/mms1_dis_ni_fast", "2017-01-01", "2017-12-31", max_events=50)
   → returns dataset key, e.g. "mms1_dis_ni_fast_events"
-→ load_recipe("superposed_epoch") → copy source into run_python
-→ run_python:
-    events = load_data("mms1_dis_ni_fast_events")
-    # paste recipe source → median + IQR figure + export("epoch_median", ...)
+→ run_recipe("superposed_epoch", inputs={"events": "load_data('mms1_dis_ni_fast_events')"})
+  → median + IQR figure + export("epoch_median", ...)
 ```
 
 **Key rule:** when `get_events_timeseries` returns a `dataset` key, always access the data in `run_python` via `load_data("name")` instead of re-calling speasy.
@@ -171,10 +169,11 @@ The `sort_by`/`where` column is always included in the returned rows even if not
 
 ## 6. Derived recipes
 
-HelioAI includes reusable Python scientific recipes accessible via two tools:
-- `list_recipes()` — show the full catalogue with name, description, inputs, outputs
-- `load_recipe(name)` — retrieve the Python source code
-- Then `run_python(code)` to execute it with your data
+HelioAI includes reusable Python scientific recipes:
+- `list_recipes()` — the catalogue: name, description, inputs, outputs, and `run_with`, the exact call
+- `run_recipe(name, inputs)` — runs the recipe as shipped on the session's data
+- `load_recipe(name)` — its source, usage notes and `run_with`; copy the source only into a
+  script that will run outside HelioAI
 
 | Recipe | What it computes |
 |---|---|

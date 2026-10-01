@@ -81,15 +81,20 @@ def _parse_header(text: str) -> dict[str, str]:
 
 
 async def list_recipes() -> dict:
-    """List all available derived recipes with their name and description.
+    """List all available derived recipes with their name, description and the call that runs them.
+
+    Each entry carries `run_with`, the `run_recipe(...)` call with the recipe's own input
+    names or functions, so a model can go from the catalogue straight to running one:
+    loading a recipe first cost one LLM call per recipe, and the call is where a session
+    pays — every one re-sends the whole context.
 
     Returns dict with 'recipes' list (sorted by name). Each entry has
-    'name', 'description', 'inputs', 'outputs' (when present in header).
+    'name', 'description', 'inputs', 'outputs' (when present in header) and 'run_with'.
     Returns {"recipes": []} when the recipes directory does not exist.
 
     Example:
         >>> await list_recipes()
-        {'recipes': [{'name': 'fill_values', 'description': '...'},
+        {'recipes': [{'name': 'fill_values', 'description': '...', 'run_with': '...'},
                      {'name': 'mvab', ...}, {'name': 'rankine_hugoniot', ...}, ...]}
     """
     try:
@@ -105,6 +110,7 @@ async def list_recipes() -> dict:
                 for field in ("description", "inputs", "outputs"):
                     if field in meta:
                         entry[field] = meta[field]
+                entry["run_with"] = run_with(entry["name"], text)
                 entries.append(entry)
             except OSError as exc:
                 log.warning("recipe_read_error", path=str(path), error=str(exc))
@@ -154,7 +160,79 @@ async def load_recipe(name: str) -> dict:
         return {"error": str(e)}
 
 
-_GLOBALS_GET = re.compile(r"""globals\(\)\.get\(\s*["']([A-Za-z_]\w*)["']""")
+def _describe(name: str, code: str) -> dict:
+    """What calling a recipe needs: its usage notes, its public signatures, its call."""
+    tree = ast.parse(code)
+    return {
+        "usage": ast.get_docstring(tree) or "",
+        "functions": _public_functions(tree),
+        "run_with": run_with(name, code),
+    }
+
+
+def _public_functions(tree: ast.Module) -> list[dict]:
+    """Signature and first docstring paragraph of each top-level public function.
+
+    The first paragraph only: the rest of a recipe's docstrings is its calibration record
+    (which shock, which database entry, which window moved the angle by how much), which
+    matters to whoever edits the recipe, not to whoever calls it.
+    """
+    functions = []
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if node.name.startswith("_"):
+            continue
+        signature = f"{node.name}({ast.unparse(node.args)})"
+        if node.returns is not None:
+            signature += f" -> {ast.unparse(node.returns)}"
+        doc = (ast.get_docstring(node) or "").split("\n\n")[0].strip()
+        functions.append({"signature": signature, "doc": doc})
+    return functions
+
+
+def _globals_read(code: str) -> list[str]:
+    """The names a recipe reads with `globals().get`, literal or looped over.
+
+    A regex on `globals().get("name")` missed `{k: globals().get(k) for k in ("t1", ...)}`,
+    and `shock_timing_2sc` was announced as needing only `V_shock_rh`, the one optional
+    input it reads by name — its five required ones were in the loop.
+    """
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(code)):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Call)
+            and isinstance(node.func.value.func, ast.Name)
+            and node.func.value.func.id == "globals"
+            and node.args
+        ):
+            continue
+        arg = node.args[0]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            names.add(arg.value)
+        elif isinstance(arg, ast.Name):
+            names |= _loop_constants(code, arg.id)
+    return sorted(names)
+
+
+def _loop_constants(code: str, var: str) -> set[str]:
+    """String constants a comprehension or `for` binds to `var` from a literal tuple/list."""
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(code)):
+        if isinstance(node, ast.comprehension | ast.For):
+            if isinstance(node.target, ast.Name) and node.target.id == var:
+                if isinstance(node.iter, ast.Tuple | ast.List):
+                    found |= {
+                        e.value
+                        for e in node.iter.elts
+                        if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                    }
+    return found
+
+
 _PUBLIC_DEF = re.compile(r"^def\s+([A-Za-z]\w*)\s*\(", re.MULTILINE)
 
 
@@ -163,24 +241,39 @@ def run_with(name: str, code: str) -> str:
 
     A model that has just read a recipe's code is one paste away from running a copy of
     it in `run_python` — which is how a 54.85° θ_Bn came out of a 12-minute window the
-    recipe would never have chosen. The line names the tool and, exactly, what to bind:
-    the variables the recipe reads with `globals().get` when it is a script, its public
-    functions when it is a library. Not prose about what to do; the call itself.
+    recipe would never have chosen. The line names the tool and, exactly, what to bind.
+
+    A recipe declares its usual call in its header (`# run:`), because the names it reads
+    are not a call: `rankine_hugoniot` reads eighteen, in three alternative bindings,
+    and listed flat, alphabetically, they do not say which to bind. The other names it
+    reads follow it. Without a declaration the line is derived: the
+    variables read with `globals().get` for a script, the public functions for a library.
 
     Args:
         name: The recipe.
         code: Its source.
 
     Returns:
-        A `run_recipe(...)` call template with the recipe's own input names or functions.
+        The declared call, or a `run_recipe(...)` template with the recipe's own input
+        names or functions.
     """
-    inputs = sorted(set(_GLOBALS_GET.findall(code)))
+    inputs = _globals_read(code)
+    declared = _parse_header(code).get("run")
+    if declared:
+        named = _declared_inputs(declared)
+        others = [i for i in inputs if i not in named]
+        if not named:
+            return declared
+        line = f"{declared} — replace each <...> with yours"
+        if others:
+            line += f"; other inputs it reads: {', '.join(others)} — its inputs say what each is"
+        return line
     if inputs:
         bound = ", ".join(f"{i!r}: ..." for i in inputs)
         return (
             f"run_recipe({name!r}, inputs={{{bound}}}) — bind the inputs you have (each a "
-            f"Python expression such as \"load_data('name')\" or a literal); the source above "
-            f"then runs verbatim on the session's data"
+            f"Python expression such as \"load_data('name')\" or a literal); the recipe's "
+            f"source then runs verbatim on the session's data"
         )
     functions = [f for f in _PUBLIC_DEF.findall(code) if f != "export"]
     if functions:
@@ -190,8 +283,24 @@ def run_with(name: str, code: str) -> str:
             f"({', '.join(functions[:6])}); bind their arguments as inputs and name the call"
         )
     return (
-        f"run_recipe({name!r}, inputs={{...}}) runs the source above verbatim on the session's data"
+        f"run_recipe({name!r}, inputs={{...}}) runs the recipe's source verbatim on the "
+        f"session's data"
     )
+
+
+def _declared_inputs(call: str) -> set[str]:
+    """The input names of a declared `run_recipe(..., inputs={...})` call; empty when the
+    declaration is not such a call (`fill_values` says to copy it instead)."""
+    try:
+        node = ast.parse(call, mode="eval").body
+    except SyntaxError:
+        return set()
+    if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "run_recipe"):
+        return set()
+    for kw in node.keywords:
+        if kw.arg == "inputs" and isinstance(kw.value, ast.Dict):
+            return {k.value for k in kw.value.keys if isinstance(k, ast.Constant)}
+    return set()
 
 
 _INPUT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -297,21 +406,29 @@ async def run_recipe(
     Returns:
         The `run_python` result — stdout, exports, figures, `code_path` — plus
         `recipe` (`name`, `reference`, `description`), `inputs` as bound, and a
-        `method_used` card. `{"error": ...}` for an unknown recipe or an input that is
-        not a Python name.
+        `method_used` card. When the run failed, or produced nothing at all — six of
+        the recipes read their inputs with `globals().get` and do nothing, silently,
+        when a name is bound wrong — it also carries `recipe_notice`: the recipe's
+        usage, public signatures and `run_with`, how it is called without its source.
+        `{"error": ...}` for an unknown recipe (with the names there are) or an input
+        that is not a Python name (with the notice).
     """
     from helioai.tools.sandbox import run_python
 
     path = _recipe_path(name)
     if path is None:
-        return {"error": f"recipe {name!r} not found; call list_recipes for the names"}
+        names = sorted(p.stem for p in settings.recipes.recipes_dir.glob("*.py"))
+        return {
+            "error": f"recipe {name!r} not found; call list_recipes for the names",
+            "recipes": names,
+        }
     code = path.read_text(encoding="utf-8")
     meta = _parse_header(code)
     bound = dict(inputs or {})
     try:
         script = recipe_script(name, code, bound, call)
     except ValueError as e:
-        return {"error": str(e)}
+        return {"error": str(e), "recipe_notice": _describe(meta.get("name", name), code)}
 
     result = await run_python(
         script, timeout=timeout, _plot_dir=_plot_dir, _run_idx=_run_idx, _no_net=_no_net
@@ -323,6 +440,11 @@ async def run_recipe(
     }
     result["recipe"] = recipe
     result["inputs"] = bound
+    produced = (
+        result.get("exports") or result.get("figure_paths") or (result.get("stdout") or "").strip()
+    )
+    if "error" in result or not produced:
+        result["recipe_notice"] = _describe(recipe["name"], code)
     if "error" not in result:
         result.setdefault("cards", []).append(
             {

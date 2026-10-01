@@ -476,3 +476,21 @@ def test_unreadable_figure_is_skipped_not_raised():
 
 def test_figure_content_ignores_non_dict_payloads():
     assert ms._figure_content("a remote tool's plain text") == []
+
+
+@pytest.mark.parametrize(
+    ("flag", "expected"), [("--help", "Usage:"), ("--version", "helioai-mcp ")]
+)
+def test_help_and_version_do_not_start_a_server(flag, expected, monkeypatch, capsys):
+    """On stdio the terminal is the protocol stream: a started server just sits there."""
+    import helioai.mcp_server as mcp_server
+
+    def _no_server(*a, **kw):
+        raise AssertionError("a server was started")
+
+    monkeypatch.setattr(mcp_server, "serve_stdio", _no_server)
+    monkeypatch.setattr(mcp_server, "serve_http", _no_server)
+    monkeypatch.setattr(sys, "argv", ["helioai-mcp", flag])
+    mcp_server.main()
+
+    assert expected in capsys.readouterr().out

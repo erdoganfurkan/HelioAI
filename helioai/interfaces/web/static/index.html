@@ -4,33 +4,38 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HelioAI</title>
+  <link rel="icon" href="/static/favicon.ico" sizes="any" />
+  <link rel="apple-touch-icon" href="/static/icon.png" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <div class="layout">
-    <aside class="sidebar">
-      <h1>Helio<span>AI</span></h1>
+    <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+    <aside class="sidebar" id="sidebar">
+      <h1><img class="brand-icon" src="/static/icon.png" alt="" />Helio<span>AI</span></h1>
 
       <div>
         <label for="provider-select">LLM Provider</label>
         <select id="provider-select">
-          <option value="azure">Azure OpenAI</option>
+          <option value="opencode">OpenCode</option>
           <option value="groq">Groq</option>
           <option value="gemini">Gemini</option>
-          <option value="opencode">OpenCode Go</option>
+          <option value="azure">Azure OpenAI</option>
           <option value="ollama">Ollama (local)</option>
         </select>
       </div>
 
       <button class="btn-new" id="btn-new">+ New session</button>
 
-      <div class="dev-token-row">
-        <label for="dev-token-input">Dev token</label>
+      <div class="dev-token-row" id="token-row" hidden>
+        <label for="dev-token-input" id="token-label">Dev token</label>
         <div class="dev-token-wrap">
-          <input type="password" id="dev-token-input" placeholder="(restricted)" autocomplete="off" />
-          <span class="dev-indicator" id="dev-indicator" title="Dev mode off">●</span>
+          <input type="password" id="dev-token-input" placeholder="(optional)" autocomplete="off" />
+          <span class="dev-indicator" id="dev-indicator" title="No token">●</span>
         </div>
       </div>
+
+      <button class="btn-profile" id="btn-profile" title="Notes the agent reads with every question">Profile</button>
 
       <div>
         <label>Sessions</label>
@@ -41,6 +46,10 @@
     </aside>
 
     <main class="main">
+      <div class="topbar">
+        <button class="btn-menu" id="btn-menu" aria-label="Show sessions" aria-controls="sidebar">☰</button>
+        <span class="topbar-title"><img class="brand-icon" src="/static/icon.png" alt="" />Helio<span>AI</span></span>
+      </div>
       <div class="chat-area" id="chat-area"></div>
 
       <div class="activity-dock collapsed" id="activity-dock">
@@ -53,7 +62,7 @@
       </div>
 
       <div class="input-bar">
-        <textarea id="input" placeholder="Ask a heliophysics question…" rows="1"></textarea>
+        <textarea id="input" placeholder="Ask a heliophysics question…" rows="1" aria-label="Your question"></textarea>
         <button class="btn-send" id="btn-send">Send</button>
         <button class="btn-cancel" id="btn-cancel" style="display:none">✕ Cancel</button>
       </div>
@@ -62,7 +71,10 @@
     <aside class="code-panel" id="code-panel">
       <div class="cp-header">
         <span class="cp-title">Generated code</span>
-        <button class="cp-close" id="cp-close">✕</button>
+        <span class="cp-actions">
+          <button class="cp-copy" id="cp-copy" title="Copy the code">Copy</button>
+          <button class="cp-close" id="cp-close" aria-label="Close the code panel">✕</button>
+        </span>
       </div>
       <pre class="cp-body"><code id="code-content"></code></pre>
     </aside>
@@ -75,7 +87,22 @@
       <div class="lb-bar">
         <a id="lb-download" href="" download="figure.png" class="btn-lb-dl">↓ PNG</a>
         <a id="lb-pdf" href="" download="figure.pdf" class="btn-lb-dl">↓ PDF</a>
-        <button id="lb-close" class="btn-lb-close">✕</button>
+        <button id="lb-close" class="btn-lb-close" aria-label="Close the figure">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="profile-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="profile-title" hidden>
+    <div class="modal-backdrop" id="profile-backdrop"></div>
+    <div class="modal-inner">
+      <h2 id="profile-title">Your profile</h2>
+      <p class="modal-hint">Read by the agent with every question: your field, the missions
+        and coordinate frames you work in, the units you prefer, the language to answer in.</p>
+      <textarea id="profile-text" rows="10" placeholder="e.g. I study magnetosheath turbulence with MMS. Prefer GSE, nT and km/s. Answer in French."></textarea>
+      <div class="modal-bar">
+        <span class="modal-status" id="profile-status"></span>
+        <button class="btn-secondary" id="profile-cancel">Cancel</button>
+        <button class="btn-primary" id="profile-save">Save</button>
       </div>
     </div>
   </div>

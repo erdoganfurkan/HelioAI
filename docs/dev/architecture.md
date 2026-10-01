@@ -8,6 +8,7 @@ helioai/
 ├── workspace.py            per-user, per-session directories
 ├── export.py               session → standalone .ipynb
 ├── indexer.py              speasy catalogue → ChromaDB
+├── index_snapshot.py       export / fetch / import the prebuilt index (Hugging Face Hub)
 ├── mcp_server.py           MCP stdio + streamable HTTP
 ├── runtime/
 │   ├── runner.py           Runner(policy).run(history) — the one agent loop
@@ -42,6 +43,7 @@ helioai/
 │   └── mcp_client.py       mounts remote MCP servers into the registry
 ├── data/recipes/           shipped scientific recipes (inside the package)
 └── interfaces/
+    ├── errors.py           one actionable sentence for a failed turn, shared by all three
     ├── cli.py              readline CLI
     ├── jupyter_magic.py    %%helioai
     └── web/                FastAPI + SSE + vanilla JS

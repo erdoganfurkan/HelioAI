@@ -11,14 +11,17 @@ allowed_tools: [search_parameters, get_timeseries, get_events_timeseries, load_r
 A text description of a plot is not a figure. To produce a figure, call run_python with `plt.show()`.
 
 ## RULE ZERO-BIS — a computation with a recipe is NEVER hand-written, even when you already know the formula
-Knowing the physics is not the point — `load_recipe(name)` before writing a single line for any
-task in the table below, unconditionally. A recipe carries calibrated parameters (averaging
+Knowing the physics is not the point — run the recipe (`run_recipe`) before writing a single line
+for any task in the table below, unconditionally. A recipe carries calibrated parameters (averaging
 windows, physical constants) and a self-test that code written from memory does not have. Getting
 the formula right from memory and still being wrong is exactly how this table earned its entries:
 a hand-written Rankine-Hugoniot on this same event guessed an eV→K conversion instead of using the
 constant, picked averaging windows the recipe's own calibration table flags as the worst
-combination, and landed 10% off a compression ratio the recipe gets exactly. Load first, adapt
-second — never the other way around.
+combination, and landed 10% off a compression ratio the recipe gets exactly. `run_recipe` runs the
+recipe's source verbatim on the inputs you bind — never copy it into `run_python`. `list_recipes()`
+gives each recipe's inputs; `load_recipe(name)` returns its source, its usage notes and the exact
+call (`run_with`) — read it to understand the method, run it with `run_recipe`. Copying the source
+is for a script that will run outside HelioAI.
 
 ## RULE ONE — download outside the sandbox, always
 Call `get_timeseries` (or `get_events_timeseries`) BEFORE `run_python` — the sandbox has a 60 s
@@ -34,7 +37,7 @@ using one also gives you provenance.
 |---|---|
 | Shock normal angle θ_Bn | `theta_bn` — bind `B` (the downloaded series) and `shock_time`; the recipe derives its windows, refuses one that contains the ramp, and exports `theta_bn_window_spread_deg`, the half-range of the angle over neighbouring window conventions: **that is the ± to report**, not `theta_bn_sampling_std_deg` (a bootstrap inside fixed windows, thirty times smaller on a sheath-bound shock). Bind `B_up`/`B_dn` yourself only when the user gives the windows. In your report, print the upstream and downstream intervals and the mean vectors the recipe printed — a reader re-derives your angle from them in a minute, and cannot without them. |
 | Discontinuity / current-sheet normal (minimum variance) | `mvab` |
-| Shock jump conditions, compression ratio, shock speed | `rankine_hugoniot` — **also picks the upstream/downstream averaging windows**; call `upstream_downstream(t, values, shock_time)` per quantity and never pass averages you computed yourself. Choosing those windows by hand is where this analysis goes wrong: a generous guard band with a long window sounds careful, lands in the decaying sheath, and returns a compression of 1.89 instead of 2.59 with every downstream number wrong. |
+| Shock jump conditions, compression ratio, shock speed | `rankine_hugoniot` — **also picks the upstream/downstream averaging windows**: bind `density`, `speed` and `B` (the downloaded series; `temperature` in eV if you have it) with `shock_time`, and never pass averages you computed yourself. Bind `upstream`/`downstream` only when the user gives the windows, and `normal` from `theta_bn` to project V·n̂. Choosing those windows by hand is where this analysis goes wrong: a generous guard band with a long window sounds careful, lands in the decaying sheath, and returns a compression of 1.89 instead of 2.59 with every downstream number wrong. |
 | Rotational vs tangential discontinuity | `walen_test` |
 | Shock timing between TWO spacecraft | `shock_timing_2sc` — two spacecraft do **not** determine a shock normal (that needs four). Pass the normal from `theta_bn` or `mvab`; deriving it from the separation and the lag makes the transverse separation come out as exactly 0 km for any input, and that tautology has already been published as a geometrical result. |
 | Magnetopause standoff distance (pressure balance) | `pressure_balance` |
@@ -115,9 +118,9 @@ If `get_timeseries` returns a `quality` block with `notable: true`, report it (m
 
 ## Superposed epoch (catalog → SEA)
 1. `get_events_timeseries(catalog_id, param_id, start, stop)` — persists all events, returns a `dataset` key.
-2. `load_recipe("superposed_epoch")`.
-3. run_python: `events = load_data("<param_last_segment>_events")` (list of `ns(time, values, start, stop)`),
-   set `component` (0/1/2 for Bx/By/Bz, scalar handled too), paste the recipe. Never re-fetch — events are already persisted.
+2. `run_recipe("superposed_epoch", inputs={"events": "load_data('<param_last_segment>_events')"})` —
+   add `"component": 0` (1/2) to select Bx/By/Bz of vector data; a scalar is handled as is. Never
+   re-fetch — events are already persisted.
 
 ## Event detection
 For an interplanetary shock whose time you do not know yet: download B **and** the proton density and

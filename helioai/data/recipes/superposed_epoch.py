@@ -1,7 +1,8 @@
 # name: superposed_epoch
 # description: Superposed epoch analysis (SEA) on a collection of events: align, normalize, and composite.
 # inputs: events — list of SimpleNamespace(time, values, start, stop) from load_data("<param>_events"); units; min_events; n_boot; seed; max_gap_cadences; component; n_grid
-# outputs: epoch_median, epoch_q25, epoch_q75, epoch_ci_low, epoch_ci_high, epoch_n
+# run: run_recipe("superposed_epoch", inputs={"events": "load_data('<param>_events')"})
+# outputs: epoch_median, epoch_q25, epoch_q75, epoch_ci_low, epoch_ci_high, epoch_n, epoch_median_peak (value of the median's maximum), epoch_median_peak_tau (its normalized epoch)
 # reference: Superposed epoch (Chree) analysis — Chree (1913), Phil. Trans. R. Soc. A 212, 75. Bootstrap confidence intervals — Efron, B. (1979), Ann. Statist. 7, 1.
 
 """Superposed Epoch Analysis (SEA).
@@ -28,9 +29,9 @@ event has been converted to one common unit: either the caller's `units`, or the
 first event unit when `units` is not bound. Incompatible unit collections are
 refused because no warning can repair a median of unlike dimensions.
 
-Usage inside run_python:
-    events = load_data("imf_gsm_events")   # list of ns(time, values, start, stop)
-    # Then run this script. Set component=0 to select a single column of multi-component data.
+Usage — events is the list of ns(time, values, start, stop) get_events_timeseries saved;
+component selects one column of multi-component data (0, 1, 2 for Bx, By, Bz):
+    run_recipe("superposed_epoch", inputs={"events": "load_data('imf_gsm_events')", "component": 2})
 """
 
 import re
@@ -359,7 +360,13 @@ export("epoch_n", epoch_n, "")
 print(f"SEA complete: {n_events} events, {n_grid} epoch bins")
 finite_median = epoch_median[np.isfinite(epoch_median)]
 if finite_median.size:
+    # The peak of the composite is what a SEA is usually asked for; exported so that it
+    # is read off the recipe rather than recomputed from its internals by hand.
+    _peak = int(np.nanargmax(epoch_median))
+    export("epoch_median_peak", np.array([epoch_median[_peak]]), units)
+    export("epoch_median_peak_tau", np.array([tau_grid[_peak]]), "")
     print(f"Median range: [{np.nanmin(finite_median):.3g}, {np.nanmax(finite_median):.3g}]")
+    print(f"Median peak: {epoch_median[_peak]:.4g} at tau = {tau_grid[_peak]:.3f} (bin {_peak} of {n_grid})")
 else:
     print("Median range: all epoch bins are under-sampled")
 

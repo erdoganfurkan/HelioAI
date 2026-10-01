@@ -335,3 +335,24 @@ def test_a_series_with_plasma_prints_the_screen_verdicts(recipe, capsys):
     assert "[fast-forward: n and V jump with |B|]" in out
     assert "[not a fast-forward shock: |B| jumps alone]" in out
     assert "why the others are not it" in out
+
+
+@pytest.mark.parametrize("path", ["shock_time", "caller_windows"])
+def test_theta_bn_exports_the_magnitudes_of_the_two_mean_fields(recipe, path):
+    """Live runs of 2026-09-25 (quickstart step 3, and a free Wind 2004-11-07 question in
+    the web client): the recipe returned the two mean vectors and their ratio, and each
+    time the analyst wrote one more `run_python` to export |B_up| and |B_dn| — the two
+    numbers every θ_Bn report quotes. They are the magnitudes of the mean vectors, the
+    pair `compression_ratio` divides, not the mean of |B|."""
+    series, b_up, b_dn = _shock_series()
+    if path == "shock_time":
+        run = recipe("theta_bn", B=series, shock_time=SHOCK_TIME)
+    else:
+        run = recipe("theta_bn", B_up=np.tile(b_up, (20, 1)), B_dn=np.tile(b_dn, (20, 1)))
+
+    assert run.value("B_up_mag_nT") == pytest.approx([np.linalg.norm(b_up)])
+    assert run.value("B_dn_mag_nT") == pytest.approx([np.linalg.norm(b_dn)])
+    assert run.exports["B_up_mag_nT"]["units"] == "nT"
+    assert run.value("B_dn_mag_nT") / run.value("B_up_mag_nT") == pytest.approx(
+        run.value("compression_ratio")
+    )

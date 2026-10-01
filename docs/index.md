@@ -1,4 +1,7 @@
-# HelioAI
+# HelioAI { .hai-title }
+
+![HelioAI — heliophysics agent](assets/logo/helioai-logo-light.png#only-light){ width="460" }
+![HelioAI — heliophysics agent](assets/logo/helioai-logo-dark.png#only-dark){ width="460" }
 
 **AI agent for heliophysics and space plasma data analysis.**
 
@@ -68,6 +71,20 @@ directly in [SciQLop](https://github.com/SciQLop/SciQLop) for visual inspection.
 
 ## License and citation
 
-MIT. If HelioAI contributes to published work, please cite it — see
-[CITATION.cff](https://github.com/erdoganfurkan/HelioAI/blob/main/CITATION.cff) — and cite
-the underlying data providers and any recipe references the export lists for you.
+MIT. If HelioAI contributes to published work, please cite it:
+
+```bibtex
+@software{erdogan_helioai,
+  author  = {Erdogan, Furkan},
+  title   = {{HelioAI}: a natural-language agent for heliophysics data discovery and analysis},
+  year    = {2026},
+  version = {0.4.0},
+  url     = {https://github.com/erdoganfurkan/HelioAI},
+  license = {MIT}
+}
+```
+
+The same entry is in [CITATION.cff](https://github.com/erdoganfurkan/HelioAI/blob/main/CITATION.cff).
+Please also cite the data providers you used (AMDA/CDPP, CDAWeb/NASA, CSA/ESA) and the
+method references each exported notebook lists in its *Methods & data acknowledgements*
+cell.

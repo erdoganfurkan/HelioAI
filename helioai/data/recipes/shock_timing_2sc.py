@@ -1,6 +1,7 @@
 # name: shock_timing_2sc
 # description: Two-spacecraft shock timing. Given a shock normal obtained independently (coplanarity/MVA), turns two crossing times and two positions into the shock speed along the normal, and checks it against a Rankine-Hugoniot speed. Refuses to invent the normal.
 # inputs: t1, t2 (numpy datetime64 crossing times), r1, r2 (position 3-vectors in km, same frame, at the crossing times), n_hat (shock normal unit 3-vector from theta_bn or mvab), V_shock_rh (km/s, optional, for the consistency check)
+# run: run_recipe("shock_timing_2sc", inputs={"t1": "np.datetime64('<crossing at 1>')", "t2": "np.datetime64('<crossing at 2>')", "r1": "<position of 1 at t1, km>", "r2": "<position of 2 at t2, km>", "n_hat": "<shock normal from theta_bn or mvab>"})
 # outputs: shock_speed_km_s (along the normal, spacecraft frame), lag_s, along_normal_separation_km, transverse_separation_km, warnings, and a consistency verdict against V_shock_rh
 # reference: Russell et al. (1983), "Multiple spacecraft observations of interplanetary shocks", JGR 88, 9941; Schwartz (1998), "Shock and Discontinuity Normals, Mach Numbers and Related Parameters", ISSI SR-001, ch. 10, §10.4 (timing methods).
 
@@ -34,19 +35,15 @@ Compare it with the Rankine-Hugoniot speed from the jump conditions: two indepen
 routes to the same quantity. Agreement is the strongest statement this analysis makes;
 disagreement means the normal, the crossing times, or the planar assumption is wrong.
 
-Usage inside run_python, after `rankine_hugoniot` has given you V_shock and `theta_bn`
-the normal:
+Usage, after `rankine_hugoniot` has given you V_shock and `theta_bn` the normal:
 
-    t1 = shock_time(t_b1, b1)           # or your own, checked against the plot
-    t2 = shock_time(t_b2, b2)
-    out = timing_2sc(t1, t2, r1_km, r2_km, n_hat, V_shock_rh=585.4)
+    run_recipe("shock_timing_2sc", inputs={"t1": "np.datetime64('<crossing at 1>')",
+               "t2": "np.datetime64('<crossing at 2>')", "r1": "<position of 1, km>",
+               "r2": "<position of 2, km>", "n_hat": "<normal>", "V_shock_rh": 585.4})
 
-    export("lag_s", np.array([out["lag_s"]]), units="s")
-    export("shock_speed_timing", np.array([out["shock_speed_km_s"]]), units="km/s")
-    export("transverse_separation", np.array([out["transverse_separation_km"]]), units="km")
-    for w in out["warnings"]:
-        print("!", w)
-    print(out.get("verdict"), out.get("mismatch"))
+The crossing times can come from its shock_time(t, b) function (through `call`), or from
+your own reading, checked against the plot. It exports lag_s, shock_speed_timing,
+along_normal_separation and transverse_separation, and prints its warnings and verdict.
 
 With the normal pointing upstream (+X at L1, the usual convention), a fast forward shock
 travels along -n, so `V_along_normal` is negative and `shock_speed_km_s` is the comparable

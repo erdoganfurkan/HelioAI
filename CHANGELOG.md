@@ -8,8 +8,107 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-24
+
+### Highlights
+
+- **Search finds the product it is asked for** — recall@1 on the HelioBench identifier
+  tasks 58.6 → 80.0 % live. Replace the index after upgrading: `helioai index --download`.
+- **The index is downloaded, not built**: `helioai index` fetches the one CI built for the
+  release (~125 MB, about a minute) instead of 7 to 10 minutes of local build.
+- **One agent loop** for the lead and its sub-agents; the vetted recipes run as shipped
+  (`run_recipe`); one verdict on every answer; a session replays from its journal.
+- **A first run that explains itself.** OpenCode is the default provider; a failure is one
+  sentence naming the fix, in the CLI, the web UI and Jupyter; `helioai --version`;
+  commands in the interactive prompt; a [troubleshooting page](https://erdoganfurkan.github.io/HelioAI/troubleshooting/).
+- **The web UI** gets the HelioAI logo, a narrow-screen layout, a profile editor, copy and
+  export buttons, and a provider selector that knows which keys are set.
+- **A judge can watch, in observation** — off by default.
+
+Three things changed in this release. **The search finds the product it is asked for.**
+The index is built the same in every process, reads what the archives had already said
+about a product — its measurement type, its coverage, a stated cadence, whether it is a
+model input copied from elsewhere — and its ranking rules were measured on replayed
+queries at zero tokens before any run: on the thirty HelioBench identifier tasks, recall@1
+56.7 → 73.3 % offline and 58.6 → 80.0 % live, products never returned 2 → 0. **The lead
+agent and the roles it delegates to run one loop**: the same runner, the shipped recipes
+run as shipped (`run_recipe`), one verdict on every answer, a journal a session replays
+from. **And a judge can watch, in observation**: the question is read once into a
+contract, joined at the end of the turn against what the run produced, and written into
+no message — off by default, one variable to turn on.
+
+The release was qualified on 23–24 September against the shipped 0.3.0: the question on
+which 0.3.0 had beaten the runtime branch two weeks earlier, replayed on the same index
+(parity); HelioBench, 47 tasks once, each release on the index it ships with (45/47 →
+47/47, retrieval MRR 0.718 → 0.886, no task lost); six judged replays that found five
+defects and fixed them before the merge; `examples/00_quickstart.ipynb` end to end (θ_Bn
+61.0 ± 1.5° against Harvard-CfA's 58.8 ± 2.7°) and its export run in a plain kernel; and
+the wheel installed into an empty environment on the day's resolution — openai 3.19,
+sentence-transformers 6.1, speasy 1.8.2, mcp 2.2 — with `doctor`, the MCP handshake, a
+sandboxed run and 1618 tests passing against the installed package.
+
+### Upgrading from 0.3.0
+
+- **Replace the index**: `helioai index --download` fetches the index built for 0.4.0
+  (~125 MB, about a minute); `helioai index --rebuild` builds the same one locally — 7 to
+  10 minutes on a recent machine, no API key: the classification the pass paid for ships
+  in the package and is applied byte for byte. The 0.4.0 ranking reads fields a 0.3.0
+  index does not carry; running 0.4.0 on a 0.3.0 index was not measured, so do not.
+- **If you use Azure without setting `HELIOAI_LLM_PROVIDER`, set it now**:
+  `HELIOAI_LLM_PROVIDER=azure`. The default provider is `opencode`.
+- Nothing else. The session store adds its columns on first use, every new behaviour is
+  off unless its variable is set (`HELIOAI_JUDGMENT_BACKEND`, `HELIOAI_EXPERIMENTS`), and
+  no other variable changed meaning.
+
 ### Fixed
 
+- **DeepSeek in thinking mode no longer rejects a question halfway through.** DeepSeek
+  returns its chain of thought as `reasoning_content` and, on any request that carries
+  tools, requires every earlier assistant turn's `reasoning_content` back — its
+  documentation says so and answers 400 otherwise. HelioAI never read the field, so it
+  never sent it back; the rule was enforced intermittently (0 rejections in 204 calls on
+  2026-09-25, 2 in ~51 on 2026-09-28/29, one on the lead's sixth call of a question). The
+  reasoning is now kept on the assistant message, sent back only when the provider returned
+  one — no other provider sees the field — and stored with the session, so a reloaded
+  conversation keeps it too. It is never displayed. Every model call is now streamed,
+  sub-agents included: the OpenCode gateway drops `reasoning_content` from non-streamed
+  replies (0 of 24 turns on 2026-09-29, 24 of 24 streamed), which is why the sub-agents
+  still died after the lead was fixed; an endpoint that refuses streaming is asked again
+  without it. And because the gateway routes one model to backends that disagree — one
+  streams no reasoning at all, the next refuses the history that follows (a lead died on
+  its fourth call, both earlier turns empty) — the first such refusal makes the client fill
+  every missing `reasoning_content` with an empty string, which the rule accepts, replay
+  the request, and keep doing so. No other provider ever sees the field, so sessions saved
+  before this release, which carry no reasoning, continue too.
+- **A failed turn says what broke and how to fix it, in one line.** No key, a local server
+  not started, a key refused: the CLI printed 264 lines of httpx traceback and the
+  interactive prompt died with it, the web UI showed the SDK's bare "Connection error.",
+  Jupyter a raw exception. `helioai.interfaces.errors` now names the variable to set or
+  the command to run, for all three; the stack returns with `HELIOAI_LOG_LEVEL=DEBUG`. The
+  CLI exits 1 on a failed one-shot, and the prompt survives a failed turn. OpenCode with
+  no `HELIOAI_OPENCODE_MODEL` is caught before the question is spent, and by `doctor`.
+- **A mistyped command is refused instead of asked.** `helioai hsitory`, `helioai
+  --verison` — or `--version` itself — went to the model as a question, created a session
+  and came back with its guess. A lone word close to a command, or a token shaped like an
+  option, now gets the right spelling (exit 2); any other word is still a question.
+  `helioai-mcp --help` started a stdio server waiting on the terminal; it prints its usage.
+- **A session prefix names one session or none.** `history delete` and `export` took the
+  first session a prefix matched; an ambiguous prefix now lists them and does nothing.
+- **The CLI writes escape codes only to a terminal**, and honours `NO_COLOR`: `helioai
+  history > file` wrote them into the file. The prompt starts without `readline`, which
+  Windows' Python does not ship.
+- **Figures and scripts of earlier sessions survive a moved data directory.** Sessions
+  record files by absolute path, so after `HELIOAI_DATA_DIR` changed, `migrate-storage`, a
+  Docker volume or a restored backup, every earlier session showed broken figures in the
+  web UI. `/figure` and `/code` re-root such a path under the caller's own workspace, then
+  apply the same containment and ownership checks as before.
+- **Web UI details.** Deleting a session asks first (it removes the workspace); the session
+  list's buttons no longer cover the title, and its times are local; the last two French
+  strings are English; the figure fallback is built from DOM nodes, not an HTML string
+  holding a path; `/favicon.ico` no longer 404s on every page load.
+- **`helioai doctor` shows what needs doing.** The judgment and experiment lines restating
+  defaults leave the text report (they stay in `--json`), and "optional extras: index"
+  named an extra that does not exist.
 - **A search ranks the same in every process.** Chroma persists its HNSW graph only every
   `sync_threshold` writes — 1000 by default — and replays whatever followed the last persist
   into the in-memory graph at every start, in an order that varies. Measured on 2026-09-22
@@ -59,7 +158,6 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   none is never demoted for it. On the 30 replayed n1 queries, five processes each: recall@1
   56.7 → 73.3 %, recall@3 90.0 → 96.7 %, recall@5 90.0 → 100 %, MRR 0.736 → 0.847 — read
   with the caveat that those 30 queries are where the failures these rules name were found.
-  second, where a 2026 IMAP position led before.
 - **A sandbox program has no size limit anymore; `run_recipe` works on Windows.** The
   assembled script — a 14 576-character preamble, then the agent's code — travelled to the
   interpreter as the argument of `python -c`, and an argument has a size: 32 767 characters
@@ -210,6 +308,75 @@ project uses [semantic versioning](https://semver.org/). While the version stays
   in the exported notebook raised `ValueError` on the same call — the live quickstart's
   plot cell, `export('t_shock_iso', str(t_shock))`, drew its figure and then failed. The
   exported helper prints such a value as it is.
+- **A number rounded to the digits it shows is no longer "contradicted".** The live
+  quickstart of 2026-09-25 wrote "B·n̂ std 1.5 nT" for a recorded `Bn_std_nT` of 1.5153,
+  and the provenance line under the answer read `contradicted`: the prose check allowed
+  only its 0.5 % tolerance, while the claims check of the same answer already accepted a
+  value rounded to its shown digits. The prose check now applies that rounding rule to
+  the scalar the wording names, so one answer is held to one rule; a digit further off
+  ("1.6 nT") is still contradicted, and a negative claim is not the rounding of a
+  positive record, in either check.
+- **A density in the archive's spelling is the same unit as in the reply's.** A live web
+  run of 2026-09-25 exported ACE densities with CDAWeb's own unit, `#/cc`, and claimed them
+  in `cm^-3`: astropy reads neither `#/cc` nor `n/cc`, so the claims check found the units
+  irreconcilable and three densities stated to the digit (7.64 for 7.637) came back
+  unsourced. The index carries some twenty spellings of a number density (`#/cc`, `n/cc`,
+  `1/cm^3`, `Protons/cm**3`, `cm^{-3}`, IDL's `cm!u-3!n`…); both checks now fold them into
+  one (`provenance_check.canonical_unit`) before comparing. `eV/cm^3` is an energy density
+  and stays apart; a unit neither spelling table nor astropy reads still leaves the claim
+  unjudged rather than accused. On that run, 3 backed / 6 unsourced becomes 6 / 3 — the
+  three left are the standard deviations and the missing fraction, which the script
+  printed and never exported, and which the model itself marked `asserted`.
+- **`theta_bn` exports |B_up| and |B_dn|.** It returned the two mean vectors and their
+  ratio; the two magnitudes every θ_Bn report quotes were missing, and on both live runs
+  of 2026-09-25 (the quickstart, a free Wind 2004-11-07 question) the analyst wrote one
+  more `run_python` to export them. `B_up_mag_nT` and `B_dn_mag_nT` are the magnitudes of
+  the mean vectors — the pair `compression_ratio` divides — not the mean of |B|, which
+  fluctuations make larger.
+- **The web code panel of a `run_recipe` step shows the run, not the recipe.** The saved
+  script carries the recipe verbatim — it is the record of what the sandbox ran and stays
+  whole on disk — so the panel of a θ_Bn step showed some 700 lines of which the model
+  wrote five. The panel now shows those lines and the call, runnable, with the recipe read
+  from the installed helioai (`export.recipe_run_view`, the cut the notebook export already
+  makes), and a link to the full script. Only when what ran is, to the byte, the recipe
+  the installed package ships: otherwise the short view would run another recipe than the
+  session did, and the panel shows the full script as before — which is what a session run
+  on an earlier `theta_bn` shows after this release.
+- **`find_papers` widens a query that starves.** ADS requires every bare word of a query,
+  and the model writes eight to twelve of them: on a live web turn of 2026-09-25, ten of
+  the twelve queries about the 2015 St. Patrick's Day shock returned 0–3 papers — each
+  extra word ("driver", "in situ", "ACE") removing some — the two librarians found one
+  paper between them, and the lead ran five searches of its own. A query that returns
+  fewer papers than asked is now sent once more with its bare words made optional (one
+  `OR` group; fielded terms, quoted phrases and negations stay required), restricted to
+  refereed papers of the astronomy database and ranked by relevance: by citations, "any
+  of these words" is headed by *Deep learning*, and the heliophysics collection holds
+  almost nothing before 2024. The exact hits come first, the result carries `relaxed` and
+  the `relaxed_query`, and a query with explicit `AND`/`OR`/`NOT` is sent as written.
+  Replayed against ADS through the tool (no model call): those twelve queries return 96
+  papers against 27, eight each, the two the answer finally cited among them.
+- **A value exactly half-way between two roundings is stated by either.** A recipe
+  exported a window spread of 1.45° and the answer said "± 1.5°": the claims verdict
+  called it `contradicted`, because |1.45 − 1.5| is 0.050000000000000044 in floating
+  point, a hair over the half-digit. The bound now leaves room for the last bits; one
+  digit further is still another number.
+- **The recipe check fires on the `theta_bn` a session actually loads.** `theta_bn`, `mvab`
+  and `walen_test` define a stand-in `export()` under `__main__`, and the "loaded but never
+  called" signal counted it among the recipe's functions — so the `export(...)` that ends
+  every hand-written copy was a call of the recipe, and since 2026-09-15 a `theta_bn`
+  loaded, rewritten inline and exported under its own name was flagged neither on the
+  `run_python` result nor in the answer. The tests fed a toy source without the stub; one
+  now reads the shipped files.
+- **The librarian has a turn to answer after its third search.** Its instructions allow
+  three `find_papers` calls and its cap was four turns, with none to spare: on the same
+  turn a librarian made a fourth search, was capped before it could reply, and the four
+  results it had were lost. The cap is five.
+- **The quickstart's one-question step asks for the recipe's windows by name.** "13-minute
+  upstream and downstream averages clear of the ramp" was read by the analyst as windows
+  13 minutes *away* from the ramp (03:32–03:45, 04:15–04:28 UT): it ran the recipe's own
+  windows (60.9°, ±1.45° over the conventions), then its reading (56.0°), and the answer
+  quoted 56.0° with the other windows' ±1.5°. The question now names the recipe's default
+  windows from the shock time found, and asks for the recipe's window spread.
 - `import helioai` no longer creates directories: the session store now creates its
   database and schema on first use rather than at import.
 - `httpx2` is declared as a dependency. `tools/mcp_client.py` imports it directly (the
@@ -271,6 +438,32 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Added
 
+- **`helioai index` fetches the prebuilt index** on an empty install — the index CI built
+  for the release, from the Hugging Face Hub (`HELIOAI_INDEX_REPO`, ~125 MB, about a
+  minute) — instead of building it locally, which takes 7 to 10 minutes on a recent
+  machine and longer on a modest one. It falls back to the local build when the download
+  is not possible. `--download` replaces an existing index with the release's;
+  `--export DIR` writes a snapshot. The `Index` workflow builds the index from scratch at
+  every release tag and publishes it, refusing a snapshot that lost more than 5 % of the
+  products expected.
+- **The HelioAI logo**, in the README (following GitHub's light or dark theme), as the
+  documentation's logo and favicon, and in the web UI.
+- **Commands in the interactive prompt**: `/new`, `/history`, `/export`, `/help`, `/quit`.
+  A line starting with `/` never reaches the model. And `helioai --version`.
+- **The web UI works on a narrow screen**: below 900 px the sidebar is a drawer and the
+  code panel covers the chat.
+- **A turn's data in one box**: a question's parameter cards share a *Data used (N)*
+  section, folded once the turn is done if it holds more than two, without the repeat of
+  a series the analysis script read again. Copy buttons on answers and on the code panel,
+  and an *Export session as notebook* button after the last answer.
+- **A profile editor in the web UI**, over the `/api/profile` routes that had no screen.
+- **The web UI knows what the server has.** `/api/config` says which providers have a key
+  — the selector labels and disables the others — and whether `HELIOAI_USERS` or
+  `HELIOAI_DEV_TOKEN` is set, so the token field reads *Access token*, *Dev token*, or is
+  hidden. It reports booleans, never a key; a 401 opens the sidebar on the token field.
+- **Documentation**: a [troubleshooting page](https://erdoganfurkan.github.io/HelioAI/troubleshooting/),
+  a BibTeX entry to cite HelioAI in the README and on the home page, and
+  `helioai serve --http` documented on its real port, 8765.
 - **A seam for a System One judge beside the loop — `helioai.core.judgment`, in
   observation.** HelioAI verifies itself thoroughly (claims against the ledger, ids against
   the index, code against the recipes, tools against the plan) and nothing verifies it
@@ -622,6 +815,49 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ### Changed
 
+- **A recipe is used one way: `run_recipe`.** The role prompts, the skills, the lead's tool
+  list and the catalogue hint said "`load_recipe`, then paste it into `run_python`" while
+  `run_recipe` — which runs the source verbatim on the inputs bound — went unnamed, and
+  the model followed the text: in the twelve 0.4.0-candidate sessions of the 2026-09-25
+  A/B, two loaded `rankine_hugoniot` and rewrote it by hand (`not_called`). Every text now
+  names `run_recipe`; copying is named for its one use, a script that runs outside
+  HelioAI. A test scans everything the model reads for an instruction to copy a recipe.
+- **From the catalogue straight to the run.** `list_recipes` gives each recipe its
+  `run_with` — the `run_recipe` call with its own input names — so a recipe can be run
+  without being loaded first. When a run fails, or produces nothing at all, `run_recipe`
+  returns the recipe's notice (`recipe_notice`: usage, signatures, `run_with`). Six
+  recipes read their inputs with `globals().get` and, bound under a wrong name, did
+  nothing — no export, no output, no error — which the model could not tell from a quiet
+  recipe. An unknown recipe name comes back with the names there are.
+- **Every physics recipe runs the same way: `run_recipe(name, inputs)`.** Nine of the
+  eleven already read their inputs; `rankine_hugoniot` was a library that did nothing
+  without a `call` the model had to write, and its instructions said to paste it; the
+  two hand-written copies of the 2026-09-25 A/B were of this recipe. It now has a run block: bind `density`, `speed`, `B` (and `temperature` in eV,
+  `normal`) with `shock_time` — the recipe picks its calibrated windows — or with given
+  `upstream`/`downstream` windows, or the means `n_u … B_d`; it exports the window means
+  with their units next to `rh_jump`'s, and a partial binding is an error that names what
+  is missing. The jump conditions are unchanged; the self-check still runs. Only
+  `fill_values`, a library for scripts that run outside HelioAI, takes a `call`.
+  `run_with` now reads the inputs a recipe reads in a loop as well: `shock_timing_2sc`
+  was announced as needing only its optional `V_shock_rh`.
+- **Each recipe declares the call that runs it.** A `# run:` line in the header gives the
+  usual `run_recipe(...)` call with `<...>` placeholders, and `run_with` puts it first
+  and names the other inputs after it: listed flat and alphabetically, the eighteen
+  names `rankine_hugoniot` reads — three alternative bindings — did not say which to
+  bind. Every declared call is executed by the tests on stand-in data with gaps:
+  `mvab` and `walen_test` refuse a NaN by design, so their calls select the finite rows
+  (on one time grid for the Walén test). `fill_values` declares what it is for — a copy
+  into a script that runs outside HelioAI, where `load_data()` has not blanked the fills.
+  The usage notes of seven recipes — the `usage` `load_recipe` returns — still read
+  "Usage inside run_python: … then run this script"; they show the `run_recipe` call
+  now, and the test that scans what the model reads covers the recipes' own text.
+- **`superposed_epoch` exports the peak of its median profile** (`epoch_median_peak`, in
+  the data's unit) and its normalized epoch (`epoch_median_peak_tau`). A SEA is asked for
+  its peak; every session computed it by hand, reaching into the recipe's internals.
+- **OpenCode is the default provider.** The README sends a new user to OpenCode while the
+  code defaulted to Azure, an enterprise deployment no newcomer has, so the first error
+  anyone saw named `AZURE_OPENAI_API_KEY`. The default is now `opencode` in the code,
+  `.env.example`, the documentation and the web selector.
 - **`theta_bn` averages over 13-minute windows, the Harvard-CfA convention, instead of
   8-minute ones.** The CfA shock database publishes θ_Bn method by method, and its
   magnetic-coplanarity (MC) entries rest on 260 field samples per side — 13 min at 3 s — so
@@ -1118,7 +1354,8 @@ changed; the import package, the CLI commands and the API are all unchanged.
   functionally before using it and logs `sandbox_not_isolated` when it falls back, so
   the logs answer the question on any host.
 
-[Unreleased]: https://github.com/erdoganfurkan/HelioAI/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/erdoganfurkan/HelioAI/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/erdoganfurkan/HelioAI/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/erdoganfurkan/HelioAI/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/erdoganfurkan/HelioAI/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/erdoganfurkan/HelioAI/releases/tag/v0.2.0

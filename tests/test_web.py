@@ -37,6 +37,15 @@ def fake_stream():
     return _gen
 
 
+@pytest.fixture(autouse=True)
+def _configured_default_provider(monkeypatch):
+    """A server whose default provider can answer: OpenCode, the default, has no model
+    until one is set, and the stream refuses to start without it."""
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.llm.opencode, "model", "test-model")
+
+
 @pytest.fixture
 def web_client(monkeypatch, fake_stream, tmp_path):
     """TestClient with stream_chat and build_llm_client monkeypatched."""
@@ -292,6 +301,75 @@ def test_figure_unsupported_type_rejected(web_client, tmp_path, monkeypatch):
     assert r.status_code == 404
 
 
+def test_a_figure_recorded_under_a_moved_data_dir_is_found_in_the_current_one(web_client, tmp_path):
+    """Moving HELIOAI_DATA_DIR left every earlier session showing broken figures."""
+    fig_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
+    fig_dir.mkdir(parents=True)
+    (fig_dir / "fig_0.png").write_bytes(b"\x89PNG\r\n")
+    recorded = "/old/data/users/web/workspace/sess123/fig_0.png"
+
+    r = web_client.get(f"/figure?path={recorded}")
+
+    assert r.status_code == 200 and r.content.startswith(b"\x89PNG")
+
+
+def test_a_copied_data_dir_serves_its_own_files_not_the_originals(web_client, tmp_path):
+    """The original tree may still exist (a copy, not a move): it is outside the root,
+    so it is never served, and the current root's copy is."""
+    old = tmp_path.parent / f"{tmp_path.name}-old" / "users" / "web" / "workspace" / "s1"
+    old.mkdir(parents=True)
+    (old / "fig_0.png").write_bytes(b"\x89PNG old")
+    new = tmp_path / "users" / "web" / "workspace" / "s1"
+    new.mkdir(parents=True)
+    (new / "fig_0.png").write_bytes(b"\x89PNG new")
+
+    r = web_client.get(f"/figure?path={old / 'fig_0.png'}")
+
+    assert r.status_code == 200 and r.content == b"\x89PNG new"
+
+
+def test_a_moved_script_is_found_too(web_client, tmp_path):
+    code_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
+    code_dir.mkdir(parents=True)
+    (code_dir / "code_0.py").write_text("x = 1\n", encoding="utf-8")
+
+    r = web_client.get("/code?path=/old/data/users/web/workspace/sess123/code_0.py")
+
+    assert r.status_code == 200 and "x = 1" in r.text
+
+
+@pytest.mark.parametrize(
+    "recorded",
+    [
+        "/old/users/web/workspace/../../../etc/passwd.png",
+        "/old/users/web/workspace/sess/../../secret.png",
+        "/old/users/web/workspace/",
+        "/etc/passwd.png",
+    ],
+)
+def test_relocation_cannot_leave_the_callers_workspace(web_client, tmp_path, recorded):
+    (tmp_path / "secret.png").write_bytes(b"\x89PNG")
+
+    assert web_client.get(f"/figure?path={recorded}").status_code == 404
+
+
+def test_relocation_lands_in_the_callers_own_workspace(web_client, tmp_path, monkeypatch):
+    """Another user's recorded path re-roots under the caller's home, never theirs."""
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.web_auth, "users", {"tok-alice": "alice", "tok-bob": "bob"})
+    bob = tmp_path / "users" / "bob" / "workspace" / "s1"
+    bob.mkdir(parents=True)
+    (bob / "fig_0.png").write_bytes(b"\x89PNG")
+
+    r = web_client.get(
+        "/figure?path=/old/users/bob/workspace/s1/fig_0.png",
+        headers={"X-Helio-Token": "tok-alice"},
+    )
+
+    assert r.status_code == 404
+
+
 # ── Code endpoint ────────────────────────────────────────────────────────────
 
 
@@ -325,6 +403,31 @@ def test_code_valid(web_client, tmp_path, monkeypatch):
     assert "text/plain" in r.headers["content-type"]
     assert "param_card" not in r.text  # agent-only call stripped
     assert "def clean(" in r.text and "def export(" in r.text  # shims supplied
+
+
+def test_code_of_a_recipe_run_shows_its_own_lines_and_the_full_script_on_request(
+    web_client, tmp_path
+):
+    from helioai.config import _PKG_RECIPES
+    from helioai.tools.recipes import recipe_script
+
+    code_dir = tmp_path / "users" / "web" / "workspace" / "sess123"
+    code_dir.mkdir(parents=True)
+    code_file = code_dir / "code_0.py"
+    recipe = (_PKG_RECIPES / "theta_bn.py").read_text(encoding="utf-8")
+    code_file.write_text(
+        recipe_script("theta_bn", recipe, {"B_up": [5, 0, 8.66], "B_dn": [5, 0, 21.65]}, None),
+        encoding="utf-8",
+    )
+
+    short = web_client.get(f"/code?path={code_file}")
+    assert short.status_code == 200
+    assert "def theta_bn(" not in short.text and "run_recipe('theta_bn'" in short.text
+    assert int(short.headers["X-HelioAI-Full-Lines"]) > 600
+
+    full = web_client.get(f"/code?path={code_file}&full=true")
+    assert "def theta_bn(" in full.text
+    assert "X-HelioAI-Full-Lines" not in full.headers
 
 
 def test_session_messages_attach_code(monkeypatch, tmp_path):
@@ -609,8 +712,11 @@ def test_index_html_loads_no_external_cdn_scripts():
 def test_app_js_sanitizes_markdown_before_innerHTML():
     """LLM/tool output rendered as markdown must go through DOMPurify before innerHTML."""
     js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
-    assert js.count("DOMPurify.sanitize(marked.parse(") >= 2  # live reply + history replay
+    # One renderer, fillReply, for the live reply and the history replay alike.
+    assert js.count("DOMPurify.sanitize(marked.parse(") == 1
+    assert js.count("fillReply(") >= 3  # its definition, the live reply, the replay
     assert "= marked.parse(" not in js  # no unsanitized innerHTML assignment left
+    assert "innerHTML = `" not in js  # no HTML assembled from strings
 
 
 def test_every_streamed_event_has_a_web_handler():
@@ -822,6 +928,25 @@ def test_streams_stay_bound_to_their_session_in_the_real_app_js():
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     assert "OK web session streams" in proc.stdout
+
+
+def test_a_turn_renders_its_cards_answer_and_export_in_the_real_app_js():
+    """Folding data box without repeats, copy and export buttons, provider and token
+    fields driven by /api/config — tests/web/test_turn_ui.js."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    proc = subprocess.run(
+        [node, str(Path(__file__).parent / "web" / "test_turn_ui.js")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    assert "OK web turn ui" in proc.stdout
 
 
 # ── an injected correction replays as a system note, not as the user's question ──
@@ -1075,3 +1200,73 @@ def test_a_session_without_a_journal_is_served_empty_so_the_browser_falls_back(
         "user",
         "assistant",
     ]
+
+
+def test_a_provider_that_cannot_answer_is_reported_in_words(web_client, monkeypatch):
+    """The banner used to carry the SDK's bare `Connection error.`; it now says the fix."""
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.llm.opencode, "model", "")
+    r = web_client.post(
+        "/chat/stream",
+        json={"message": "hi", "session_id": "s-missing-model", "provider": "opencode"},
+    )
+
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    assert events[-1]["event"] == "error"
+    assert "HELIOAI_OPENCODE_MODEL" in events[-1]["data"]["message"]
+
+
+# ── /api/config: what the sidebar needs, never a secret ─────────────────────────
+
+
+def test_config_says_which_providers_can_answer_without_revealing_keys(web_client, monkeypatch):
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.llm.groq, "api_key", "gsk-secret")
+    monkeypatch.setattr(settings.llm.gemini, "api_key", "")
+    monkeypatch.setattr(settings.llm.opencode, "api_key", "oc-secret")
+    monkeypatch.setattr(settings.llm.opencode, "model", "")
+
+    r = web_client.get("/api/config")
+
+    ready = r.json()["providers"]
+    assert ready["groq"] is True and ready["gemini"] is False and ready["ollama"] is True
+    assert ready["opencode"] is False, "a key without a model cannot answer"
+    assert "secret" not in r.text
+
+
+@pytest.mark.parametrize(
+    ("users", "dev", "expected"),
+    [
+        ({}, "", (False, False)),
+        ({}, "s3cr3t-dev", (False, True)),
+        ({"s3cr3t-user": "alice"}, "", (True, False)),
+    ],
+)
+def test_config_says_what_the_token_field_is_for(web_client, monkeypatch, users, dev, expected):
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.web_auth, "users", users)
+    monkeypatch.setattr(settings.dev, "token", dev)
+
+    body = web_client.get("/api/config").json()
+
+    assert (body["auth"], body["dev_token"]) == expected
+    assert "s3cr3t" not in str(body)
+
+
+def test_the_page_has_no_french_left():
+    """The UI is English; two fallbacks were still in French."""
+    js = (Path(__file__).parent.parent / "helioai/interfaces/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+    assert "non accessible" not in js and "Ouvrir" not in js
+
+
+def test_the_favicon_is_served_where_browsers_look(web_client):
+    r = web_client.get("/favicon.ico")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/x-icon"
+    html = web_client.get("/").text
+    assert "/static/favicon.ico" in html and "/static/icon.png" in html
+    assert web_client.get("/static/icon.png").status_code == 200

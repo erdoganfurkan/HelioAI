@@ -19,7 +19,21 @@ helioai> compare MMS and Cluster magnetic field during the 2017-07-11 reconnecti
 helioai> superposed epoch analysis of MMS bow-shock crossings — proton density, 2017
 ```
 
-Figures open in your OS viewer automatically. Ctrl+D or `exit` to leave.
+Figures open in your OS viewer automatically. Ctrl+D or `/quit` to leave.
+
+Lines starting with `/` are commands for the prompt itself and never reach the model:
+
+| Command | Does |
+|---|---|
+| `/new` | start a new session; the current one stays in `/history` |
+| `/history` | list your sessions |
+| `/export` | export the current session as a notebook |
+| `/help` | list these |
+| `/quit` | leave |
+
+When something fails — no key, a local server not started, a key refused — the prompt
+prints one line saying what to fix and stays open. `HELIOAI_LOG_LEVEL=DEBUG` adds the
+traceback. Colours are dropped when the output is not a terminal, or with `NO_COLOR` set.
 
 ### One-shot
 
@@ -36,7 +50,12 @@ helioai --session <id>       # continue a specific one
 helioai history delete <id>  # drop a session and its workspace
 helioai export [prefix]      # export a session as a notebook
 helioai profile              # edit your profile in $EDITOR
+helioai --version
 ```
+
+A prefix that fits several sessions lists them instead of picking one. The profile is a
+short note the agent reads with every question — your field, the frames and units you
+prefer, the language to answer in.
 
 ## Jupyter
 
@@ -64,10 +83,15 @@ helioai serve --web
 # → http://localhost:7890
 ```
 
-A three-panel layout: conversation, artifact viewer (figures with a PDF download and
-lightbox, parameter cards, catalog previews), and a code panel showing the scripts the
-agent generated. An activity dock streams tool calls, sub-agent spawns and figure reviews
-live over SSE, and the answer itself appears as the model writes it.
+A three-panel layout: sessions, the conversation with its artifacts (figures with a PDF
+download and lightbox, parameter cards grouped under *Data used*, catalog previews), and a
+code panel showing the scripts the agent generated. An activity dock streams tool calls,
+sub-agent spawns and figure reviews live over SSE, and the answer itself appears as the
+model writes it. Each answer has a copy button, and the last one an *Export session as
+notebook* button. *Profile* in the sidebar edits the same profile as `helioai profile`.
+
+The provider selector only offers providers the server has a key for. On a screen
+narrower than 900 px the sidebar folds into a drawer behind the ☰ button.
 
 ![One question answered end to end in the web UI: the plan, the parameter card, the
 activity dock filling with tool calls, the figure, and the generated script opened in the
@@ -76,8 +100,9 @@ code panel](../assets/web-demo.gif)
 <sub>A real session. The sidebar is cropped out; nothing else is edited.</sub>
 
 !!! danger "Do not expose this without authentication"
-    `run_python` executes model-written code. The open-source build binds to localhost and
-    ships no authentication. Read
+    `run_python` executes model-written code. The web UI binds to localhost; on any other
+    address it refuses to start unless `HELIOAI_USERS` gives each user a token, which
+    they then paste into the sidebar's *Access token* field. Read
     [SECURITY.md](https://github.com/erdoganfurkan/HelioAI/blob/main/SECURITY.md) before
     putting it on any network.
 
@@ -120,12 +145,16 @@ because the client launches the server from its own working directory.
 === "HTTP"
 
     ```bash
-    helioai-mcp --http --port 8080
+    helioai serve --http            # or: helioai-mcp --http
+    # → streamable HTTP on http://127.0.0.1:8765/mcp
     ```
+
+    `--host` and `--port` change the bind. Any address other than loopback requires
+    `HELIOAI_MCP_TOKEN`, sent by the client as `Authorization: Bearer <token>`.
 
 ### What the server exposes
 
-**Tools** — the same 17 the agent uses, from the same registry, so the two surfaces cannot
+**Tools** — the same 18 the agent uses, from the same registry, so the two surfaces cannot
 drift apart. The 15 that change nothing are marked read-only, which is what lets a client
 stop prompting for `list_missions` the way it prompts for `run_python`.
 

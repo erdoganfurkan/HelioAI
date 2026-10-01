@@ -1,6 +1,7 @@
 # name: pitch_angle_dist
 # description: Compute the pitch angle of a particle population given particle velocity vectors and local magnetic field vectors, then plot the pitch angle distribution (PAD).
 # inputs: V (array (N,3) km/s), B (array (N,3) or (3,) nT), n_bins (int, default 18), bins ("cos" or "deg", default "cos"), label (plot title)
+# run: run_recipe("pitch_angle_dist", inputs={"V": "load_data('<v>').values", "B": "interp_to(load_data('<v>').time, load_data('<b>').time, load_data('<b>').values)"})
 # outputs: pitch_angles_median_deg, pitch_angles_mean_deg, n_particles, pad_counts, pad_bin_edges_deg, pad_anisotropy
 # reference: Pitch angle α = arccos(V·B / |V||B|); see Baumjohann & Treumann (1996), Basic Space Plasma Physics, ch. 2.
 

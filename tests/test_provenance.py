@@ -683,3 +683,49 @@ def test_concurrent_records_keep_every_value(tmp_path, monkeypatch):
 
     names = {v["name"] for v in provenance.read_ledger(tmp_path)["values"]}
     assert names == {f"v{i:02d}" for i in range(16)}
+
+
+def test_a_named_scalar_rounded_to_the_digits_shown_is_matched_not_contradicted():
+    """Live run, 2026-09-25, quickstart step 3: the recipe exported Bn_std_nT = 1.5153 nT,
+    the reply wrote "B·n̂ std 1.5 nT" and the line under the answer read `contradicted`.
+    1.5 is 1.5153 rounded to the digit the reply shows — the rule the claims validator
+    already applies to the same answer. A digit further off is still a different number.
+    """
+    from helioai.core.provenance_check import extract_claims, verify
+
+    ledger = {
+        "values": [
+            {
+                "name": "Bn_std_nT",
+                "units": "nT",
+                "mean": 1.5153055875923644,
+                "shape": [1],
+                "sample": [1.5153055875923644],
+            }
+        ]
+    }
+    rounded = verify(extract_claims("normal spread 2.0°, B·n̂ std 1.5 nT"), ledger)
+    assert rounded.contradicted == 0, rounded.details
+    assert rounded.matched == 1
+
+    wrong = verify(extract_claims("normal spread 2.0°, B·n̂ std 1.6 nT"), ledger)
+    assert wrong.contradicted == 1
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["#/cc", "n/cc", "/cc", "ions/cc", "1/cm^3", "#/cm3", "Protons/cm**3", "cm^{-3}", "cm!u-3!n"],
+)
+def test_the_archives_spellings_of_a_number_density_are_one_unit(spelling):
+    """Live web run, 2026-09-25: an ACE density exported with CDAWeb's own unit, `#/cc`,
+    and claimed as `cm^-3` came back "units could not be reconciled" three times — 7.64
+    for a recorded 7.637. The index carries some twenty spellings of the same unit;
+    none of them is another quantity."""
+    from helioai.core.provenance_check import _same_unit
+    from helioai.runtime.validator import judge_claim
+
+    assert _same_unit("cm^-3", spelling)
+    entry = {"name": "Np_mean", "units": spelling, "mean": 7.637, "std": 0.0, "shape": []}
+    claim = {"name": "Np_mean", "value": 7.64, "units": "cm^-3", "source": "Np_mean"}
+    assert judge_claim(claim, [entry])[0] == "matched"
+    assert not _same_unit("eV/cm^3", spelling)

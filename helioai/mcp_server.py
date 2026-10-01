@@ -5,7 +5,7 @@ Usage:
     helioai serve              # stdio (Claude Desktop / claude CLI)
     helioai serve --http       # HTTP streamable on 127.0.0.1:8765
     helioai serve --http --host 0.0.0.0 --port 9000   # requires HELIOAI_MCP_TOKEN
-    helioai-mcp                # direct entry point (stdio only)
+    helioai-mcp [--http ...]   # direct entry point, same flags
 
 Skills are listed from a process-lifetime-cached index (skills_loader._discover is
 lru_cache'd): a skill added or edited after this process started is invisible until
@@ -385,18 +385,43 @@ def _arg(args: list[str], flag: str, default: str) -> str:
         return default
 
 
+_USAGE = """\
+HelioAI MCP server — the agent's tools for Claude Code, Claude Desktop, Codex, ...
+
+Usage:
+    helioai-mcp                                   # stdio (what MCP clients launch)
+    helioai-mcp --http [--host H] [--port P]      # streamable HTTP, 127.0.0.1:8765
+    helioai-mcp --version
+
+A non-loopback --host requires HELIOAI_MCP_TOKEN. `helioai mcp-install` prints the
+client configuration for this install.
+"""
+
+
 def main() -> None:
     """Entry point for the `helioai-mcp` command.
+
+    `--help` and `--version` are answered before anything else: an MCP server on stdio
+    reads the terminal as its protocol stream, so the reflex `helioai-mcp --help` used
+    to start a server that sat waiting for JSON-RPC, with nothing on screen to say so.
 
     Example:
         helioai-mcp                        # stdio (Claude Desktop, claude CLI)
         helioai-mcp --http --port 8765     # streamable HTTP on 127.0.0.1:8765
     """
+    args = sys.argv[1:]
+    if {"-h", "--help"} & set(args):
+        print(_USAGE)
+        return
+    if {"-V", "--version"} & set(args):
+        from helioai import __version__
+
+        print(f"helioai-mcp {__version__}")
+        return
     setup_logging("WARNING")
     from helioai.workspace import cleanup_old_runs
 
     cleanup_old_runs()
-    args = sys.argv[1:]
     if "--http" in args:
         host = _arg(args, "--host", "127.0.0.1")
         port = int(_arg(args, "--port", "8765"))

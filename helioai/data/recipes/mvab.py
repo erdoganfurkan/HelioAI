@@ -1,6 +1,7 @@
 # name: mvab
 # description: Minimum Variance Analysis of B (MVAB) — finds the coordinate system where Bn variance is minimum, giving the current-sheet or discontinuity normal.
 # inputs: B (magnetic field array shape (N,3) in nT)
+# run: run_recipe("mvab", inputs={"B": "load_data('<b>').values[np.isfinite(load_data('<b>').values).all(axis=1)]"})
 # outputs: mvab_ratio_int_min, mvab_lambda_min, mvab_dphi_min_int, mvab_dphi_min_max, mvab_dBn, mvab_normal
 # reference: Sonnerup & Scheible (1998), "Minimum and Maximum Variance Analysis", in Analysis Methods for Multi-Spacecraft Data, ISSI SR-001, ch. 8, eq. 8.23-8.24 for the uncertainties.
 
@@ -30,8 +31,9 @@ Quality indicators and uncertainty:
 
 Reference: Sonnerup & Scheible, ISSI SR-001, 1998, ch. 8.
 
-Usage (inside run_python):
-    B = var.values[:, :3]   # (N, 3) array, columns = Bx, By, Bz in nT
+Usage — B is an (N, 3) array of finite rows, columns Bx, By, Bz in nT (a NaN is refused,
+so select the finite rows of a series that has gaps):
+    run_recipe("mvab", inputs={"B": "load_data('b').values[np.isfinite(load_data('b').values).all(axis=1)]"})
 """
 
 import numpy as np

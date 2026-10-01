@@ -360,14 +360,17 @@ async def test_sandbox_cannot_read_server_proc() -> None:
 
 async def test_home_not_leaked_to_sandbox(monkeypatch) -> None:
     """H4 — sandbox HOME must be a scratch dir, never the server's real home."""
+    import tempfile
+
     monkeypatch.setenv("HOME", "/home/secret-user")
     code = "import os; print(os.environ.get('HOME', 'MISSING'))"
     result = await run_python(code)
     assert result.get("error") is None, result.get("stderr", "")
     home = result["stdout"].strip()
+    scratch = ("/tmp/", f"{tempfile.gettempdir().rstrip('/')}/")
     assert home != "/home/secret-user", "server HOME leaked into sandbox"
-    assert home == "/tmp" or home.startswith("/tmp/"), (
-        f"sandbox HOME={home!r}, expected a /tmp-scoped scratch dir"
+    assert home == "/tmp" or home.startswith(scratch), (
+        f"sandbox HOME={home!r}, expected /tmp or a scratch dir under {scratch[1]!r}"
     )
 
 

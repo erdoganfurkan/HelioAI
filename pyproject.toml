@@ -56,15 +56,20 @@ dependencies = [
     # It arrives through mcp anyway; declaring it means a future mcp that drops it
     # fails at resolution, not at import.
     "httpx2>=2.0",
+    # Imported directly by index_snapshot.py to fetch and publish the prebuilt index. It
+    # arrives through sentence-transformers anyway; declaring it means a release that
+    # drops it fails at resolution, not at import. 0.23 is the first with
+    # `huggingface_hub.errors`.
+    "huggingface-hub>=0.23",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "structlog>=24.0",
-    "numpy>=2.1",
+    "numpy>=2.2",
     "matplotlib>=3.10",
     "pillow>=10",
     "scipy>=1.15",
     "astropy>=6.0",
-    "ipython>=8.27",
+    "ipython>=8.28",
     "ipywidgets>=8.0",
     "ipykernel>=6.0",
     "nbformat>=5.0",

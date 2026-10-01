@@ -9,6 +9,7 @@ added in response to a real failure are pinned.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -124,3 +125,76 @@ def test_data_analyst_templates_use_the_real_attribute_name():
     assert code_lines, "no template lines found — did the skill move?"
     offenders = [ln for ln in code_lines if ".unit)" in ln or ".unit}" in ln]
     assert not offenders, f"templates call the non-existent .unit: {offenders}"
+
+
+_COPY = re.compile(r"\b(paste|pasted|copy|include it)\b", re.IGNORECASE)
+_SCRIPT = re.compile(
+    r"usage\W{0,3}inside run_python|\brun this script|pass it to run_python", re.IGNORECASE
+)
+_ALLOWED = ("never", "not ", "n't", "outside helioai")
+
+
+def _model_facing_texts() -> dict[str, str]:
+    import helioai.tools.setup  # noqa: F401  — populates the registry
+    from helioai.core.agent_loop import SYSTEM_PROMPT
+    from helioai.core.sub_agents import AGENT_ROLES
+    from helioai.tools.registry import registry
+
+    texts = {
+        f"skill {p.name}": (p / "SKILL.md").read_text(encoding="utf-8")
+        for p in Path(SKILLS_DIR).iterdir()
+        if p.is_dir()
+    }
+    texts |= {f"addon {name}": role.system_addon for name, role in AGENT_ROLES.items()}
+    texts["lead prompt"] = SYSTEM_PROMPT
+    texts |= {f"tool {t.name}": t.description for t in registry.list_tool_defs()}
+    texts |= _recipe_texts()
+    return texts
+
+
+def _recipe_texts() -> dict[str, str]:
+    """What `list_recipes` and `load_recipe` hand the model: the header and the usage."""
+    import ast
+
+    from helioai.config import _PKG_RECIPES
+    from helioai.tools.recipes import _parse_header
+
+    texts = {}
+    for path in sorted(_PKG_RECIPES.glob("*.py")):
+        code = path.read_text(encoding="utf-8")
+        header = _parse_header(code)
+        usage = ast.get_docstring(ast.parse(code)) or ""
+        texts[f"recipe {path.stem}"] = "\n\n".join([*header.values(), usage])
+    return texts
+
+
+def _copy_instructions(text: str) -> list[str]:
+    sentences = re.split(r"(?<=[.!?])\s+|\n\s*\n", text)
+    return [
+        " ".join(s.split())
+        for s in sentences
+        if not any(a in s.lower() for a in _ALLOWED)
+        and ((_COPY.search(s) and "recipe" in s.lower()) or _SCRIPT.search(s))
+    ]
+
+
+def test_no_text_the_model_reads_says_to_copy_a_recipe():
+    """One way to use a recipe: `run_recipe`, which runs its source verbatim. Six texts
+    said "load_recipe, then paste it into run_python" — the path every recipe check was
+    written to police, and the one two of twelve sessions of the 2026-09-25 A/B took with
+    `rankine_hugoniot`. Copying stays legitimate for a script that will run outside
+    HelioAI, and a sentence that says not to copy is not an instruction to. The recipes'
+    own headers and usage notes are read too — `load_recipe` returns them — and seven of
+    them said "Usage inside run_python: … then run this script", which a copy-word scan
+    could not see."""
+    offenders = {
+        where: found
+        for where, text in _model_facing_texts().items()
+        if (found := _copy_instructions(text))
+    }
+    assert not offenders, offenders
+    assert _copy_instructions("load_recipe(name), adapt it and paste it into run_python.")
+    assert _copy_instructions("Usage inside run_python:\n    events = load_data('x')")
+    assert _copy_instructions("B = load_data('b')\n    # Then run this script.")
+    assert _copy_instructions("Returns the Python source — pass it to run_python to execute it.")
+    assert not _copy_instructions("Never copy a recipe into run_python.")

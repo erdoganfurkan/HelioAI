@@ -17,6 +17,8 @@
   --ai-bubble: #1c2128;
 }
 
+[hidden] { display: none !important; }
+
 html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; background: var(--bg); color: var(--text); }
 
 /* Layout */
@@ -32,7 +34,8 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Sego
   overflow-y: auto;
 }
 
-.sidebar h1 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
+.sidebar h1 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; display: flex; align-items: center; }
+.brand-icon { width: 26px; height: 26px; border-radius: 6px; flex-shrink: 0; margin-right: 8px; }
 .sidebar h1 span { color: var(--accent); }
 
 .sidebar label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 4px; display: block; }
@@ -66,20 +69,23 @@ select:focus { border-color: var(--accent); }
 .session-item.active { background: var(--accent-dim); border-color: var(--accent); }
 .session-item .s-preview { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-item .s-meta { font-size: 11px; color: var(--text-muted); }
-.session-item .btn-delete {
-  display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-  background: none; border: none; color: var(--red); font-size: 14px; font-weight: 700;
-  cursor: pointer; padding: 2px 4px; line-height: 1;
+/* The actions sit on the meta line's right, over a solid background, and only while the
+   item is hovered or focused — they no longer cover the title. */
+.session-item { position: relative; }
+.session-item .s-actions {
+  display: none; position: absolute; right: 6px; bottom: 5px; gap: 2px;
+  background: inherit; border-radius: 4px;
 }
-.session-item .btn-export {
-  display: none; position: absolute; right: 28px; top: 50%; transform: translateY(-50%);
-  background: none; border: none; color: var(--text-muted); font-size: 14px; font-weight: 700;
-  cursor: pointer; padding: 2px 4px; line-height: 1;
+.session-item:hover .s-actions,
+.session-item:focus-within .s-actions { display: flex; }
+.session-item:hover .s-actions { background: var(--card-bg); }
+.session-item.active .s-actions { background: var(--accent-dim); }
+.session-item .s-actions button {
+  background: none; border: none; font-size: 14px; font-weight: 700;
+  cursor: pointer; padding: 0 5px; line-height: 1.2; color: var(--text-muted);
 }
 .session-item .btn-export:hover { color: var(--accent); }
-.session-item { position: relative; }
-.session-item:hover .btn-delete,
-.session-item:hover .btn-export { display: block; }
+.session-item .btn-delete { color: var(--red); }
 
 /* Main */
 .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -91,7 +97,30 @@ select:focus { border-color: var(--accent); }
 /* Messages */
 .msg-user, .msg-ai { max-width: 72%; padding: 12px 16px; border-radius: 12px; line-height: 1.5; word-break: break-word; }
 .msg-user { align-self: flex-end; background: var(--user-bubble); border: 1px solid var(--accent-dim); }
-.msg-ai { align-self: flex-start; background: var(--ai-bubble); border: 1px solid var(--border); }
+.msg-ai { align-self: flex-start; background: var(--ai-bubble); border: 1px solid var(--border); position: relative; }
+.msg-copy {
+  position: absolute; top: 6px; right: 6px; opacity: 0; transition: opacity .15s;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+  color: var(--text-muted); font-size: 11px; padding: 2px 8px; cursor: pointer;
+}
+.msg-ai:hover .msg-copy, .msg-copy:focus { opacity: 1; }
+.msg-copy:hover { color: var(--text); border-color: var(--accent); }
+
+/* What a turn produced, and what to do with it */
+.data-used { align-self: stretch; display: flex; flex-direction: column; gap: 8px; }
+.data-used > summary {
+  cursor: pointer; user-select: none; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);
+}
+.data-used > summary:hover { color: var(--text); }
+.data-used[open] > summary { margin-bottom: 8px; }
+.data-used > .parameter-card + .parameter-card { margin-top: 8px; }
+.turn-actions { align-self: flex-start; display: flex; gap: 8px; }
+.btn-turn {
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-muted); font-size: 12px; padding: 4px 10px; cursor: pointer;
+}
+.btn-turn:hover { color: var(--accent); border-color: var(--accent); }
 .msg-ai-live { white-space: pre-wrap; }
 
 /* Timeline events */
@@ -423,6 +452,13 @@ select:focus { border-color: var(--accent); }
   flex-shrink: 0;
 }
 .cp-title { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-family: monospace; }
+.cp-toggle { color: var(--accent, #58a6ff); text-transform: none; letter-spacing: 0; font-weight: 400; cursor: pointer; }
+.cp-actions { display: flex; align-items: center; gap: 6px; }
+.cp-copy {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-muted); font-size: 11px; padding: 2px 8px; cursor: pointer;
+}
+.cp-copy:hover { color: var(--text); border-color: var(--accent); }
 .cp-close {
   background: none; border: none; color: var(--text-muted);
   font-size: 14px; cursor: pointer; padding: 2px 6px; border-radius: 4px;
@@ -543,3 +579,70 @@ select:focus { border-color: var(--accent); }
 
 /* A note HelioAI injected into the conversation (an automated correction): neither bubble. */
 .msg-system { align-self: center; max-width: 80%; margin: 4px 0; padding: 6px 10px; font-size: 0.85em; opacity: 0.8; border-left: 3px solid var(--accent, #888); white-space: pre-wrap; }
+
+/* Profile */
+.btn-profile {
+  width: 100%; padding: 6px 8px; text-align: left;
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-muted); font-size: 12px; cursor: pointer;
+}
+.btn-profile:hover { color: var(--text); border-color: var(--accent); }
+
+.modal { position: fixed; inset: 0; z-index: 1100; display: flex; align-items: center; justify-content: center; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.7); }
+.modal-inner {
+  position: relative; width: min(560px, 92vw);
+  background: var(--sidebar-bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 18px 20px; display: flex; flex-direction: column; gap: 10px;
+}
+.modal-inner h2 { font-size: 16px; }
+.modal-hint { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.modal-inner textarea {
+  width: 100%; resize: vertical; padding: 10px 12px;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font: inherit; line-height: 1.5; outline: none;
+}
+.modal-inner textarea:focus { border-color: var(--accent); }
+.modal-bar { display: flex; align-items: center; gap: 8px; }
+.modal-status { flex: 1; font-size: 12px; color: var(--text-muted); }
+.btn-primary, .btn-secondary {
+  padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.btn-primary { background: var(--accent); border: none; color: #000; }
+.btn-secondary { background: none; border: 1px solid var(--border); color: var(--text-muted); }
+
+/* Narrow screens: the sidebar becomes a drawer, the code panel covers the chat */
+.topbar { display: none; }
+.sidebar-backdrop { display: none; }
+
+@media (max-width: 900px) {
+  .topbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--sidebar-bg);
+  }
+  .topbar-title { font-size: 16px; font-weight: 700; display: flex; align-items: center; }
+  .topbar-title .brand-icon { width: 22px; height: 22px; margin-right: 7px; }
+  .topbar-title span { color: var(--accent); }
+  .btn-menu {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-size: 16px; padding: 2px 9px; cursor: pointer;
+  }
+  .sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 900;
+    width: min(300px, 85vw); min-width: 0;
+    transform: translateX(-100%); transition: transform .2s;
+  }
+  .sidebar.open { transform: none; }
+  .sidebar-backdrop.open { display: block; position: fixed; inset: 0; z-index: 800; background: rgba(0,0,0,.55); }
+  .code-panel { position: fixed; inset: 0; z-index: 950; width: auto; min-width: 0; }
+  .chat-area { padding: 16px 14px; }
+  .input-bar { padding: 10px 12px; }
+  .msg-user, .msg-ai { max-width: 92%; }
+  .parameter-card, .catalog-card, .plan-card { max-width: 100%; }
+}
+
+@media (max-width: 600px) {
+  .suggested-prompts { grid-template-columns: 1fr; }
+  .welcome { padding: 20px 4px; }
+  .param-chip { white-space: normal; }
+}

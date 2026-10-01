@@ -40,9 +40,11 @@ def test_data_analyst_tools() -> None:
 
 
 def test_librarian_tools() -> None:
+    """Three searches and the answer are four turns; the cap leaves one spare, no more —
+    a librarian capped after a fourth search lost what it had found (2026-09-25)."""
     role = AGENT_ROLES["librarian"]
     assert role.allowed_tools == ("find_papers",)
-    assert role.max_turns <= 4
+    assert role.max_turns == 5
     assert "librarian" in role.auto_load_skills
 
 

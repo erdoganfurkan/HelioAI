@@ -12,7 +12,7 @@ provider's key is checked when a client is built.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `HELIOAI_LLM_PROVIDER` | `azure` | `azure`, `groq`, `gemini`, `opencode` or `ollama`. |
+| `HELIOAI_LLM_PROVIDER` | `opencode` | `opencode`, `groq`, `gemini`, `azure` or `ollama`. Until 0.4.0 the default was `azure`. |
 | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` | — | Azure OpenAI credentials; both required for `azure`. |
 | `AZURE_OPENAI_DEPLOYMENT` | `models-gpt-53-chat` | Deployment name (Azure routes by deployment, not model). |
 | `AZURE_OPENAI_API_VERSION` | `2024-12-01-preview` | Azure API version. |
@@ -32,9 +32,10 @@ provider's key is checked when a client is built.
 | `HELIOAI_ROLE_MODELS` | — | `role=provider[:model],…` — run a delegated role (`parameter_hunter`, `data_analyst`, `plasma_physicist`, `librarian`) on its own provider and model instead of the lead's client; a `parameter_hunter` needs no frontier model. Its usage is billed to that provider. |
 | `HELIOAI_EXPERIMENTS` | — | Comma-separated names of the behaviours under evaluation, each off unless named: `deferred_tools` (the lead sees the formulary and catalogue tools only after asking with `search_tools`), `search_budget` (a role past its lookup allowance with nothing downloaded is told to use the ids it has), `search_variables` (the top hit of a parameter search lists its dataset's variables), `judgment_intent` (with `HELIOAI_JUDGMENT_BACKEND=jev`, the question is read once by the judge into an intent contract, placed against what the turn loaded and delivered — frame, window, quantity, responsiveness — and emitted as an `intent` event after the answer; observation, nothing in the loop acts on it). An unknown name is refused when a model is built and by `helioai doctor` — a misspelt experiment must not be measured as if it ran. `final_answer` graduated from this list after the third benchmark and is always on: the lead closes a measured answer with `final_answer(answer, claims)` and the claim verdict is produced. |
 | `HELIOAI_RAG_HYBRID` | `1` | `0` for dense-only parameter search instead of BM25 + dense fused by RRF. |
+| `HELIOAI_INDEX_REPO` | `erdoganfurkan/helioai-speasy-index` | Hugging Face dataset `helioai index` downloads the prebuilt index from when the local one is empty, and `helioai index --download` always. Empty turns the download off: the index is always built locally. |
 | `HELIOAI_VISION_ENABLED` | `0` | Review generated figures with a multimodal side-call (text verdict only enters the history). |
 | `HELIOAI_VISION_PROVIDER`, `HELIOAI_VISION_MODEL` | `azure`, — | Provider and model for that review. |
-| `HELIOAI_JUDGMENT_BACKEND` | `null` | Who answers the judgment questions of `helioai.core.judgment`: `null` abstains on every one (the loop behaves exactly as without the module), `jev` asks TypeSafe's System One model (extra `judgment`, `TYPESAFE_API_KEY`). A site only asks when its `judgment_<site>` experiment is also named in `HELIOAI_EXPERIMENTS`; every answer is recorded under the session workspace (`judgment.jsonl`) and none corrects the model. An unknown backend is refused when a model is built and by `helioai doctor`. |
+| `HELIOAI_JUDGMENT_BACKEND` | `null` | Leave at `null` unless you are working on the [judgment layer](dev/judgment.md). It chooses who answers the judgment questions of `helioai.core.judgment`: `null` abstains on every one (the loop behaves exactly as without the module), `jev` asks TypeSafe's judge model (extra `judgment`, `TYPESAFE_API_KEY`). A site only asks when its `judgment_<site>` experiment is also named in `HELIOAI_EXPERIMENTS`; every answer is recorded under the session workspace (`judgment.jsonl`) and none corrects the model. An unknown backend is refused when a model is built and by `helioai doctor`. |
 | `HELIOAI_JUDGMENT_MODEL`, `HELIOAI_JUDGMENT_TIMEOUT_S` | `jev-latest`, `2.0` | The judge model, and the bound on one call — past it the judge abstains. |
 | `TYPESAFE_API_KEY` | — | Key for the `jev` backend. Never required to import or run HelioAI. |
 | `HELIOAI_DEV_TOKEN` | — | Shared secret that lifts the heliophysics scope guardrail (`--dev`, `X-Helio-Dev-Token`). Empty means nothing unlocks it. |
@@ -59,7 +60,8 @@ provider's key is checked when a client is built.
 | `HELIOAI_ALLOW_UNAUTHENTICATED_PUBLIC` | `0` | Lets `serve --web` bind a non-loopback address with no users. Only for a container whose port the host publishes on loopback (`docker-compose.yml` sets it). |
 | `HELIOAI_MCP_TOKEN` | — | Bearer token for `helioai-mcp --http`; a non-loopback bind without it is refused. |
 | `HELIOAI_LOG_FORMAT` | `console` | `console` or `json` (structlog). |
-| `HELIOAI_LOG_LEVEL` | per entry point | Overrides the level the CLI, the web server or the MCP server set. |
+| `HELIOAI_LOG_LEVEL` | per entry point | Overrides the level the CLI, the web server or the MCP server set. `DEBUG` also shows the traceback behind a CLI error. |
+| `NO_COLOR` | unset | Any value turns off the CLI's colours ([no-color.org](https://no-color.org)). Output that is not a terminal never gets them. |
 
 Also read: `XDG_DATA_HOME` (the installed-package data root and speasy's own inventory
 location), `EDITOR` (`helioai profile`), and the sandbox's environment allow-list, which is

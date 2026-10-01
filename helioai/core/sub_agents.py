@@ -100,8 +100,9 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "You specialise in data analysis, visualisation, multi-mission comparison, "
             "and plasma event detection. "
             "For a standard named computation (theta_Bn, MVAB normal, Rankine-Hugoniot, Walén test, "
-            "pressure balance, pitch-angle, superposed epoch), load_recipe FIRST and reuse it — "
-            "unconditionally, even when you already know the formula. A recipe carries calibrated "
+            "pressure balance, pitch-angle, superposed epoch), run the recipe with run_recipe — "
+            "unconditionally, even when you already know the formula, and never copy it into "
+            "run_python. A recipe carries calibrated "
             "parameters (averaging windows, physical constants) and a self-test that code written "
             "from memory does not have; only write custom code when no recipe matches. "
             "Use search_parameters if any parameter id is missing or unclear. "
@@ -114,7 +115,7 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "A text description of a plot is not a plot. Always call run_python. "
             "For multi-mission work: call get_timeseries once per mission, then load all datasets "
             "in a single run_python call via load_data(). "
-            "For SEA: call get_events_timeseries first, then load_recipe('superposed_epoch'), then run_python. "
+            "For SEA: call get_events_timeseries first, then run_recipe('superposed_epoch') on its events. "
             "For event detection: implement threshold / derivative / boundary criteria in "
             "run_python; report event times, key signatures, and SPASE PhenomenonType if applicable."
         ),
@@ -159,7 +160,10 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "query — never pad the reply with weak matches."
         ),
         allowed_tools=("find_papers",),
-        max_turns=4,
+        # Three searches and the answer is four turns, with none to spare: on 2026-09-25 a
+        # librarian made a fourth search, was capped before it could reply, and the four
+        # results it had were lost — the lead ran five searches of its own to replace them.
+        max_turns=5,
         auto_load_skills=("librarian",),
     ),
     "plasma_physicist": SubAgentRole(
@@ -170,7 +174,7 @@ AGENT_ROLES: dict[str, SubAgentRole] = {
             "plasmapy (imported as `pf`) and astropy units (imported as `u`). "
             "Example: pf.gyrofrequency(B=40*u.nT, particle='p+').to(u.Hz). "
             "For a standard named computation — shock jump conditions, theta_Bn, "
-            "Walen test, magnetopause standoff — call load_recipe first, "
+            "Walen test, magnetopause standoff — run the recipe with run_recipe, "
             "unconditionally, even when you already know the formula: the "
             "recipes carry their scientific reference and calibrated parameters, "
             "so a derivation is attributable instead of improvised. "

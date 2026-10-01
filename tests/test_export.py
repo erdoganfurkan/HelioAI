@@ -7,6 +7,7 @@ import json
 import sys
 
 import nbformat
+import numpy as np
 import pytest
 
 import helioai.export as export_module
@@ -818,3 +819,62 @@ def test_a_shipped_recipe_is_reported_identical_when_it_ran_unchanged(monkeypatc
     edited = run._replace(source=run.source + "\n# edited")
     md2, _ = _recipe_source_cells(edited, edited.source)
     assert "**different from** the `theta_bn` shipped" in md2.source
+
+
+# ── the web code view of a run_recipe script ──────────────────────────────────────
+
+
+def _theta_bn_run(source: str | None = None) -> str:
+    from helioai.config import _PKG_RECIPES
+    from helioai.tools.recipes import recipe_script
+
+    code = source or (_PKG_RECIPES / "theta_bn.py").read_text(encoding="utf-8")
+    bx, bz = 10 * np.cos(np.radians(60)), 10 * np.sin(np.radians(60))
+    return recipe_script(
+        "theta_bn", code, {"B_up": [bx, 0.0, bz], "B_dn": [bx, 0.0, 2.5 * bz]}, None
+    )
+
+
+def test_the_code_view_of_a_recipe_run_is_its_own_lines_and_still_runs(capsys):
+    """Web session, 2026-09-25: the code panel of each `run_recipe` step showed ~700
+    lines, 618 of them the recipe — the notebook export already kept the recipe once, the
+    panel did not. The view is the run's own bindings and the call, with the recipe read
+    from the installed helioai, and it still computes what the session computed."""
+    from helioai.export import recipe_run_view
+
+    view = recipe_run_view(_theta_bn_run(), {"datasets": {}})
+
+    assert view is not None
+    assert "def theta_bn(" not in view
+    assert "run_recipe('theta_bn', inputs={'B_up': B_up, 'B_dn': B_dn})" in view
+    assert len(view.splitlines()) < 80
+    exec(compile(view, "<code view>", "exec"), {})
+    assert "theta_bn: shape=(1,) min=60 deg max=60 deg mean=60 deg" in capsys.readouterr().out
+
+
+def test_the_code_view_of_a_rankine_hugoniot_run_without_a_call_still_runs(capsys):
+    """rankine_hugoniot runs through its own run block now, with no `call`: the short view
+    of such a step binds the inputs, reads the shipped recipe and computes the same jump."""
+    from helioai.config import _PKG_RECIPES
+    from helioai.export import recipe_run_view
+    from helioai.tools.recipes import recipe_script
+
+    means = {"n_u": 17.43, "n_d": 45.12, "V_u": 411.3, "V_d": 514.1, "B_u": 10.0, "B_d": 25.27}
+    means |= {"T_u": 8.34, "T_d": 45.0}
+    source = (_PKG_RECIPES / "rankine_hugoniot.py").read_text(encoding="utf-8")
+    view = recipe_run_view(recipe_script("rankine_hugoniot", source, means, None), {"datasets": {}})
+
+    assert view is not None and "def rh_jump(" not in view
+    exec(compile(view, "<code view>", "exec"), {})
+    assert "V_shock: shape=(1,) min=578" in capsys.readouterr().out
+
+
+def test_a_recipe_that_is_not_the_one_shipped_is_shown_in_full():
+    """The short view reads the recipe from the installed package; when what ran is not
+    that text, reading it would run another recipe — the view falls back to the script."""
+    from helioai.config import _PKG_RECIPES
+    from helioai.export import recipe_run_view
+
+    edited = (_PKG_RECIPES / "theta_bn.py").read_text(encoding="utf-8") + "\n# edited\n"
+    assert recipe_run_view(_theta_bn_run(edited), {"datasets": {}}) is None
+    assert recipe_run_view("x = 1\nexport('x', x)\n", {"datasets": {}}) is None

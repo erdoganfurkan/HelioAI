@@ -195,23 +195,19 @@ async def test_the_search_budget_experiment_applies_each_roles_allowance(
 
 
 @pytest.mark.parametrize("role", ["data_analyst", "plasma_physicist"])
-def test_role_prompts_are_the_pre_experiment_text_and_run_recipe_stays_reachable(role):
-    """The addons are the reference loop's; `run_recipe` is in both whitelists. The
-    `data_analyst` skill carries the two paragraphs the third bench asked for — shock
-    candidates screened against the plasma, and the window spread as the ± to report —
-    and nothing else that names `run_recipe`."""
+def test_role_prompts_run_a_recipe_through_run_recipe(role):
+    """`run_recipe` is the one way a role is told to use a recipe. The addons and skills
+    used to say "load_recipe, then paste it into run_python" while `run_recipe` sat unnamed
+    in the whitelist, and two of twelve sessions of the 2026-09-25 A/B loaded
+    rankine_hugoniot and rewrote it by hand."""
     from helioai.core.skills_loader import list_skills, load_skill
 
     addon = sub_agents.AGENT_ROLES[role].system_addon
-    assert "load_recipe" in addon
-    assert "run_recipe" not in addon
+    assert "run_recipe" in addon
     assert "run_recipe" in sub_agents.AGENT_ROLES[role].allowed_tools
     meta = next(m for m in list_skills() if m.name == role)
     assert "run_recipe" in meta.allowed_tools
     body = load_skill(role)
-    assert "load_recipe" in body
+    assert "run_recipe" in body
     if role == "data_analyst":
         assert "theta_bn_window_spread_deg" in body
-        assert body.count("run_recipe(") == 1, "only the shock-candidate screen names the tool"
-    else:
-        assert "run_recipe" not in body

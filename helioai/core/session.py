@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_call_id TEXT,
     origin       TEXT,
     name         TEXT,
+    reasoning    TEXT,
     FOREIGN KEY (user_id, session_id)
         REFERENCES sessions(user_id, session_id) ON DELETE CASCADE
 );
@@ -81,6 +82,7 @@ _MIGRATIONS = (
     "ALTER TABLE sessions ADD COLUMN workspace_dir TEXT",
     "ALTER TABLE messages ADD COLUMN origin TEXT",
     "ALTER TABLE messages ADD COLUMN name TEXT",
+    "ALTER TABLE messages ADD COLUMN reasoning TEXT",
 )
 
 
@@ -210,7 +212,7 @@ class SessionStore:
     def _load(self, user_id: str, session_id: str) -> list[Message]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT role, content, tool_calls, tool_call_id, origin, name "
+                "SELECT role, content, tool_calls, tool_call_id, origin, name, reasoning "
                 "FROM messages WHERE user_id = ? AND session_id = ? ORDER BY seq",
                 (user_id, session_id),
             ).fetchall()
@@ -222,8 +224,9 @@ class SessionStore:
                 tool_call_id=tool_call_id,
                 origin=origin,
                 name=name,
+                reasoning=reasoning,
             )
-            for role, content, tool_calls, tool_call_id, origin, name in rows
+            for role, content, tool_calls, tool_call_id, origin, name, reasoning in rows
         ]
 
     def save(self, user_id: str, session_id: str, history: list[Message]) -> None:
@@ -245,7 +248,7 @@ class SessionStore:
             )
             conn.executemany(
                 "INSERT INTO messages(user_id, session_id, seq, role, content, tool_calls, "
-                "tool_call_id, origin, name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "tool_call_id, origin, name, reasoning) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         user_id,
@@ -257,6 +260,7 @@ class SessionStore:
                         m.tool_call_id,
                         m.origin,
                         m.name,
+                        m.reasoning,
                     )
                     for i, m in enumerate(history)
                 ],

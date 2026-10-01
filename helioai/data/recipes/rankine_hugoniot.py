@@ -1,7 +1,8 @@
 # name: rankine_hugoniot
 # description: Rankine-Hugoniot analysis of a collisionless shock. Derives the upstream/downstream averaging windows from the shock time itself, then computes compression ratio, shock speed and Mach numbers, and checks them against each other.
-# inputs: shock_time (numpy datetime64), and per quantity a (time, values) pair — magnetic field magnitude nT, proton density cm-3, bulk speed km/s, temperature eV (optional). Each may have its own cadence.
-# outputs: V_shock (km/s, spacecraft frame), r (density compression ratio), plus the windows used and a consistency verdict
+# inputs: density (cm-3), speed (km/s) and B (nT) — series from load_data, each on its own cadence — with shock_time (numpy datetime64; the recipe picks the windows) or with upstream=(t0, t1) and downstream=(t0, t1) when the windows are given; optional temperature (series, eV) and normal (unit 3-vector, projects V·n̂); or instead the means n_u, n_d, V_u, V_d, B_u, B_d (optional T_u, T_d)
+# run: run_recipe("rankine_hugoniot", inputs={"density": "load_data('<n>')", "speed": "load_data('<v>')", "B": "load_data('<b>')", "shock_time": "np.datetime64('<crossing time>')"})
+# outputs: V_shock (km/s, spacecraft frame), r (density compression ratio), B_ratio, M_A, M_ms, V_A, c_s, U_upstream, mom_residual, r_predicted, r_mismatch, and the window means n/V/B/T_upstream and _downstream; the windows used and a consistency verdict are printed
 # reference: Rankine-Hugoniot jump conditions (Rankine 1870; Hugoniot 1887); for collisionless shocks see Schwartz (1998), ISSI SR-001, ch. 10 — including the averaging-window guidance this recipe implements.
 
 """Rankine-Hugoniot jump conditions for a collisionless shock.
@@ -16,23 +17,27 @@ by hand is where the analysis actually goes wrong: one run averaged the downstre
 from shock+30 min out to shock+120 min, landing in the decaying sheath rather than the
 shocked plasma. Density came out 32 cm-3 instead of 45, the compression ratio 1.89
 instead of 2.59, and the Alfvenic Mach number 4.6 instead of 3.2 — every downstream
-number wrong, from one plausible-sounding choice. Do not pass your own averages.
+number wrong, from one plausible-sounding choice. Do not average the series yourself.
 
-Usage: load_recipe("rankine_hugoniot") returns this source. Paste it into run_python and
-call, with each quantity on its own time base (B is typically 3 s, plasma moments 92 s):
+Usage: run_recipe("rankine_hugoniot", inputs={...}) picks the averaging windows and
+applies rh_jump. Bind either
 
-    n_u, n_d = upstream_downstream(t_n, n, shock_time)
-    V_u, V_d = upstream_downstream(t_v, v, shock_time)
-    B_u, B_d = upstream_downstream(t_b, bmag, shock_time)
-    T_u, T_d = upstream_downstream(t_t, t_ev, shock_time)
-    V_shock, r = rh_jump(n_u=n_u, n_d=n_d, V_u=V_u, V_d=V_d, B_u=B_u, B_d=B_d, T_u=T_u, T_d=T_d)
+    density, speed, B          the series from load_data(), each on its own time base
+                               (B is typically 3 s, plasma moments 92 s), and
+    shock_time                 the crossing: both windows are derived from it —
+    or upstream=(t0, t1), downstream=(t0, t1) instead, only when the windows are given;
+    temperature (a series in eV) and normal (unit 3-vector) are optional,
 
-Recommended pipeline when the shock normal is known:
+or, only when you were handed numbers and hold no series, the means themselves: n_u,
+n_d, V_u, V_d, B_u, B_d (T_u, T_d optional). The window means are exported with their
+units next to rh_jump's own exports. The functions (shock_windows, upstream_downstream,
+rh_jump) stay callable through `call` for anything the run block does not cover.
 
-    theta_bn or mvab -> n_hat -> upstream_downstream(t_v, v, shock_time, normal=n_hat)
+Recommended when the shock normal is known: bind normal=n_hat from theta_bn or mvab,
+which projects V·n̂ instead of averaging |V|.
 
-V_shock comes back FIRST — this example used to read `r, V_shock`, which silently
-swapped a 579 km/s speed with a compression ratio of 2.59.
+rh_jump returns V_shock FIRST, then r — an earlier example read `r, V_shock`, which
+silently swapped a 579 km/s speed with a compression ratio of 2.59.
 
 V_shock is in the spacecraft frame, derived from mass-flux conservation. Two things
 follow. Do not use V_d * r/(r-1) instead: it assumes the upstream plasma is at rest,
@@ -337,3 +342,53 @@ _neg = _rh_core(n_u=5.0, n_d=13.0, V_u=-400.0, V_d=-600.0, B_u=5.0, B_d=15.0, T_
 assert _pos == _neg, "a flipped shock normal must not change the result"
 assert _neg["V_shock"] > 0 and _neg["M_ms"] > 1, _neg
 assert np.isfinite(_neg["r_mismatch"]), "the compression check must survive a flipped normal"
+
+
+# ── Run block: what run_recipe binds ─────────────────────────────────────────────────────
+# With nothing bound it does nothing, so the self-check above never enters a ledger. A
+# partial binding is an error that names what is missing: silently doing nothing was
+# indistinguishable, to the model, from a recipe that had run.
+_series = {k: globals().get(k) for k in ("density", "speed", "B")}
+_means = {k: globals().get(k) for k in ("n_u", "n_d", "V_u", "V_d", "B_u", "B_d")}
+_when = {k: globals().get(k) for k in ("shock_time", "upstream", "downstream")}
+_named = [k for k, v in {**_series, **_means, **_when}.items() if v is not None]
+
+if _named and all(v is not None for v in _means.values()):
+    rh_jump(**_means, T_u=globals().get("T_u", 0.0), T_d=globals().get("T_d", 0.0))
+elif _named:
+    _windows = None
+    if _when["upstream"] is not None and _when["downstream"] is not None:
+        _windows = (*map(np.datetime64, _when["upstream"]), *map(np.datetime64, _when["downstream"]))
+    elif _when["shock_time"] is not None:
+        _windows = shock_windows(
+            _when["shock_time"],
+            globals().get("guard_min", GUARD_MIN),
+            globals().get("span_min", SPAN_MIN),
+        )
+    if _windows is None or any(v is None for v in _series.values()):
+        raise ValueError(
+            f"rankine_hugoniot: bound {_named}. Bind density, speed and B (series from "
+            "load_data) with shock_time, or with upstream=(t0, t1) and downstream=(t0, t1); "
+            "or the means n_u, n_d, V_u, V_d, B_u, B_d."
+        )
+
+    def _pair(series, normal=None):
+        t = np.asarray(series.time)
+        return (window_mean(t, series.values, _windows[0], _windows[1], normal=normal),
+                window_mean(t, series.values, _windows[2], _windows[3], normal=normal))
+
+    _n = _pair(_series["density"])
+    _v = _pair(_series["speed"], normal=globals().get("normal"))
+    _b = _pair(_series["B"])
+    _temperature = globals().get("temperature")
+    _t = _pair(_temperature) if _temperature is not None else (0.0, 0.0)
+    print(f"upstream window  : {_windows[0]} to {_windows[1]}")
+    print(f"downstream window: {_windows[2]} to {_windows[3]}")
+    for _key, _pair_values, _unit in (
+        ("n", _n, "cm-3"), ("V", _v, "km/s"), ("B", _b, "nT"), ("T", _t, "eV"),
+    ):
+        if _key == "T" and _temperature is None:
+            continue
+        export(f"{_key}_upstream", np.array([_pair_values[0]]), _unit)  # noqa: F821 — sandbox preamble
+        export(f"{_key}_downstream", np.array([_pair_values[1]]), _unit)  # noqa: F821
+    rh_jump(n_u=_n[0], n_d=_n[1], V_u=_v[0], V_d=_v[1], B_u=_b[0], B_d=_b[1], T_u=_t[0], T_d=_t[1])

@@ -307,6 +307,48 @@ def test_a_database_from_before_the_origin_column_is_migrated_on_open(db: Path) 
     assert SessionStore(db).get_or_create("u", "old")[-1].origin == "correction"
 
 
+def test_reasoning_round_trips(db: Path) -> None:
+    """A reloaded session must still carry each assistant turn's reasoning: DeepSeek
+    rejects a request with tools whose history dropped it."""
+    store = SessionStore(db)
+    history = store.get_or_create("u", "s")
+    history.append(Message(role="user", content="q"))
+    history.append(Message(role="assistant", content="a", reasoning="because"))
+    store.save("u", "s", history)
+    reloaded = SessionStore(db).get_or_create("u", "s")
+    assert [m.reasoning for m in reloaded] == [None, "because"]
+
+
+def test_a_database_from_before_the_reasoning_column_is_migrated_on_open(db: Path) -> None:
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+            user_id TEXT NOT NULL, session_id TEXT NOT NULL,
+            created_at REAL NOT NULL DEFAULT (julianday('now')),
+            updated_at REAL NOT NULL DEFAULT (julianday('now')),
+            workspace_dir TEXT, PRIMARY KEY (user_id, session_id));
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '', tool_calls TEXT, tool_call_id TEXT,
+            origin TEXT, name TEXT);
+        INSERT INTO sessions(user_id, session_id) VALUES ('u', 'old');
+        INSERT INTO messages(user_id, session_id, seq, role, content)
+            VALUES ('u', 'old', 0, 'assistant', 'legacy answer');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = SessionStore(db)
+    history = store.get_or_create("u", "old")
+    assert [(m.content, m.reasoning) for m in history] == [("legacy answer", None)]
+    history.append(Message(role="assistant", content="new", reasoning="r"))
+    store.save("u", "old", history)
+    assert SessionStore(db).get_or_create("u", "old")[-1].reasoning == "r"
+
+
 def test_strip_orphans_keeps_origin() -> None:
     h = [
         Message(

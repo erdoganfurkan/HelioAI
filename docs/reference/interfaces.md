@@ -2,6 +2,10 @@
 
 See [Interfaces](../guide/interfaces.md) for how to use each surface.
 
+## Error messages
+
+::: helioai.interfaces.errors
+
 ## Command line
 
 ::: helioai.interfaces.cli
@@ -21,3 +25,7 @@ See [Interfaces](../guide/interfaces.md) for how to use each surface.
 ## Indexer
 
 ::: helioai.indexer
+
+## Index snapshots
+
+::: helioai.index_snapshot

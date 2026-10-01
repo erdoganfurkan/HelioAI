@@ -75,11 +75,17 @@ See [Reproducible export](guide/export.md) for what is rewritten and why.
 ## Runnable notebooks
 
 Three example notebooks live in
-[`examples/`](https://github.com/erdoganfurkan/HelioAI/tree/main/examples). Start with
-`00_quickstart.ipynb`: one shock (Wind, 17 March 2015) from parameter discovery to a θ_Bn
-checked against two independent shock databases, in about three minutes. Then a guided
-Jupyter tour, and the 2015 St. Patrick's Day storm worked at length. They ship without
-outputs on purpose — run them and produce your own.
+[`examples/`](https://github.com/erdoganfurkan/HelioAI/tree/main/examples). They ship
+without outputs on purpose — run them and produce your own.
+
+| Notebook | What it shows |
+|---|---|
+| [`00_quickstart.ipynb`](https://github.com/erdoganfurkan/HelioAI/blob/main/examples/00_quickstart.ipynb) | **Start here.** One shock (Wind, 17 March 2015) from parameter discovery to a θ_Bn checked against two independent shock databases, in about three minutes |
+| [`01_jupyter_tour.ipynb`](https://github.com/erdoganfurkan/HelioAI/blob/main/examples/01_jupyter_tour.ipynb) | Asking questions, inline figures, direct PlasmaPy calls, event catalogs, session history, export |
+| [`02_stpatrick_storm_2015.ipynb`](https://github.com/erdoganfurkan/HelioAI/blob/main/examples/02_stpatrick_storm_2015.ipynb) | The 17 March 2015 storm worked at length, from parameter discovery to plasma regimes; a few minutes, mostly downloads |
+
+Notebook 02's reference values can be checked first, without a key or the index:
+`python examples/verify_reference_values.py` re-measures them from the archive.
 
 ## Where to next
 

@@ -129,6 +129,41 @@ async def test_a_function_recipe_is_applied_through_call_on_wind_swe_shaped_seri
     assert result["stdout"].rstrip().endswith(")"), "the call's value is printed last"
 
 
+async def test_rankine_hugoniot_runs_on_its_series_and_the_shock_time_without_a_call(
+    tmp_path, recipes_dir
+):
+    """The same Wind SWE shapes as above, bound by name: the recipe picks its windows and
+    applies rh_jump itself — no `call`, nothing for the model to write."""
+    n = 61
+    shock = np.datetime64("2015-03-17T04:45:00", "s")
+    t = shock + (np.arange(n) - n // 2) * np.timedelta64(60, "s")
+    after = t > shock
+    _save(tmp_path / "data", "np", t, np.where(after, 45.12, 17.43)[:, None], "cm-3", ["Np"])
+    _save(tmp_path / "data", "vp", t, np.where(after, 514.1, 411.3)[:, None], "km/s", ["Vp"])
+    field = np.tile([6.0, 0.0, 8.0], (n, 1))
+    field[after] *= 2.527
+    _save(tmp_path / "data", "b", t, field, "nT", ["Bx", "By", "Bz"])
+
+    result = await run_recipe(
+        "rankine_hugoniot",
+        inputs={
+            "density": "load_data('np')",
+            "speed": "load_data('vp')",
+            "B": "load_data('b')",
+            "shock_time": "np.datetime64('2015-03-17T04:45:00')",
+        },
+        _plot_dir=str(tmp_path),
+        _run_idx=0,
+    )
+
+    assert result.get("error") is None, result.get("stderr", "")
+    assert result["exports"]["r"]["mean"] == pytest.approx(45.12 / 17.43, rel=1e-3)
+    assert result["exports"]["V_shock"]["mean"] == pytest.approx(579, abs=5)
+    assert result["exports"]["n_upstream"]["units"] == "cm-3"
+    assert "upstream window  : 2015-03-17T04:20:00" in result["stdout"]
+    assert "recipe_notice" not in result
+
+
 async def test_a_recipe_that_guards_its_demo_behind_main_does_not_run_the_demo(
     tmp_path, recipes_dir
 ):
@@ -155,6 +190,37 @@ async def test_a_recipe_that_guards_its_demo_behind_main_does_not_run_the_demo(
 async def test_an_unknown_recipe_is_an_error_that_points_at_list_recipes(recipes_dir):
     result = await run_recipe("no_such_recipe", _plot_dir="/nonexistent")
     assert "not found" in result["error"] and "list_recipes" in result["error"]
+    assert "theta_bn" in result["recipes"], "the names there are, without another call"
+
+
+async def test_a_run_that_produces_nothing_carries_the_recipes_notice(tmp_path, recipes_dir):
+    """mvab reads `B` with `globals().get` and, bound under another name, does nothing at
+    all: no export, no figure, no line of output, no error. The model had no way to tell a
+    wrong binding from a quiet recipe; the result now says how the recipe is called."""
+    t = np.datetime64("2015-03-17T04:00:00", "s") + np.arange(20) * np.timedelta64(3, "s")
+    _save(
+        tmp_path / "data",
+        "b",
+        t,
+        np.random.default_rng(0).normal(size=(20, 3)),
+        "nT",
+        ["x", "y", "z"],
+    )
+
+    result = await run_recipe(
+        "mvab", inputs={"field": "load_data('b').values"}, _plot_dir=str(tmp_path), _run_idx=0
+    )
+
+    assert result.get("error") is None, result.get("stderr", "")
+    assert not result.get("exports") and not (result.get("stdout") or "").strip()
+    notice = result["recipe_notice"]
+    assert notice["run_with"].startswith('run_recipe("mvab", inputs={"B": ')
+    assert notice["usage"] and any(f["signature"].startswith("mvab(") for f in notice["functions"])
+
+    bound = await run_recipe(
+        "mvab", inputs={"B": "load_data('b').values"}, _plot_dir=str(tmp_path), _run_idx=1
+    )
+    assert bound.get("exports") and "recipe_notice" not in bound, "a run that computed says nothing"
 
 
 @pytest.mark.parametrize("name", ["../../etc/passwd", "../recipes/theta_bn", ""])
@@ -167,6 +233,7 @@ async def test_an_input_that_is_not_a_python_name_is_refused(recipes_dir, monkey
     monkeypatch.setattr("helioai.tools.sandbox.run_python", lambda *a, **k: spawned.append(a) or {})
     result = await run_recipe("theta_bn", inputs={"B up": "1"}, _plot_dir="/nonexistent")
     assert "not a valid Python name" in result["error"] and spawned == []
+    assert result["recipe_notice"]["run_with"].startswith('run_recipe("theta_bn"')
     result = await run_recipe("theta_bn", inputs={"B_up": "  "}, _plot_dir="/nonexistent")
     assert "has no value" in result["error"] and spawned == []
 
@@ -340,3 +407,24 @@ def test_load_recipe_still_reads_and_run_recipe_is_registered_for_the_analyst_ro
     assert "run_recipe" not in AGENT_ROLES["parameter_hunter"].allowed_tools
     assert "run_recipe" not in AGENT_ROLES["librarian"].allowed_tools
     assert _rcp._recipe_path("theta_bn") is not None
+
+
+def test_the_run_recipe_description_names_no_script_recipe_as_a_library():
+    """The tool description told the model that rankine_hugoniot, pressure_balance and
+    shock_timing_2sc were libraries needing a `call`; all three read their inputs and
+    run on their own. A recipe that declares a `run_recipe` call must not be named there."""
+    import ast
+
+    import helioai.tools.setup  # noqa: F401
+    from helioai.tools.recipes import _parse_header
+    from helioai.tools.registry import registry
+
+    description = next(t.description for t in registry.list_tool_defs() if t.name == "run_recipe")
+    for path in _PKG_RECIPES.glob("*.py"):
+        declared = _parse_header(path.read_text(encoding="utf-8")).get("run", "")
+        try:
+            is_call = getattr(ast.parse(declared, mode="eval").body.func, "id", "") == "run_recipe"
+        except (SyntaxError, AttributeError):
+            is_call = False
+        if is_call:
+            assert path.stem not in description, f"{path.stem} runs on its inputs, no call"

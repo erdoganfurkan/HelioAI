@@ -162,7 +162,7 @@ def test_a_recipe_is_offered_on_the_run_python_result_before_the_answer():
     out = recipe_available("run_python", {"code": inline}, result, history)
     (finding,) = out.payload["recipe_available"]
     assert finding["recipe"] == "theta_bn" and finding["reason"] == "not_called"
-    assert finding["run_with"].startswith("run_recipe('theta_bn'")
+    assert finding["run_with"].startswith("run_recipe('theta_bn'"), "derived from the toy source"
     assert "recipe_available" in out.for_llm(), "the model reads it in the tool message"
 
     called = "r = theta_bn(Bu, Bd)\nexport('theta_bn', np.array([r['theta_bn_deg']]), 'deg')"
@@ -207,9 +207,52 @@ def test_a_recipe_is_offered_on_the_run_python_result_before_the_answer():
             "reason": "not_loaded",
             "run_with": finding["run_with"],
         }
-        and "rh_jump" in finding["run_with"]
+        and '"shock_time":' in finding["run_with"]
     )
     assert recipe_available("run_recipe", {"name": "theta_bn"}, result, history) is result
+
+
+def test_the_recipe_checks_fire_on_the_real_theta_bn_source():
+    """What a live run loads is the shipped theta_bn, which defines an `export` stand-in
+    under `__main__`. Counted as a recipe function, the `export(...)` every hand-written
+    copy ends with was a "call" of the recipe: loaded, rewritten inline, 54.85° — and
+    neither check said a word. The unit tests fed a toy source without that stub."""
+    from helioai.config import _PKG_RECIPES
+    from helioai.core.tool_exec import _flag_recipe_bypass, _recipe_functions, recipe_available
+    from helioai.tools.recipes import _parse_header
+
+    for name in ("theta_bn", "mvab", "walen_test"):
+        source = (_PKG_RECIPES / f"{name}.py").read_text(encoding="utf-8")
+        assert "def export(" in source
+        assert "export" not in _recipe_functions(source), name
+
+    source = (_PKG_RECIPES / "theta_bn.py").read_text(encoding="utf-8")
+    payload = {"name": "theta_bn", "code": source, "metadata": _parse_header(source)}
+    inline = "n = np.cross(np.cross(Bu, Bd), Bd - Bu)\nexport('theta_bn', np.array([th]), 'deg')"
+    history = [
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c1", name="load_recipe", arguments={"name": "theta_bn"})],
+        ),
+        Message(role="tool", tool_call_id="c1", name="load_recipe", content=json.dumps(payload)),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c2", name="run_python", arguments={"code": inline})],
+        ),
+    ]
+    exports = {"theta_bn": {"mean": 54.85, "min": 54.85, "max": 54.85, "units": "deg"}}
+    result = ToolResult.from_raw("run_python", json.dumps({"stdout": "", "exports": exports}))
+
+    (finding,) = recipe_available("run_python", {"code": inline}, result, history[:2]).payload[
+        "recipe_available"
+    ]
+    assert finding["recipe"] == "theta_bn" and finding["reason"] == "not_called"
+    _, flags = _flag_recipe_bypass(
+        "theta_Bn = 54.85°.", history, [{"kind": "exports", "values": exports}]
+    )
+    assert flags == [{"recipe": "theta_bn", "reason": "not_called"}]
 
 
 @pytest.mark.asyncio

@@ -78,6 +78,32 @@ async def test_load_recipe_returns_code(recipes_dir):
     assert len(result["code"]) > 0
 
 
+async def test_the_catalogue_gives_each_recipe_the_call_that_runs_it():
+    """From `list_recipes` straight to `run_recipe`: one LLM call per recipe saved, and
+    each call re-sends the whole context."""
+    listing = await _rcp.list_recipes()
+    by_name = {r["name"]: r for r in listing["recipes"]}
+    assert set(by_name) >= {"theta_bn", "superposed_epoch", "rankine_hugoniot"}
+    for name, entry in by_name.items():
+        if name == "fill_values":
+            assert "outside HelioAI" in entry["run_with"], "a library for standalone scripts"
+            continue
+        assert entry["run_with"].startswith(f'run_recipe("{name}"'), entry
+        assert "above" not in entry["run_with"], "no source sits above a catalogue entry"
+    assert '"events": "load_data(\'<param>_events\')"' in by_name["superposed_epoch"]["run_with"]
+
+
+async def test_every_shipped_recipe_has_a_notice_to_hand_back():
+    """`run_recipe` returns the recipe's notice when a run fails or yields nothing; each
+    shipped recipe must have usage notes and a call to put in it."""
+    from helioai.config import _PKG_RECIPES
+
+    for path in sorted(_PKG_RECIPES.glob("*.py")):
+        notice = _rcp._describe(path.stem, path.read_text(encoding="utf-8"))
+        assert notice["usage"], f"{path.stem}: no module docstring to show"
+        assert notice["run_with"], path.stem
+
+
 async def test_load_recipe_returns_metadata_with_reference(recipes_dir):
     result = await _rcp.load_recipe("theta_bn")
     assert "metadata" in result
@@ -549,8 +575,12 @@ async def test_load_recipe_says_how_to_run_it_as_shipped():
     from helioai.tools.recipes import load_recipe
 
     theta = await load_recipe("theta_bn")
-    assert theta["run_with"].startswith("run_recipe('theta_bn', inputs={")
-    for name in ("'B':", "'shock_time':", "'B_up':", "'B_dn':"):
-        assert name in theta["run_with"]
+    assert theta["run_with"].startswith('run_recipe("theta_bn", inputs={"B": ')
+    assert '"shock_time":' in theta["run_with"]
+    other = theta["run_with"].split("other inputs it reads:")[1]
+    assert "B_up" in other and "B_dn" in other, "the alternatives are named, after the call"
     rh = await load_recipe("rankine_hugoniot")
-    assert "call='rh_jump(...)'" in rh["run_with"] and "library of functions" in rh["run_with"]
+    for name in ('"density":', '"speed":', '"B":', '"shock_time":'):
+        assert name in rh["run_with"], "a script now: it reads its series and the shock time"
+    fill = await load_recipe("fill_values")
+    assert fill["run_with"].startswith('load_recipe("fill_values")')

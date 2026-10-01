@@ -384,15 +384,111 @@ def test_index_rebuild_flag(monkeypatch):
 
     seen = {}
     monkeypatch.setattr(ws, "set_user", lambda u: None)
-    monkeypatch.setattr(
-        cli, "_run_index", lambda rebuild, classify: seen.update(rebuild=rebuild, classify=classify)
-    )
+    monkeypatch.setattr(cli, "_run_index", lambda **kw: seen.update(kw))
     monkeypatch.setattr(sys, "argv", ["helioai", "index", "--rebuild"])
     cli.main()
-    assert seen == {"rebuild": True, "classify": False}
+    assert seen == {"rebuild": True, "classify": False, "download": False, "export": None}
     monkeypatch.setattr(sys, "argv", ["helioai", "index", "--classify"])
     cli.main()
-    assert seen == {"rebuild": False, "classify": True}
+    assert seen == {"rebuild": False, "classify": True, "download": False, "export": None}
+    monkeypatch.setattr(sys, "argv", ["helioai", "index", "--export", "out"])
+    cli.main()
+    assert seen == {"rebuild": False, "classify": False, "download": False, "export": "out"}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["--rebuild", "--download"], ["--download", "--classify"], ["--export", "d", "--classify"]],
+)
+def test_index_refuses_flags_that_contradict(argv, monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(cli, "_run_index", lambda **kw: pytest.fail("ran"))
+    monkeypatch.setattr(sys, "argv", ["helioai", "index", *argv])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2
+
+
+@pytest.fixture
+def index_calls(monkeypatch):
+    """`_run_index` with the fetch, the local build and the emptiness probe recorded."""
+    from helioai import index_snapshot, indexer
+
+    calls: dict = {"fetch": 0, "build": [], "empty": True, "fetch_error": None}
+
+    def fetch():
+        calls["fetch"] += 1
+        if calls["fetch_error"]:
+            raise calls["fetch_error"]
+        return 9
+
+    monkeypatch.setattr(index_snapshot, "fetch_index", fetch)
+    monkeypatch.setattr(index_snapshot, "index_is_empty", lambda: calls["empty"])
+    monkeypatch.setattr(indexer, "build_index", lambda **kw: calls["build"].append(kw))
+    return calls
+
+
+def test_an_empty_index_is_fetched_not_built(index_calls):
+    from helioai.interfaces.cli import _run_index
+
+    _run_index()
+    assert index_calls["fetch"] == 1 and index_calls["build"] == []
+
+
+def test_a_failed_fetch_falls_back_to_a_local_build(index_calls, capsys):
+    from helioai.interfaces.cli import _run_index
+
+    index_calls["fetch_error"] = OSError("offline")
+    _run_index()
+    assert index_calls["build"] == [{"rebuild": False, "classify": False}]
+    assert "offline" in capsys.readouterr().out
+
+
+def test_download_fails_loudly_instead_of_building(index_calls):
+    from helioai.interfaces.cli import _run_index
+
+    index_calls["empty"] = False
+    index_calls["fetch_error"] = OSError("offline")
+    with pytest.raises(SystemExit, match="offline"):
+        _run_index(download=True)
+    assert index_calls["build"] == []
+
+
+@pytest.mark.parametrize(
+    "kwargs, empty",
+    [({}, False), ({"rebuild": True}, True), ({"classify": True}, True)],
+)
+def test_a_populated_index_a_rebuild_and_a_classification_build_locally(index_calls, kwargs, empty):
+    from helioai.interfaces.cli import _run_index
+
+    index_calls["empty"] = empty
+    _run_index(**kwargs)
+    assert index_calls["fetch"] == 0 and len(index_calls["build"]) == 1
+
+
+def test_no_fetch_when_the_repository_setting_is_empty(index_calls, monkeypatch):
+    from helioai.config import settings
+    from helioai.interfaces.cli import _run_index
+
+    monkeypatch.setattr(settings.rag, "index_repo", "")
+    _run_index()
+    assert index_calls["fetch"] == 0 and len(index_calls["build"]) == 1
+
+
+def test_export_writes_a_snapshot(monkeypatch, tmp_path, capsys):
+    from helioai import index_snapshot
+    from helioai.interfaces.cli import _run_index
+
+    monkeypatch.setattr(
+        index_snapshot,
+        "export_index",
+        lambda out: {"collections": {"products": {"count": 7}, "catalogs": {"count": 2}}},
+    )
+    _run_index(export=str(tmp_path))
+    assert "products: 7, catalogs: 2" in capsys.readouterr().out
 
 
 def test_global_options_may_follow_the_question(monkeypatch):
@@ -407,3 +503,288 @@ def test_global_options_may_follow_the_question(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["helioai", "plot", "IMF", "Bz", "--session", "abc"])
     cli.main()
     assert seen["q"] == "plot IMF Bz" and cli._SESSION_ID == "abc"
+
+
+# ── a failed turn: one line, and the prompt survives ─────────────────────────
+
+
+@pytest.fixture
+def offline_query(monkeypatch):
+    """`_run_query` with no MCP discovery and a provider whose model is set."""
+    import helioai.interfaces.cli as cli
+    from helioai.config import settings
+
+    async def _nothing():
+        return None
+
+    monkeypatch.setattr("helioai.tools.mcp_client.discover_and_register", _nothing)
+    monkeypatch.setattr(settings.llm, "provider", "ollama")
+    return cli
+
+
+def test_a_missing_key_is_one_line_and_a_failure(offline_query, monkeypatch, capsys):
+    import asyncio
+
+    cli = offline_query
+
+    def _no_key():
+        raise RuntimeError("AZURE_OPENAI_API_KEY is not set in .env")
+
+    monkeypatch.setattr(cli, "_build_llm_client", _no_key)
+
+    assert asyncio.run(cli._run_query("hello")) is False
+    err = capsys.readouterr().err
+    assert "AZURE_OPENAI_API_KEY is not set" in err and "helioai doctor" in err
+    assert "Traceback" not in err
+
+
+def test_an_unreachable_server_does_not_raise_out_of_the_query(offline_query, monkeypatch, capsys):
+    import asyncio
+
+    import httpx
+    import openai
+
+    cli = offline_query
+
+    class _Client:
+        async def aclose(self):
+            return None
+
+    async def _crash(*a, **kw):
+        raise openai.APIConnectionError(
+            request=httpx.Request("POST", "http://localhost:11434/v1/chat/completions")
+        )
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(cli, "_build_llm_client", lambda: _Client())
+    monkeypatch.setattr("helioai.core.agent_loop.stream_chat", _crash)
+
+    assert asyncio.run(cli._run_query("hello")) is False
+    assert "ollama serve" in capsys.readouterr().err
+
+
+def test_a_one_shot_that_failed_exits_non_zero(monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    async def _failed(q, **kw):
+        return False
+
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(ws, "cleanup_old_runs", lambda: None)
+    monkeypatch.setattr(cli, "_run_query", _failed)
+    monkeypatch.setattr(sys, "argv", ["helioai", "what is the solar wind"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 1
+
+
+def test_the_interactive_prompt_survives_a_failed_turn(monkeypatch, tmp_path):
+    import builtins
+
+    import helioai.interfaces.cli as cli
+
+    asked = []
+
+    async def _failed(q, **kw):
+        asked.append(q)
+        return False
+
+    answers = iter(["first", "second"])
+
+    def _input(prompt=""):
+        try:
+            return next(answers)
+        except StopIteration:
+            raise EOFError from None
+
+    monkeypatch.setattr(cli, "_run_query", _failed)
+    monkeypatch.setattr(builtins, "input", _input)
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    cli._interactive()
+
+    assert asked == ["first", "second"]
+
+
+# ── --version, and command lines that are not questions ──────────────────────
+
+
+@pytest.mark.parametrize("flag", ["--version", "-V"])
+def test_version_is_answered_without_running_anything(flag, tripwires, capsys, monkeypatch):
+    from helioai import __version__
+    from helioai.interfaces.cli import main
+
+    monkeypatch.setattr(sys, "argv", ["helioai", flag])
+    main()
+
+    assert capsys.readouterr().out.strip() == f"helioai {__version__}"
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["hsitory"], "Did you mean `helioai history`?"),
+        (["doctr"], "Did you mean `helioai doctor`?"),
+        (["--verison"], "Unknown option '--verison'"),
+        (["plot", "Bz", "--sesion", "x"], "Unknown option '--sesion'"),
+    ],
+)
+def test_a_mistyped_command_line_is_refused_not_asked(
+    argv, expected, tripwires, capsys, monkeypatch
+):
+    from helioai.interfaces.cli import main
+
+    monkeypatch.setattr(sys, "argv", ["helioai", *argv])
+    with pytest.raises(SystemExit) as exit_info:
+        main()
+
+    assert exit_info.value.code == 2
+    assert expected in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["magnetopause"], ["what", "is", "the", "history", "of", "ACE"], ["θ_Bn for the 2005 shock"]],
+)
+def test_real_questions_still_reach_the_model(argv, monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    seen = {}
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(ws, "cleanup_old_runs", lambda: None)
+    monkeypatch.setattr(cli, "_run_query", lambda q, **kw: seen.setdefault("q", q))
+    monkeypatch.setattr(cli.asyncio, "run", lambda coro: coro)
+    monkeypatch.setattr(sys, "argv", ["helioai", *argv])
+    cli.main()
+
+    assert seen["q"] == " ".join(argv)
+
+
+def test_subcommand_flags_are_not_mistaken_for_typos(monkeypatch):
+    import helioai.interfaces.cli as cli
+    import helioai.workspace as ws
+
+    seen = {}
+    monkeypatch.setattr(ws, "set_user", lambda u: None)
+    monkeypatch.setattr(cli, "_run_index", lambda **kw: seen.update(kw))
+    monkeypatch.setattr(sys, "argv", ["helioai", "index", "--rebuild"])
+    cli.main()
+
+    assert seen == {"rebuild": True, "classify": False, "download": False, "export": None}
+
+
+# ── the interactive prompt's own commands ─────────────────────────────────────
+
+
+def _drive_prompt(monkeypatch, tmp_path, lines):
+    import builtins
+
+    import helioai.interfaces.cli as cli
+
+    asked = []
+
+    async def _query(q, **kw):
+        asked.append(q)
+        return True
+
+    feed = iter(lines)
+
+    def _input(prompt=""):
+        try:
+            return next(feed)
+        except StopIteration:
+            raise EOFError from None
+
+    monkeypatch.setattr(cli, "_run_query", _query)
+    monkeypatch.setattr(builtins, "input", _input)
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    cli._interactive()
+    return asked
+
+
+def test_slash_lines_never_reach_the_model(monkeypatch, tmp_path, capsys):
+    import helioai.interfaces.cli as cli
+
+    monkeypatch.setattr("helioai.core.session.store", _make_store())
+    before = cli._SESSION_ID
+
+    asked = _drive_prompt(monkeypatch, tmp_path, ["/help", "/new", "/export", "/nope", "Bz?"])
+
+    out = capsys.readouterr().out
+    assert asked == ["Bz?"]
+    assert "/history" in out and "Nothing to export yet" in out and "Unknown command /nope" in out
+    assert cli._SESSION_ID != before
+
+
+def test_slash_quit_leaves_the_prompt(monkeypatch, tmp_path):
+    asked = _drive_prompt(monkeypatch, tmp_path, ["/quit", "never asked"])
+
+    assert asked == []
+
+
+def test_slash_export_exports_the_current_session(monkeypatch, tmp_path):
+    import helioai.interfaces.cli as cli
+
+    exported = []
+    monkeypatch.setattr("helioai.core.session.store", _make_store(all_ids=[cli._SESSION_ID]))
+    monkeypatch.setattr(cli, "_run_export", lambda sid=None: exported.append(sid))
+
+    _drive_prompt(monkeypatch, tmp_path, ["/export"])
+
+    assert exported == [cli._SESSION_ID]
+
+
+def test_the_prompt_runs_without_readline(monkeypatch, tmp_path):
+    """Windows' Python ships no readline; the classifiers promise Windows."""
+    monkeypatch.setitem(sys.modules, "readline", None)
+
+    assert _drive_prompt(monkeypatch, tmp_path, ["Bz?"]) == ["Bz?"]
+
+
+# ── colour only for a terminal that wants it ──────────────────────────────────
+
+
+def test_no_escape_codes_when_output_is_not_a_terminal(capsys):
+    from helioai.interfaces.cli import _print
+
+    _print("\033[92mreply\033[0m")
+
+    assert capsys.readouterr().out == "reply\n"
+
+
+def test_no_color_is_honoured_on_a_terminal(monkeypatch, capsys):
+    import helioai.interfaces.cli as cli
+
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True, raising=False)
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert cli._colour() is False
+
+    monkeypatch.delenv("NO_COLOR")
+    assert cli._colour() is True
+
+
+# ── a session prefix names one session or none ────────────────────────────────
+
+
+def test_an_ambiguous_prefix_deletes_nothing(monkeypatch, capsys):
+    import helioai.interfaces.cli as cli
+
+    store = _make_store(all_ids=["abc111", "abc222"])
+    monkeypatch.setattr("helioai.core.session.store", store)
+
+    cli._delete_session("abc")
+
+    store.reset.assert_not_called()
+    assert "matches 2 sessions" in capsys.readouterr().out
+
+
+def test_an_exact_id_wins_over_a_longer_one(monkeypatch):
+    import helioai.interfaces.cli as cli
+
+    monkeypatch.setattr("helioai.core.session.store", _make_store(all_ids=["abc", "abcdef"]))
+
+    assert cli._match_session("abc") == "abc"
+    assert cli._match_session("abcd") == "abcdef"

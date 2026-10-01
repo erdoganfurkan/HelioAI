@@ -1,7 +1,8 @@
 # name: theta_bn
 # description: Compute the shock normal angle theta_Bn from upstream and downstream magnetic field vectors.
 # inputs: B_up (array of shape (N,3) or (3,) in nT, upstream), B_dn (array of shape (N,3) or (3,), downstream); or B (series with .time and .values) plus shock_time; or B alone to list shock candidates (optional density and speed series screen them); optional guard_min, span_min, n_candidates
-# outputs: theta_bn (deg), shock_normal, compression_ratio (magnetic |<B_dn>|/|<B_up>|), B_up_mean_nT, B_dn_mean_nT, theta_bn_window_spread_deg (B + shock_time only), theta_bn_sampling_std_deg, normal_spread_deg, Bn_std_nT
+# run: run_recipe("theta_bn", inputs={"B": "load_data('<b>')", "shock_time": "np.datetime64('<crossing time>')"})
+# outputs: theta_bn (deg), shock_normal, compression_ratio (magnetic |<B_dn>|/|<B_up>|), B_up_mean_nT, B_dn_mean_nT, B_up_mag_nT, B_dn_mag_nT (|<B_up>|, |<B_dn>|), theta_bn_window_spread_deg (B + shock_time only), theta_bn_sampling_std_deg, normal_spread_deg, Bn_std_nT
 # reference: Coplanarity theorem (Colburn & Sonett 1966); Schwartz (1998), "Shock and Discontinuity Normals, Mach Numbers and Related Parameters", ISSI SR-001, ch. 10.
 
 """Shock normal angle theta_Bn.
@@ -15,19 +16,19 @@ theta_Bn < 45° → quasi-parallel shock (field-aligned)
 theta_Bn > 45° → quasi-perpendicular shock
 
 Usage with a measured crossing time, preferred because the recipe owns the windows:
-    B = load_data("b3gsm")
-    shock_time = np.datetime64("2015-03-17T04:00:00")
-    # Then run this script. It uses 13-minute windows separated from the shock by
-    # the 2-minute guard band, rejecting windows that still contain the ramp. 13 min of
-    # 3 s data is the 260-sample average the Harvard-CfA shock database uses, so the
-    # angle is comparable to its magnetic-coplanarity (MC) entry.
+    run_recipe("theta_bn", inputs={"B": "load_data('b3gsm')",
+               "shock_time": "np.datetime64('2015-03-17T04:00:00')"})
+    # It uses 13-minute windows separated from the shock by the 2-minute guard band,
+    # rejecting windows that still contain the ramp. 13 min of 3 s data is the
+    # 260-sample average the Harvard-CfA shock database uses, so the angle is
+    # comparable to its magnetic-coplanarity (MC) entry.
 
 Usage when the crossing time is not known yet — find it first, do not hunt for it with
 hand-written run_python cells (one live run spent nine of its twelve turns on that):
-    B = load_data("b3gsm")
-    density = load_data("np")          # optional, strongly recommended
-    speed = load_data("vgse")          # optional; a vector or a scalar speed
-    # Run this script with B alone (plus density/speed when you have them): it prints a
+    run_recipe("theta_bn", inputs={"B": "load_data('b3gsm')",
+               "density": "load_data('np')",     # optional, strongly recommended
+               "speed": "load_data('vgse')"})    # optional; a vector or a scalar speed
+    # Bound with B alone (plus density/speed when you have them), it prints a
     # screening list of |B| jumps — time of the steepest rise, jump in nT, ratio — and,
     # when plasma is given, whether density and speed jump with the field. A fast
     # forward shock steps in all three at once; a sheath compression or a discontinuity
@@ -36,10 +37,10 @@ hand-written run_python cells (one live run spent nine of its twelve turns on th
     # shock_time set to it. The same list is available as a function:
     # find_shock_candidates(B, n=10, density=density, speed=speed).
 
-Usage with windows already chosen by the analyst:
-    B_up = var.values[mask_up]     # (N,3) over the upstream interval, or its mean 3-vector
-    B_dn = var.values[mask_dn]     # (N,3) over the downstream interval, or its mean 3-vector
-    # Then run this script: it uses B_up / B_dn when both are already defined.
+Usage with windows already chosen by the analyst (only when the user gives them):
+    run_recipe("theta_bn", inputs={"B_up": "load_data('b3gsm').values[m_up]",
+                                   "B_dn": "load_data('b3gsm').values[m_dn]"})
+    # each (N,3) over its interval, or its mean 3-vector; B_up / B_dn win when both are bound
 
 An (N, 3) input is averaged over its finite rows — fill values are NaN by the time the
 data reaches you, and a plain mean of a gapped interval is NaN. A NaN, zero or collinear
@@ -135,6 +136,8 @@ def _solve_from_means(u, d):
         "compression_ratio": float(np.linalg.norm(d) / np.linalg.norm(u)),
         "B_up_mean_nT": u,
         "B_dn_mean_nT": d,
+        "B_up_mag_nT": float(np.linalg.norm(u)),
+        "B_dn_mag_nT": float(np.linalg.norm(d)),
     }
 
 
@@ -190,7 +193,9 @@ def theta_bn(B_up, B_dn):
     dict with theta_bn_deg (degrees, 0-90), geometry ("quasi-parallel" below
     45 deg, "quasi-perpendicular" above), shock_normal (unit 3-vector),
     compression_ratio (the magnetic compression |<B_dn>| / |<B_up>|),
-    B_up_mean_nT and B_dn_mean_nT (the vectors actually used), and series-only diagnostics theta_bn_sampling_std_deg,
+    B_up_mean_nT and B_dn_mean_nT (the vectors actually used), B_up_mag_nT and
+    B_dn_mag_nT (their magnitudes — the pair compression_ratio divides, not the mean
+    of |B|, which fluctuations make larger), and series-only diagnostics theta_bn_sampling_std_deg,
     normal_spread_deg and Bn_std_nT. On a NaN or zero input, or on collinear or
     identical vectors, the normal is undefined and the dict carries an "error"
     key and nothing else: a NaN used to flow through to theta_bn_deg and,
@@ -216,6 +221,8 @@ def theta_bn(B_up, B_dn):
         "compression_ratio": result["compression_ratio"],
         "B_up_mean_nT": result["B_up_mean_nT"].tolist(),
         "B_dn_mean_nT": result["B_dn_mean_nT"].tolist(),
+        "B_up_mag_nT": result["B_up_mag_nT"],
+        "B_dn_mag_nT": result["B_dn_mag_nT"],
         **diagnostics,
     }
 
@@ -519,6 +526,8 @@ def _export_result(result):
     export("compression_ratio", np.array([result["compression_ratio"]]), "")
     export("B_up_mean_nT", np.asarray(result["B_up_mean_nT"]), "nT")
     export("B_dn_mean_nT", np.asarray(result["B_dn_mean_nT"]), "nT")
+    export("B_up_mag_nT", np.array([result["B_up_mag_nT"]]), "nT")
+    export("B_dn_mag_nT", np.array([result["B_dn_mag_nT"]]), "nT")
     if result.get("theta_bn_window_spread_deg") is not None:
         export("theta_bn_window_spread_deg", np.array([result["theta_bn_window_spread_deg"]]), "deg")
     if result.get("theta_bn_sampling_std_deg") is not None:

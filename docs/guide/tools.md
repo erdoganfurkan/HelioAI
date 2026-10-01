@@ -76,13 +76,20 @@ hundred and is what the model actually reasons over.
 
 Needs `ADS_API_TOKEN` (free). Used heavily by the `librarian` sub-agent.
 
+ADS requires every bare word of a query, and a model writes many: a query that returns
+fewer papers than asked is sent once more with its bare words made optional — fielded
+terms (`author:`, `title:`), quoted phrases and negations stay required — restricted to
+refereed astronomy papers and ranked by relevance. The exact hits come first; the result
+says `relaxed: true` and gives the `relaxed_query`. A query with explicit `AND`/`OR`/`NOT`
+is sent as written.
+
 ## Recipes
 
 | Tool | What it does |
 |---|---|
-| `list_recipes` | Catalogue of the shipped scientific recipes. |
-| `load_recipe` | Load a recipe's source and its citation. |
-| `run_recipe` | Run a recipe as shipped on the session's data: inputs bound first, source verbatim, one optional `call`. |
+| `list_recipes` | Catalogue of the shipped scientific recipes, each with `run_with`, the exact `run_recipe` call. |
+| `load_recipe` | Load a recipe's source, its citation and its `run_with` line — to read the method. |
+| `run_recipe` | Run a recipe as shipped on the session's data: inputs bound first, source verbatim, one optional `call`. A run that fails or produces nothing returns the recipe's notice (`recipe_notice`). |
 
 `run_recipe` is the one that keeps a recipe's calibration intact: the agent binds the
 inputs (`{"B_up": "load_data('b3gsm').values[m_up]"}`), the recipe's own `export()` calls
@@ -99,7 +106,7 @@ one tool that is not in the registry — the agent loop intercepts it directly.
 | `parameter_hunter` | vague description → speasy IDs | search only | 4 |
 | `data_analyst` | download, analyse, plot, detect | data + sandbox | 12 |
 | `plasma_physicist` | PlasmaPy calculations, sanity checks | sandbox | 4 |
-| `librarian` | multi-round ADS literature search | `find_papers` | 4 |
+| `librarian` | multi-round ADS literature search | `find_papers` | 5 |
 
 Delegation exists for context isolation, not parallelism: a parameter search that reads
 forty candidate descriptions should not leave forty descriptions sitting in the main

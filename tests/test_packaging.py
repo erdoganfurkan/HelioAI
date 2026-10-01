@@ -149,6 +149,12 @@ def test_citation_matches_the_current_version():
     assert f"version: {helioai.__version__}" in citation
 
 
+@pytest.mark.parametrize("page", ["README.md", "docs/index.md"])
+def test_the_bibtex_to_copy_cites_the_current_version(page):
+    text = (PACKAGE_DIR.parent / page).read_text(encoding="utf-8")
+    assert f"version = {{{helioai.__version__}}}" in text
+
+
 # ── example notebooks ──────────────────────────────────────────────────────────
 
 EXAMPLES = sorted((PACKAGE_DIR.parent / "examples").glob("*.ipynb"))

@@ -20,7 +20,7 @@ def _format_from_env() -> str:
     return fmt if fmt in ("console", "json") else "console"
 
 
-def setup_logging(level: str | int = "INFO") -> None:
+def setup_logging(level: str | int = "INFO", *, tracebacks: bool = True) -> None:
     """Configure structlog and the root logger.
 
     Output format follows `HELIOAI_LOG_FORMAT`: `console` (default) or `json`.
@@ -33,8 +33,13 @@ def setup_logging(level: str | int = "INFO") -> None:
     which is noise in a recorded session or a demo. An unrecognised value is
     ignored rather than obeyed: a typo must not silently turn logging up.
 
+    `tracebacks=False` is for the terminal a person is reading: an error keeps its one
+    log line, with the exception's type and message, but not the stack under it — the
+    interface prints what to do instead. DEBUG brings the stack back, whatever the flag.
+
     Args:
         level: Log level name or numeric value. Unknown names fall back to INFO.
+        tracebacks: Render the stack of a logged exception.
     """
     override = os.environ.get("HELIOAI_LOG_LEVEL", "").strip().upper()
     if override and isinstance(getattr(logging, override, None), int):
@@ -50,8 +55,10 @@ def setup_logging(level: str | int = "INFO") -> None:
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
     ]
+    if not tracebacks and level > logging.DEBUG:
+        shared_processors.append(_exception_as_one_line)
+    shared_processors.append(structlog.processors.format_exc_info)
 
     if fmt == "json":
         renderer: Any = structlog.processors.JSONRenderer()
@@ -82,6 +89,21 @@ def setup_logging(level: str | int = "INFO") -> None:
     root.handlers = [handler]
     root.setLevel(level)
     _quiet_third_party_advisories()
+
+
+def _exception_as_one_line(_logger: Any, _method: str, event_dict: dict) -> dict:
+    exc_info = event_dict.pop("exc_info", None)
+    if exc_info is True:
+        exc_info = sys.exc_info()
+    if isinstance(exc_info, BaseException):
+        exc = exc_info
+    elif isinstance(exc_info, tuple):
+        exc = exc_info[1]
+    else:
+        exc = None
+    if exc is not None:
+        event_dict.setdefault("error", f"{type(exc).__name__}: {exc}")
+    return event_dict
 
 
 class _SpeasyProviderTraceback(logging.Filter):

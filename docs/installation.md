@@ -67,16 +67,17 @@ fails, so the command doubles as a health probe.
 HelioAI needs one LLM provider. Copy `.env.example` to `.env` and set **one** of:
 
 ```ini
-HELIOAI_LLM_PROVIDER=groq        # groq | gemini | azure | opencode | ollama
-GROQ_API_KEY=your_key_here
+HELIOAI_LLM_PROVIDER=opencode    # opencode (default) | groq | gemini | azure | ollama
+OPENCODE_API_KEY=your_key_here
+HELIOAI_OPENCODE_MODEL=deepseek-v4-pro
 ```
 
 | Provider | Model | Notes |
 |---|---|---|
-| `groq` | `llama-3.3-70b-versatile` | free tier, fast — good place to start |
+| `opencode` | set `HELIOAI_OPENCODE_MODEL` | the default — OpenCode's Zen gateway, flat-rate access to hosted reasoning models |
+| `groq` | `llama-3.3-70b-versatile` | free tier, fast |
 | `gemini` | `gemini-2.5-flash` | stronger reasoning, generous free quota |
 | `azure` | your deployment | enterprise deployments |
-| `opencode` | set `HELIOAI_OPENCODE_MODEL` | OpenCode's Zen gateway, flat-rate access to hosted reasoning models |
 | `ollama` | `qwen2.5:14b-instruct` | fully local, no API key |
 
 Every variable is listed in [Configuration](configuration.md). Any other OpenAI-compatible endpoint works too: a provider is a `base_url` entry in
@@ -135,5 +136,7 @@ helioai "what missions are available"
 ```
 
 You should get a list of providers and missions without any data being downloaded. If you
-see `AZURE_OPENAI_API_KEY is not set`, `HELIOAI_LLM_PROVIDER` is still on its `azure`
-default — set it to the provider you configured.
+see `OPENCODE_API_KEY is not set`, `HELIOAI_LLM_PROVIDER` is still on its `opencode`
+default — set it to the provider you configured. `helioai doctor` checks the key, the
+index and the sandbox in one go, and [Troubleshooting](troubleshooting.md) explains each
+message.

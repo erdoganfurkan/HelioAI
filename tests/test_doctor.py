@@ -56,6 +56,17 @@ def test_a_provider_without_its_key_fails_with_the_factory_message(quiet_install
     assert llm.status == doctor.FAIL and "GROQ_API_KEY" in llm.detail
 
 
+def test_opencode_without_a_model_fails_before_any_question(quiet_install, monkeypatch):
+    """The key alone builds a client; the gateway then rejects the empty model id."""
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.llm, "provider", "opencode")
+    monkeypatch.setattr(settings.llm.opencode, "api_key", "sk-test")
+    monkeypatch.setattr(settings.llm.opencode, "model", "")
+    (llm,) = [c for c in doctor.run_checks() if c.name == "llm provider"]
+    assert llm.status == doctor.FAIL and "HELIOAI_OPENCODE_MODEL" in llm.detail
+
+
 def test_a_built_index_reports_its_product_count(quiet_install):
     import chromadb
 
@@ -192,3 +203,22 @@ def test_the_judged_answers_report_their_count_and_date(quiet_install, tmp_path)
         {"cda/NEW/x": {"name": "x", "mtype": {"choice": "Waves", "confidence": 0.95}}},
     )
     assert "local file adds 1 products (2026-10-01)" in check_judged().detail
+
+
+def test_defaults_nobody_changed_stay_out_of_the_human_report(quiet_install, capsys):
+    """The judgment and experiment lines restate defaults; `--json` still carries them."""
+    checks = doctor.run_checks()
+    report = doctor.format_report(checks)
+
+    assert not any(
+        line[2:].startswith(("judgment ", "experiments ")) for line in report.splitlines()
+    )
+    assert {"judgment", "experiments"} <= {c.name for c in checks}
+
+
+def test_a_configured_experiment_is_shown(quiet_install, monkeypatch):
+    from helioai.config import settings
+
+    monkeypatch.setattr(settings.agent, "experiments", frozenset({"deferred_tools"}))
+
+    assert "experiments" in doctor.format_report(doctor.run_checks())

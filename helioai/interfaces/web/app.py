@@ -23,6 +23,7 @@ from helioai.config import dev_unlock, settings
 from helioai.core.agent_loop import stream_chat
 from helioai.core.llm.factory import build_llm_client
 from helioai.core.session import store
+from helioai.interfaces.errors import describe_llm_error, setup_problem
 from helioai.interfaces.web.legacy_replay import messages_view
 from helioai.logging_config import get_logger
 from helioai.workspace import is_under_workspace, user_home
@@ -62,6 +63,28 @@ async def require_user(x_helio_token: str | None = Header(default=None)) -> str:
 
 def _profile_path(user_id: str) -> Path:
     return user_home(user_id) / "profile.md"
+
+
+def _relocated(user_id: str, path: str) -> str:
+    """Where a workspace file recorded under another data directory lives now.
+
+    A session records its figures and scripts by absolute path, so moving the data
+    directory — `HELIOAI_DATA_DIR`, `helioai migrate-storage`, a Docker volume, a
+    restored backup — left every earlier session pointing at files that had moved with
+    it, and showed a broken figure for each. A path outside the current storage root is
+    re-rooted by its part after `workspace/` under the caller's own workspace. The result
+    goes through the same containment and ownership checks as any other path, so this can
+    only ever reach the caller's files.
+    """
+    if is_under_workspace(path):
+        return path
+    parts = path.replace("\\", "/").split("/")
+    if "workspace" not in parts:
+        return path
+    tail = parts[len(parts) - parts[::-1].index("workspace") :]
+    if not tail or any(part in ("", ".", "..") for part in tail):
+        return path
+    return str(user_home(user_id).joinpath("workspace", *tail))
 
 
 def _owns_path(user_id: str, path: str) -> bool:
@@ -157,6 +180,12 @@ async def index():
     return FileResponse(_STATIC / "index.html")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """The icon browsers ask for at the root whatever the page links, and 404'd on."""
+    return FileResponse(_STATIC / "favicon.ico", media_type="image/x-icon")
+
+
 @app.get("/health")
 async def health():
     """Liveness probe. Returns `{"status": "ok"}`."""
@@ -165,13 +194,39 @@ async def health():
 
 @app.get("/api/config")
 async def api_config():
-    """Server-side settings the UI cannot know on its own.
+    """Server-side settings the UI cannot know on its own — never a secret, only whether
+    one is set.
 
     The provider selector used to default to whichever option came first in the markup
     — `azure` — and sent it on every message, so a server configured for another
-    provider was quietly overridden by the browser.
+    provider was quietly overridden by the browser. `providers` says which of them this
+    server can actually reach, so the selector stops offering a key nobody set.
+
+    `auth` and `dev_token` decide what the sidebar's token field is for: with
+    `HELIOAI_USERS` it is the access token every request needs, with only
+    `HELIOAI_DEV_TOKEN` it is the optional dev token, and with neither it is hidden —
+    a field asking a local user for a token that does not exist was the first thing a
+    newcomer asked about.
     """
-    return {"provider": settings.llm.provider}
+    return {
+        "provider": settings.llm.provider,
+        "providers": _provider_status(),
+        "auth": bool(settings.web_auth.users),
+        "dev_token": bool(settings.dev.token),
+    }
+
+
+def _provider_status() -> dict[str, bool]:
+    from helioai.core.llm.factory import OPENAI_COMPAT
+
+    llm = settings.llm
+    ready = {
+        "azure": bool(llm.azure.api_key and llm.azure.endpoint),
+        "gemini": bool(llm.gemini.api_key),
+    }
+    for name, spec in OPENAI_COMPAT.items():
+        ready[name] = not spec["key_env"] or bool(getattr(llm, spec["config"]).api_key)
+    return {name: ok and setup_problem(name) is None for name, ok in ready.items()}
 
 
 @app.post("/chat/stream")
@@ -205,13 +260,17 @@ async def chat_stream(
     async def gen():
         llm = None
         try:
+            problem = setup_problem(req.provider)
+            if problem:
+                raise RuntimeError(problem)
             llm = build_llm_client(req.provider)
             async for ev in stream_chat(
                 llm, user_id, req.session_id, req.message, restricted=restricted
             ):
                 yield f"data: {json.dumps(ev)}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'event': 'error', 'data': {'message': str(e)}})}\n\n"
+            message = describe_llm_error(e, req.provider)
+            yield f"data: {json.dumps({'event': 'error', 'data': {'message': message}})}\n\n"
         finally:
             # One client per request, so the pool has to be released per request —
             # including when the browser disconnects mid-stream and this generator
@@ -406,7 +465,7 @@ async def serve_code(
     Raises:
         HTTPException: 404 for a path outside the caller's workspace or absent.
     """
-    path = path.strip()
+    path = _relocated(user_id, path.strip())
     if not is_under_workspace(path) or not _owns_path(user_id, path):
         log.warning("code_rejected", path=path, reason="outside workspace or not owner")
         raise HTTPException(status_code=404, detail="Not found")
@@ -445,7 +504,7 @@ async def serve_figure(path: str, user_id: str = Depends(require_user)) -> FileR
     Raises:
         HTTPException: 404 outside the caller's workspace, or absent.
     """
-    path = path.strip()
+    path = _relocated(user_id, path.strip())
     if not is_under_workspace(path) or not _owns_path(user_id, path):
         log.warning("figure_rejected", path=path, reason="outside workspace or not owner")
         raise HTTPException(status_code=404, detail="Not found")

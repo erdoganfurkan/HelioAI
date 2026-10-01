@@ -2,6 +2,10 @@
 
 See [Interfaces](../guide/interfaces.md) for how to use each surface.
 
+## Error messages
+
+::: helioai.interfaces.errors
+
 ## Command line
 
 ::: helioai.interfaces.cli

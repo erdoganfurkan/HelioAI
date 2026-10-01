@@ -10,6 +10,21 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [0.4.0] — 2026-09-24
 
+### Highlights
+
+- **Search finds the product it is asked for** — recall@1 on the HelioBench identifier
+  tasks 58.6 → 80.0 % live. Replace the index after upgrading: `helioai index --download`.
+- **The index is downloaded, not built**: `helioai index` fetches the one CI built for the
+  release (~125 MB, about a minute) instead of 7 to 10 minutes of local build.
+- **One agent loop** for the lead and its sub-agents; the vetted recipes run as shipped
+  (`run_recipe`); one verdict on every answer; a session replays from its journal.
+- **A first run that explains itself.** OpenCode is the default provider; a failure is one
+  sentence naming the fix, in the CLI, the web UI and Jupyter; `helioai --version`;
+  commands in the interactive prompt; a [troubleshooting page](https://erdoganfurkan.github.io/HelioAI/troubleshooting/).
+- **The web UI** gets the HelioAI logo, a narrow-screen layout, a profile editor, copy and
+  export buttons, and a provider selector that knows which keys are set.
+- **A judge can watch, in observation** — off by default.
+
 Three things changed in this release. **The search finds the product it is asked for.**
 The index is built the same in every process, reads what the archives had already said
 about a product — its measurement type, its coverage, a stated cadence, whether it is a
@@ -39,9 +54,11 @@ sandboxed run and 1618 tests passing against the installed package.
   10 minutes on a recent machine, no API key: the classification the pass paid for ships
   in the package and is applied byte for byte. The 0.4.0 ranking reads fields a 0.3.0
   index does not carry; running 0.4.0 on a 0.3.0 index was not measured, so do not.
+- **If you use Azure without setting `HELIOAI_LLM_PROVIDER`, set it now**:
+  `HELIOAI_LLM_PROVIDER=azure`. The default provider is `opencode`.
 - Nothing else. The session store adds its columns on first use, every new behaviour is
   off unless its variable is set (`HELIOAI_JUDGMENT_BACKEND`, `HELIOAI_EXPERIMENTS`), and
-  no existing variable changed meaning.
+  no other variable changed meaning.
 
 ### Fixed
 
@@ -63,6 +80,35 @@ sandboxed run and 1618 tests passing against the installed package.
   every missing `reasoning_content` with an empty string, which the rule accepts, replay
   the request, and keep doing so. No other provider ever sees the field, so sessions saved
   before this release, which carry no reasoning, continue too.
+- **A failed turn says what broke and how to fix it, in one line.** No key, a local server
+  not started, a key refused: the CLI printed 264 lines of httpx traceback and the
+  interactive prompt died with it, the web UI showed the SDK's bare "Connection error.",
+  Jupyter a raw exception. `helioai.interfaces.errors` now names the variable to set or
+  the command to run, for all three; the stack returns with `HELIOAI_LOG_LEVEL=DEBUG`. The
+  CLI exits 1 on a failed one-shot, and the prompt survives a failed turn. OpenCode with
+  no `HELIOAI_OPENCODE_MODEL` is caught before the question is spent, and by `doctor`.
+- **A mistyped command is refused instead of asked.** `helioai hsitory`, `helioai
+  --verison` — or `--version` itself — went to the model as a question, created a session
+  and came back with its guess. A lone word close to a command, or a token shaped like an
+  option, now gets the right spelling (exit 2); any other word is still a question.
+  `helioai-mcp --help` started a stdio server waiting on the terminal; it prints its usage.
+- **A session prefix names one session or none.** `history delete` and `export` took the
+  first session a prefix matched; an ambiguous prefix now lists them and does nothing.
+- **The CLI writes escape codes only to a terminal**, and honours `NO_COLOR`: `helioai
+  history > file` wrote them into the file. The prompt starts without `readline`, which
+  Windows' Python does not ship.
+- **Figures and scripts of earlier sessions survive a moved data directory.** Sessions
+  record files by absolute path, so after `HELIOAI_DATA_DIR` changed, `migrate-storage`, a
+  Docker volume or a restored backup, every earlier session showed broken figures in the
+  web UI. `/figure` and `/code` re-root such a path under the caller's own workspace, then
+  apply the same containment and ownership checks as before.
+- **Web UI details.** Deleting a session asks first (it removes the workspace); the session
+  list's buttons no longer cover the title, and its times are local; the last two French
+  strings are English; the figure fallback is built from DOM nodes, not an HTML string
+  holding a path; `/favicon.ico` no longer 404s on every page load.
+- **`helioai doctor` shows what needs doing.** The judgment and experiment lines restating
+  defaults leave the text report (they stay in `--json`), and "optional extras: index"
+  named an extra that does not exist.
 - **A search ranks the same in every process.** Chroma persists its HNSW graph only every
   `sync_threshold` writes — 1000 by default — and replays whatever followed the last persist
   into the in-memory graph at every start, in an order that varies. Measured on 2026-09-22
@@ -112,7 +158,6 @@ sandboxed run and 1618 tests passing against the installed package.
   none is never demoted for it. On the 30 replayed n1 queries, five processes each: recall@1
   56.7 → 73.3 %, recall@3 90.0 → 96.7 %, recall@5 90.0 → 100 %, MRR 0.736 → 0.847 — read
   with the caveat that those 30 queries are where the failures these rules name were found.
-  second, where a 2026 IMAP position led before.
 - **A sandbox program has no size limit anymore; `run_recipe` works on Windows.** The
   assembled script — a 14 576-character preamble, then the agent's code — travelled to the
   interpreter as the argument of `python -c`, and an argument has a size: 32 767 characters
@@ -401,6 +446,24 @@ sandboxed run and 1618 tests passing against the installed package.
   `--export DIR` writes a snapshot. The `Index` workflow builds the index from scratch at
   every release tag and publishes it, refusing a snapshot that lost more than 5 % of the
   products expected.
+- **The HelioAI logo**, in the README (following GitHub's light or dark theme), as the
+  documentation's logo and favicon, and in the web UI.
+- **Commands in the interactive prompt**: `/new`, `/history`, `/export`, `/help`, `/quit`.
+  A line starting with `/` never reaches the model. And `helioai --version`.
+- **The web UI works on a narrow screen**: below 900 px the sidebar is a drawer and the
+  code panel covers the chat.
+- **A turn's data in one box**: a question's parameter cards share a *Data used (N)*
+  section, folded once the turn is done if it holds more than two, without the repeat of
+  a series the analysis script read again. Copy buttons on answers and on the code panel,
+  and an *Export session as notebook* button after the last answer.
+- **A profile editor in the web UI**, over the `/api/profile` routes that had no screen.
+- **The web UI knows what the server has.** `/api/config` says which providers have a key
+  — the selector labels and disables the others — and whether `HELIOAI_USERS` or
+  `HELIOAI_DEV_TOKEN` is set, so the token field reads *Access token*, *Dev token*, or is
+  hidden. It reports booleans, never a key; a 401 opens the sidebar on the token field.
+- **Documentation**: a [troubleshooting page](https://erdoganfurkan.github.io/HelioAI/troubleshooting/),
+  a BibTeX entry to cite HelioAI in the README and on the home page, and
+  `helioai serve --http` documented on its real port, 8765.
 - **A seam for a System One judge beside the loop — `helioai.core.judgment`, in
   observation.** HelioAI verifies itself thoroughly (claims against the ledger, ids against
   the index, code against the recipes, tools against the plan) and nothing verifies it
@@ -791,6 +854,10 @@ sandboxed run and 1618 tests passing against the installed package.
 - **`superposed_epoch` exports the peak of its median profile** (`epoch_median_peak`, in
   the data's unit) and its normalized epoch (`epoch_median_peak_tau`). A SEA is asked for
   its peak; every session computed it by hand, reaching into the recipe's internals.
+- **OpenCode is the default provider.** The README sends a new user to OpenCode while the
+  code defaulted to Azure, an enterprise deployment no newcomer has, so the first error
+  anyone saw named `AZURE_OPENAI_API_KEY`. The default is now `opencode` in the code,
+  `.env.example`, the documentation and the web selector.
 - **`theta_bn` averages over 13-minute windows, the Harvard-CfA convention, instead of
   8-minute ones.** The CfA shock database publishes θ_Bn method by method, and its
   magnetic-coplanarity (MC) entries rest on 260 field samples per side — 13 min at 3 s — so

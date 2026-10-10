@@ -32,7 +32,7 @@ from helioai.core.session import store, strip_orphan_tool_calls
 from helioai.core.skills_loader import SkillError, list_skill_names
 from helioai.core.skills_loader import load_index as load_skills_index
 from helioai.core.skills_loader import load_skill as load_skill_body
-from helioai.core.sub_agents import TASK_TOOL_NAME, stream_subagent, task_tool_def
+from helioai.core.sub_agents import AGENT_ROLES, TASK_TOOL_NAME, stream_subagent, task_tool_def
 from helioai.core.tool_exec import (  # noqa: F401  (re-exported for tests)
     _extract_artifact,
     _history_tool_result,
@@ -149,6 +149,61 @@ Do NOT acknowledge the off-topic request, do NOT explain why you refuse, do NOT 
 DEFERRED_TOOLS_NOTE = "The plasma-physics and catalog tools are not listed in every turn's tool set: they appear once you ask for them with `search_tools(query)` or call one of them by name.\n"
 _DEFERRED_TOOLS_ANCHOR = "## Tools (arguments in each schema)\n"
 
+SOLO_LEAD_SECTION = """## Skills (there are no sub-agents — you do the work yourself)
+Before acting, load the skill the request needs with `load_skill(name)` — several when it spans several kinds of work — and follow it:
+- Analysis, spectra, multi-mission comparison, event detection → `data_analyst`; add `plotting` when a figure is asked for.
+- Parameter ids to resolve, with no download or analysis → `parameter_hunter`.
+- Plasma quantities (β, gyrofrequency, Debye length…) → `plasma_physicist`.
+- Literature search, or comparing computed values with published results → `librarian`.
+- What HelioAI can do, which missions it covers → `helioai_helper`.
+A skill stays in the conversation once loaded; do not load it twice. The skills were written for specialist roles: where one says "the lead" or "this role", it means you, and its reply format is the format of your answer.
+
+## When you run code
+"""
+
+# (old, new) pairs that turn the delegating prompt into the solo one. Each `old` must occur
+# exactly once, so an edit of the base prompt fails the tests instead of silently leaving a
+# prompt that still tells the model to delegate.
+_SOLO_LEAD_EDITS: tuple[tuple[str, str], ...] = (
+    (
+        "- Delegation: `task(description, agent_role)` — the sub starts with EMPTY context, so pre-resolve every fact (param ids, ISO times, missions) in `description`.\n",
+        "",
+    ),
+    (
+        SYSTEM_PROMPT[
+            SYSTEM_PROMPT.index("## Delegation (do NOT call") : SYSTEM_PROMPT.index(
+                "- `load_data()` returns arrays with NaN"
+            )
+        ],
+        SOLO_LEAD_SECTION,
+    ),
+    (
+        "- A `task` result opens with a `findings` table: the values that run actually computed, with their units. Those are the numbers you may state as measurements, verbatim — do not round them into a different number. Any figure that is not in `findings` and did not come out of your own `run_python` is an estimate",
+        "- The numbers you may state as measurements are the ones your own `run_python` exports or a recipe's result computed, verbatim — do not round them into a different number. Any other figure is an estimate",
+    ),
+    (
+        "## Reporting what a sub-agent or your own code produced",
+        "## Reporting what your code produced",
+    ),
+    (" Sub-agents report this back; relay it.", ""),
+)
+
+
+def lead_turn_budget(experiments: frozenset[str] | None = None) -> int:
+    """How many model calls one lead turn may make.
+
+    Delegating, the lead spends a few turns of its own and hands the analysis to a
+    `data_analyst`, which brings its own budget. Under `solo_lead` the lead does that
+    analysis itself, so it gets both: held to the lead's budget alone it would be capped
+    on exactly the questions the comparison is about, and the experiment would measure
+    the cap instead of the architecture.
+    """
+    if experiments is None:
+        experiments = settings.agent.experiments
+    if "solo_lead" in experiments:
+        return settings.agent.max_iterations + AGENT_ROLES["data_analyst"].max_turns
+    return settings.agent.max_iterations
+
 
 def build_lead_system_prompt(restricted: bool, experiments: frozenset[str] | None = None) -> str:
     """Return the lead agent system prompt.
@@ -161,7 +216,8 @@ def build_lead_system_prompt(restricted: bool, experiments: frozenset[str] | Non
             `deferred_tools` adds the sentence that tells the model some tools appear
             on request. A prompt that describes a tool the model is not given, or the
             reverse, is the worst of both, so the text and the `Policy` are driven by
-            the same set.
+            the same set. `solo_lead` replaces the delegation rules with the skills to
+            load, because the model is no longer given `task`.
 
     Returns:
         The full system prompt text.
@@ -169,6 +225,9 @@ def build_lead_system_prompt(restricted: bool, experiments: frozenset[str] | Non
     if experiments is None:
         experiments = settings.agent.experiments
     prompt = SYSTEM_PROMPT
+    if "solo_lead" in experiments:
+        for old, new in _SOLO_LEAD_EDITS:
+            prompt = prompt.replace(old, new, 1)
     if "deferred_tools" in experiments:
         prompt = prompt.replace(
             _DEFERRED_TOOLS_ANCHOR, _DEFERRED_TOOLS_ANCHOR + DEFERRED_TOOLS_NOTE, 1
@@ -442,11 +501,14 @@ async def _stream_turn(
         else None
     )
 
-    tools = tuple(registry.list_tool_defs() + _INTERNAL_TOOLS + [task_tool_def()])
+    experiments = settings.agent.experiments
+    solo = "solo_lead" in experiments
+    delegation = [] if solo else [task_tool_def()]
+    tools = tuple(registry.list_tool_defs() + _INTERNAL_TOOLS + delegation)
     tool_names = frozenset(t.name for t in tools)
     log.info("agent_tools_listed", count=len(tools), tools=sorted(tool_names))
+    max_turns = lead_turn_budget(experiments)
 
-    experiments = settings.agent.experiments
     effective_prompt = build_lead_system_prompt(restricted, experiments)
     profile = _load_user_profile(user_id)
     if profile:
@@ -456,7 +518,8 @@ async def _stream_turn(
         name="lead",
         system_prompt=effective_prompt,
         tools=tools,
-        max_turns=settings.agent.max_iterations,
+        max_turns=max_turns,
+        sandbox_no_network=solo,
         comment_replies=True,
         stream_replies=True,
         stop_on_empty_reply=True,
@@ -468,7 +531,9 @@ async def _stream_turn(
         llm_client,
         registry=registry,
         ctx=ctx,
-        intercept=functools.partial(_lead_intercept, ctx=ctx, llm_client=llm_client),
+        intercept=functools.partial(
+            _lead_intercept, ctx=ctx, llm_client=llm_client, delegation=not solo
+        ),
         on_llm_call=functools.partial(_record_lead_usage, user_id, session_id),
     )
     try:
@@ -499,13 +564,11 @@ async def _stream_turn(
         assert end is not None
 
         if end.capped:
-            log.warning("agent_loop_capped", max_iterations=settings.agent.max_iterations)
+            log.warning("agent_loop_capped", max_iterations=max_turns)
             store.save(user_id, session_id, history)
             if plan is not None:
                 yield make("plan_report", **adherence(plan, trace, known=tool_names))
-            yield make(
-                "error", message=f"agent loop exceeded {settings.agent.max_iterations} iterations"
-            )
+            yield make("error", message=f"agent loop exceeded {max_turns} iterations")
             return
 
         store.save(user_id, session_id, history)
@@ -588,7 +651,7 @@ def _record_lead_usage(user_id: str, session_id: str, turn: int, response: Messa
 
 
 def _lead_intercept(
-    tc: ToolCall, turn: int, *, ctx: RunContext, llm_client: LLMClient
+    tc: ToolCall, turn: int, *, ctx: RunContext, llm_client: LLMClient, delegation: bool = True
 ) -> AsyncIterator[dict | ToolResult] | None:
     """The two kinds of tool call the lead answers itself, before the registry.
 
@@ -596,8 +659,11 @@ def _lead_intercept(
     sub-agent's report, and the `sub_agent_end` the interfaces render comes *after* the
     result's own events, as it always did. The internal tools (skills, the plan) are
     answered in-process; `present_plan` is followed by the `plan` event.
+
+    Under `solo_lead` (`delegation` false) a `task` call is not intercepted: the model was
+    never shown the tool, so it falls through to the registry and is answered as unknown.
     """
-    if tc.name == TASK_TOOL_NAME:
+    if delegation and tc.name == TASK_TOOL_NAME:
         return _run_task(tc, turn, ctx=ctx, llm_client=llm_client)
     if tc.name in _INTERNAL_TOOL_NAMES:
         return _run_internal(tc)

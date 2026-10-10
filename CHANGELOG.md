@@ -8,6 +8,13 @@ project uses [semantic versioning](https://semver.org/). While the version stays
 
 ## [Unreleased]
 
+### Added
+
+- `HELIOAI_EXPERIMENTS=solo_lead`: the lead runs with no sub-agents — it is not given
+  `task`, loads the skills it needs with `load_skill` and does the work itself, with a
+  `data_analyst`'s turns added to its own and its `run_python` offline. Off by default and
+  unmeasured; it exists to be compared with the delegating loop on HelioBench.
+
 ## [0.4.0] — 2026-10-01
 
 ### Highlights

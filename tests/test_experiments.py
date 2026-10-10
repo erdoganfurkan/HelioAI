@@ -20,7 +20,7 @@ import helioai.tools.setup  # noqa: F401  — populates the registry; without it
 from helioai import config
 from helioai.config import settings
 from helioai.core import agent_loop, sub_agents
-from helioai.core.llm.base import Message
+from helioai.core.llm.base import Message, ToolCall
 from helioai.runtime.runner import Runner
 
 # ── parsing ────────────────────────────────────────────────────────────────────
@@ -63,6 +63,7 @@ def test_every_experiment_the_code_consults_is_a_known_name():
         "search_budget",
         "search_variables",
         "judgment_intent",
+        "solo_lead",
     }
     assert "final_answer" not in config.EXPERIMENTS, "graduated on bench 3; it is the default"
 
@@ -211,3 +212,108 @@ def test_role_prompts_run_a_recipe_through_run_recipe(role):
     assert "run_recipe" in body
     if role == "data_analyst":
         assert "theta_bn_window_spread_deg" in body
+
+
+# ── solo_lead: the lead does the work itself ───────────────────────────────────
+
+
+def test_every_solo_edit_finds_its_text_exactly_once():
+    """A base-prompt edit that moves an anchor must fail here, not leave a solo prompt
+    that still tells the model to delegate to a tool it is not given."""
+    for old, _ in agent_loop._SOLO_LEAD_EDITS:
+        assert agent_loop.SYSTEM_PROMPT.count(old) == 1, old[:60]
+
+
+def test_solo_prompt_names_skills_and_never_a_delegation():
+    prompt = agent_loop.build_lead_system_prompt(False, frozenset({"solo_lead"}))
+    assert prompt.count(agent_loop.SOLO_LEAD_SECTION) == 1
+    rest = prompt.replace(agent_loop.SOLO_LEAD_SECTION, "")
+    for gone in ("`task`", "agent_role", "Delegation", "delegat", "sub-agent", "Sub-agent"):
+        assert gone not in rest, gone
+    for skill in ("data_analyst", "plotting", "parameter_hunter", "plasma_physicist", "librarian"):
+        assert f"`{skill}`" in prompt
+    assert "## Closing an analysis" in prompt and "whole UT day" in prompt
+
+
+def test_solo_composes_with_the_other_prompt_switches():
+    prompt = agent_loop.build_lead_system_prompt(True, frozenset({"solo_lead", "deferred_tools"}))
+    assert agent_loop.SOLO_LEAD_SECTION in prompt
+    assert agent_loop.DEFERRED_TOOLS_NOTE in prompt
+    assert prompt.endswith(agent_loop.SCOPE_GUARDRAIL)
+
+
+def test_solo_lead_gets_a_data_analysts_turns_on_top_of_its_own(monkeypatch):
+    monkeypatch.setattr(settings.agent, "max_iterations", 10)
+    assert agent_loop.lead_turn_budget(frozenset()) == 10
+    analyst = sub_agents.AGENT_ROLES["data_analyst"].max_turns
+    assert agent_loop.lead_turn_budget(frozenset({"solo_lead"})) == 10 + analyst
+
+
+@pytest.fixture
+def lead_policies(monkeypatch):
+    """Record the `Policy` each lead turn is run under."""
+    seen: list = []
+
+    class RecordingRunner(Runner):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            seen.append(self.policy)
+
+    monkeypatch.setattr(agent_loop, "Runner", RecordingRunner)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_by_default_the_lead_delegates_with_its_own_budget_and_network(
+    monkeypatch, tmp_path, lead_policies
+):
+    await _lead_first_call(monkeypatch, tmp_path, frozenset())
+    policy = lead_policies[-1]
+    assert policy.max_turns == settings.agent.max_iterations
+    assert policy.sandbox_no_network is False
+    assert "task" in {t.name for t in policy.tools}
+
+
+@pytest.mark.asyncio
+async def test_solo_lead_is_shown_skills_but_no_task_and_runs_code_offline(
+    monkeypatch, tmp_path, lead_policies
+):
+    call = await _lead_first_call(monkeypatch, tmp_path, frozenset({"solo_lead"}))
+    shown = set(call["tools"])
+    assert "task" not in shown
+    assert {"list_skills", "load_skill", "run_python", "final_answer"} <= shown
+    assert agent_loop.SOLO_LEAD_SECTION in call["system_prompt"]
+    policy = lead_policies[-1]
+    assert policy.max_turns == agent_loop.lead_turn_budget(frozenset({"solo_lead"}))
+    assert policy.sandbox_no_network is True
+
+
+@pytest.mark.asyncio
+async def test_a_task_call_under_solo_lead_spawns_nothing(monkeypatch, tmp_path):
+    """A model that calls `task` anyway is answered as for any unknown tool."""
+    from helioai.core.session import SessionStore
+
+    monkeypatch.setattr(agent_loop, "store", SessionStore(tmp_path / "sessions.db"))
+    monkeypatch.setattr(settings.agent, "experiments", frozenset({"solo_lead"}))
+    llm = ScriptedLLM(
+        [
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="t1",
+                        name="task",
+                        arguments={"description": "plot B", "agent_role": "data_analyst"},
+                    )
+                ],
+            ),
+            Message(role="assistant", content="done"),
+        ]
+    )
+    events = [ev async for ev in agent_loop.stream_chat(llm, "web", "s1", "hi", restricted=False)]
+    kinds = [ev["event"] for ev in events]
+    assert "sub_agent_start" not in kinds
+    result = next(ev for ev in events if ev["event"] == "tool_result")
+    assert "unknown tool" in str(result["data"])
+    assert kinds[-1] == "done"

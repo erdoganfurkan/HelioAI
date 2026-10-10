@@ -186,7 +186,7 @@ class AgentConfig:
 
 
 EXPERIMENTS: frozenset[str] = frozenset(
-    {"deferred_tools", "search_budget", "search_variables", "judgment_intent"}
+    {"deferred_tools", "search_budget", "search_variables", "judgment_intent", "solo_lead"}
 )
 """The behaviours that change what the model sees or is told, each off by default.
 
@@ -207,6 +207,10 @@ be switched on alone and compared on the same questions, N runs each
   spacecraft were asked for — placed against what the turn loaded and delivered
   (`core/joins.py`: frame, window, quantity, responsiveness) and emitted as an `intent`
   event after the answer. Observation: nothing in the loop acts on it.
+- `solo_lead`: no sub-agents. The lead is not given `task`; its prompt names the skill to
+  `load_skill` for each kind of request instead of the role to delegate it to. Its turn
+  budget becomes its own plus a `data_analyst`'s, and its `run_python` runs without
+  network, as the analyst's did — the code it now runs is the code the analyst ran.
 
 `final_answer` was one of them and is now the default: on the third bench (34 clean runs,
 four configurations) it cost nothing on any question, re-enabled the claim verdict — zero

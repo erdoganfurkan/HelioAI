@@ -87,24 +87,29 @@ MCP_USER = "mcp"
 
 _sessions: WeakKeyDictionary = WeakKeyDictionary()
 _PROCESS_SESSION = f"mcp_{uuid4().hex[:12]}"
+_serving_stdio = False
 
 
 def _session_id(ctx: ServerRequestContext | None) -> str:
     """Stable workspace id for the connection this request arrived on.
 
-    Keyed on the connection, **not** on `ctx.session`: `runner._make_context` builds a
-    fresh ServerSession for every inbound message, whatever the docstring on
-    ServerRequestContext says about it being connection-scoped. Keying on the session
-    gave every single call its own directory, so `get_timeseries` wrote its npz in one
-    and the next `run_python` looked for the manifest in another — `load_data` raised
-    "no dataset manifest found" on the call straight after a successful download. Only
-    a live client showed it; the tests were passing two different fake sessions and
-    calling that two connections.
+    Over stdio the client owns the process, so the process is the session: one id for
+    every call, whatever the SDK says about connections. A 2026-07-28 request carries
+    its own envelope and the SDK builds a fresh Connection for each one, so keying on
+    the connection gave Claude Code a new directory per call and `load_data` raised
+    "no dataset manifest found" after every download.
+
+    Over HTTP, keyed on the connection, **not** on `ctx.session`: `runner._make_context`
+    builds a fresh ServerSession for every inbound message, whatever the docstring on
+    ServerRequestContext says about it being connection-scoped. A 2026-07-28 client
+    over HTTP still gets one directory per call — that era has no session to key on.
 
     Held weakly so a closed connection stops pinning its id. When the connection cannot
     be reached — the attribute is private and may be renamed — the whole process shares
-    one id, which is exactly right for stdio, where the client owns the process.
+    one id.
     """
+    if _serving_stdio:
+        return _PROCESS_SESSION
     connection = getattr(getattr(ctx, "session", None), "_connection", None)
     if connection is None:
         return _PROCESS_SESSION
@@ -312,6 +317,8 @@ async def serve_stdio() -> None:
     """
     from mcp.server.stdio import stdio_server
 
+    global _serving_stdio
+    _serving_stdio = True
     async with stdio_server() as (read, write):
         await server.run(read, write, _init_options())
 

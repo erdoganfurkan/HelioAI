@@ -327,6 +327,72 @@ async def test_one_connection_keeps_one_workspace_across_calls(monkeypatch, tmp_
     assert first["code_path"] != second["code_path"]
 
 
+async def test_stdio_keeps_one_workspace_for_2026_07_28_requests(monkeypatch, tmp_path):
+    """Over stdio, every call of the process lands in one session directory.
+
+    A 2026-07-28 request carries its own envelope and no `initialize`, and the SDK
+    builds a fresh Connection for each one — so keying on the connection gave every
+    call its own directory again. Claude Code speaks that era: in the 2026-10-11
+    rehearsal `load_data` failed after every download. Driven through the real
+    `serve_stdio` and the SDK's own dispatch, because a fake connection that outlives
+    its requests is exactly the assumption that broke.
+    """
+    import anyio
+    import mcp.server.stdio
+
+    meta = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "0"},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+
+    class StdioClient:
+        """Both ends of the pipe: sends one call, waits for its reply, then the next."""
+
+        def __init__(self, n_calls: int):
+            self.n_calls = n_calls
+            self.replies: list[dict] = []
+            self.replied = anyio.Event()
+
+        async def __aiter__(self):
+            for i in range(self.n_calls):
+                self.replied = anyio.Event()
+                yield (
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": i,
+                            "method": "tools/call",
+                            "params": {
+                                "name": "run_python",
+                                "arguments": {"code": "import os; print(os.getcwd())"},
+                                "_meta": meta,
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+                await self.replied.wait()
+
+        async def write(self, line: str) -> None:
+            self.replies.append(json.loads(line))
+            self.replied.set()
+
+        async def flush(self) -> None:
+            pass
+
+    client = StdioClient(n_calls=2)
+    real_stdio_server = mcp.server.stdio.stdio_server
+    monkeypatch.setattr(mcp.server.stdio, "stdio_server", lambda: real_stdio_server(client, client))
+    monkeypatch.setattr(ms, "_serving_stdio", False)
+
+    await ms.serve_stdio()
+
+    outputs = [json.loads(r["result"]["content"][0]["text"])["stdout"] for r in client.replies]
+    assert len(outputs) == 2
+    assert outputs[0] == outputs[1]
+
+
 def test_mcp_server_imports_without_any_llm_key():
     """The MCP server is a pure tool provider — the client brings its own model.
 

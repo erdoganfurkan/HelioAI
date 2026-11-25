@@ -17,7 +17,10 @@ boundary**, and how strong that boundary is depends on your platform.
 `run_python` executes generated code in a subprocess. On Linux, when
 [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) is installed and
 functional, that subprocess runs in a namespace with a read-only root, a
-restricted environment, dropped privileges and resource limits.
+restricted environment, and resource limits (`RLIMIT_FSIZE`, `RLIMIT_NPROC`). When
+`bwrap` is unavailable and the server runs as root with a `helioai-sandbox` user,
+the fallback path drops privileges and applies the same resource limits, without
+filesystem isolation.
 
 **On macOS and Windows, and on Linux without `bwrap`, HelioAI falls back to a
 plain subprocess.** The timeout and the process-group kill still apply, but there
@@ -46,8 +49,11 @@ read the logs there as well rather than assuming the image settles it.
   explicit environment allowlist, not `os.environ`.
 * On Linux with bubblewrap, common host credential stores (`~/.ssh`, `~/.gnupg`,
   `~/.config/gh`, `~/.config/gcloud`, `~/.aws`, `~/.kube`, `~/.docker`,
-  `~/.git-credentials`, `~/.netrc`, `~/.pypirc`, `~/.npmrc`) and `.env` are
-  masked with empty files or `tmpfs` mounts.
+  `~/.git-credentials`, `~/.netrc`, `~/.pypirc`, `~/.npmrc`,
+  `~/.cache/huggingface/token`) and `.env`/`.env.*` files in the install root or
+  working directory are masked with empty files or `tmpfs` mounts.
+* Returned figure paths are validated against the run's workspace before any host
+  consumer (`serve --web`, MCP image attachment, vision review) opens them.
 * Tool arguments beginning with `_` are rejected, so generated code cannot inject
   internal parameters into tool calls.
 * Runaway code is killed at the timeout, along with its whole process group.
@@ -79,9 +85,11 @@ read-only recipe/skill resources, behind an optional shared-secret token: set
 Over stdio no token applies — the client owns the process, the normal MCP contract.
 
 Empty `HELIOAI_MCP_TOKEN` (the default) means no auth, which is fine on the
-loopback default bind. Binding to anything else (`--host 0.0.0.0` or a real
-interface) with no token set is refused at startup — `helioai-mcp` exits rather
-than starting an unauthenticated, network-reachable Python sandbox.
+loopback default bind — `helioai-mcp --http` enables DNS-rebinding protection
+(`Host` and `Origin` allowlists) on loopback, matching `serve --web`. Binding to
+anything else (`--host 0.0.0.0` or a real interface) with no token set is refused
+at startup — `helioai-mcp` exits rather than starting an unauthenticated,
+network-reachable Python sandbox.
 
 ## Supported versions
 

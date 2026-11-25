@@ -560,3 +560,40 @@ def test_help_and_version_do_not_start_a_server(flag, expected, monkeypatch, cap
     mcp_server.main()
 
     assert expected in capsys.readouterr().out
+
+
+def test_figure_content_rejects_paths_outside_allowed_dir(tmp_path):
+    """Defence in depth: even if a forged path reached `_figure_content`, nothing
+    outside the session directory is opened on the host."""
+    from PIL import Image
+
+    outside = tmp_path / "outside.png"
+    Image.new("RGB", (10, 10), (0, 255, 0)).save(outside)
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+
+    assert ms._figure_content({"figure_paths": [str(outside)]}, allowed_dir=session_dir) == []
+
+
+def test_http_app_on_loopback_blocks_dns_rebinding(monkeypatch):
+    """Loopback MCP HTTP runs without a token by default and exposes `run_python`, so
+    rebound Host headers and foreign Origin headers must be rejected."""
+    monkeypatch.setattr(ms.settings.mcp, "token", "")
+    app = ms.build_http_app(host="127.0.0.1")
+    with TestClient(app) as client:
+        rebound = client.post("/mcp", json={}, headers={"Host": "evil.example:8765"})
+        assert rebound.status_code == 421
+
+        cross_origin = client.post(
+            "/mcp",
+            json={},
+            headers={"Host": "127.0.0.1:8765", "Origin": "https://evil.example"},
+        )
+        assert cross_origin.status_code == 403
+
+        legit = client.post(
+            "/mcp",
+            json={},
+            headers={"Host": "127.0.0.1:8765", "Origin": "http://127.0.0.1:8765"},
+        )
+        assert legit.status_code not in (403, 421)

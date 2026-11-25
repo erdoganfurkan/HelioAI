@@ -20,6 +20,7 @@ import contextlib
 import hmac
 import io
 import sys
+from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
 from weakref import WeakKeyDictionary
@@ -61,6 +62,7 @@ from helioai.logging_config import get_logger, setup_logging
 from helioai.runtime.context import RunContext
 from helioai.tools.recipes import list_recipes, load_recipe
 from helioai.tools.registry import registry
+from helioai.tools.sandbox import valid_figure_paths
 
 log = get_logger(__name__)
 
@@ -122,7 +124,7 @@ def _session_id(ctx: ServerRequestContext | None) -> str:
 FIGURE_MAX_PX = 768
 
 
-def _figure_content(payload: object) -> list[ImageContent]:
+def _figure_content(payload: object, allowed_dir: Path | None = None) -> list[ImageContent]:
     """Attach the figures a tool produced, downscaled, to its result.
 
     The sandbox returns `figure_paths` — paths on the server's filesystem. That is
@@ -132,14 +134,22 @@ def _figure_content(payload: object) -> list[ImageContent]:
 
     Downscaled to FIGURE_MAX_PX because these ride inline in every response: a
     publication-sized figure is several megabytes of base64 to say what a legible
-    thumbnail says. A figure that cannot be read is skipped rather than failing the
-    call — it already succeeded.
+    thumbnail says. When `allowed_dir` is supplied, paths are filtered through
+    `sandbox.valid_figure_paths` so only regular PNG/PDF files inside the session
+    workspace are opened. A figure that cannot be read is skipped rather than failing
+    the call — it already succeeded.
     """
     if not isinstance(payload, dict):
         return []
 
+    raw_paths = payload.get("figure_paths") or []
+    paths = (
+        valid_figure_paths(raw_paths, allowed_dir)
+        if allowed_dir is not None
+        else [p for p in raw_paths if isinstance(p, str) and p]
+    )
     content: list[ImageContent] = []
-    for path in payload.get("figure_paths") or []:
+    for path in paths:
         try:
             from PIL import Image
 
@@ -175,7 +185,10 @@ async def _call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -
     # also travels as structured content, which clients may read instead of parsing
     # the text.
     return CallToolResult(
-        content=[TextContent(type="text", text=result.for_llm()), *_figure_content(result.payload)],
+        content=[
+            TextContent(type="text", text=result.for_llm()),
+            *_figure_content(result.payload, allowed_dir=run_ctx.session_dir),
+        ],
         structured_content=result.payload if isinstance(result.payload, dict) else None,
         is_error=not result.ok,
     )
@@ -351,18 +364,47 @@ def _require_bearer_token(app, token: str):
     return _checked
 
 
-def build_http_app():
+def _loopback_transport_security():
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            "127.0.0.1",
+            "127.0.0.1:*",
+            "localhost",
+            "localhost:*",
+            "[::1]",
+            "[::1]:*",
+        ],
+        allowed_origins=[
+            "http://127.0.0.1",
+            "http://127.0.0.1:*",
+            "http://localhost",
+            "http://localhost:*",
+            "http://[::1]",
+            "http://[::1]:*",
+        ],
+    )
+
+
+def build_http_app(host: str | None = None):
     """Build the streamable-HTTP ASGI app exposing the MCP server.
 
     Returns a Starlette app mounting the MCP session manager at `/mcp`, wrapped in a
     Bearer-token check when `HELIOAI_MCP_TOKEN` is set, suitable for any ASGI server
-    (`serve_http` wraps it in uvicorn).
+    (`serve_http` wraps it in uvicorn). When `host` is a loopback address, enables the
+    SDK's DNS-rebinding guard (`Host` and `Origin` allowlists) so a browser tab cannot
+    reach an unauthenticated local `run_python` via DNS rebinding.
     """
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
     from starlette.routing import Mount
 
-    manager = StreamableHTTPSessionManager(app=server, json_response=False, stateless=False)
+    security = _loopback_transport_security() if host in _LOOPBACK_HOSTS else None
+    manager = StreamableHTTPSessionManager(
+        app=server, json_response=False, stateless=False, security_settings=security
+    )
 
     @contextlib.asynccontextmanager
     async def lifespan(app):
@@ -382,7 +424,7 @@ def serve_http(host: str, port: int) -> None:
     """
     import uvicorn
 
-    uvicorn.run(build_http_app(), host=host, port=port)
+    uvicorn.run(build_http_app(host=host), host=host, port=port)
 
 
 def _arg(args: list[str], flag: str, default: str) -> str:

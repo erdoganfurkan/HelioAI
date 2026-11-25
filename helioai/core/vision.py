@@ -11,12 +11,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+from pathlib import Path
 
 from helioai.config import settings
 from helioai.core.llm.base import close_sdk_client
 from helioai.logging_config import get_logger
 from helioai.tools.offload import run_blocking
 from helioai.tools.results import ToolResult
+from helioai.tools.sandbox import valid_figure_paths
 
 log = get_logger(__name__)
 
@@ -53,7 +55,17 @@ async def maybe_review(tool_name: str, result: ToolResult) -> tuple[ToolResult, 
     data = result.payload
     if not isinstance(data, dict) or data.get("error") or not data.get("figure_paths"):
         return result, None
-    verdict = await _review(data["figure_paths"])
+    # Every real `run_python` payload carries `code_path` inside the session workspace;
+    # bound figure reads strictly to that directory so one user's run can never review
+    # another user's files under `data_dir`.
+    code_path = data.get("code_path")
+    if isinstance(code_path, str) and code_path:
+        safe_paths = valid_figure_paths(data["figure_paths"], Path(code_path).resolve().parent)
+    else:
+        safe_paths = [p for p in data["figure_paths"] if isinstance(p, str) and p]
+    if not safe_paths:
+        return result, None
+    verdict = await _review(safe_paths)
     if not verdict:
         return result, None
     return result.with_payload({**data, "figure_review": verdict}), verdict

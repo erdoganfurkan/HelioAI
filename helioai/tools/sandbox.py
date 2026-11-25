@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import subprocess
@@ -92,8 +93,59 @@ _SENSITIVE_HOME_PATHS = frozenset(
         ".netrc",
         ".pypirc",
         ".npmrc",
+        ".cache/huggingface/token",
     }
 )
+
+_ENV_TEMPLATE_NAMES = frozenset({".env.example", ".env.sample", ".env.template"})
+
+
+def _env_files_to_mask(root: Path) -> list[Path]:
+    """Return every `.env` and `.env.*` secret file reachable from `root` or cwd.
+
+    `config.py` loads `find_dotenv(usecwd=True)` for pip-installed runs where `_ROOT`
+    is `site-packages/`, and dev checkouts often carry `.env.bak-*` or `.env.local`
+    beside `.env`. Masking only `_ROOT / ".env"` left all of them readable through
+    `--ro-bind / /`.
+    """
+    from dotenv import find_dotenv
+
+    dirs: list[Path] = [root]
+    try:
+        dirs.append(Path.cwd())
+    except OSError:
+        pass
+    discovered = find_dotenv(usecwd=True)
+    if discovered:
+        dirs.append(Path(discovered).resolve().parent)
+
+    seen: set[Path] = set()
+    targets: list[Path] = []
+    for base in dirs:
+        try:
+            resolved_dir = base.resolve()
+        except OSError:
+            continue
+        if not resolved_dir.is_dir():
+            continue
+        try:
+            entries = sorted(resolved_dir.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            name = entry.name
+            if name != ".env" and not name.startswith(".env."):
+                continue
+            if name in _ENV_TEMPLATE_NAMES:
+                continue
+            if not entry.is_file():
+                continue
+            key = entry.resolve()
+            if key not in seen:
+                seen.add(key)
+                targets.append(entry)
+    return targets
+
 
 # Subtrees of speasy's data directory NOT worth copying into a user's seed.
 # `cda_inventory/masters_cdf` is a read-only download cache of CDAWeb master CDFs
@@ -306,10 +358,7 @@ def _build_sandbox_cmd(
             "--tmpfs",
             data_dir,
         ]
-        # Mask the .env file — it holds the LLM provider API keys and is otherwise
-        # readable through --ro-bind / / even though it's absent from the subprocess env.
-        env_file = _ROOT / ".env"
-        if env_file.exists():
+        for env_file in _env_files_to_mask(_ROOT):
             cmd += ["--ro-bind", "/dev/null", str(env_file)]
         # Mask host credential stores before mounting plot_dir writable.
         # ponytail: this is a denylist for known host stores; a dedicated UID or container
@@ -343,6 +392,14 @@ def _build_sandbox_cmd(
             detail="network isolation requested but bwrap is unavailable",
         )
     return [sys.executable, "-"]
+
+
+def _bwrap_preexec_fn() -> callable | None:
+    """preexec_fn for the bwrap path — resource limits without dropping privileges
+    before bwrap enters its namespace."""
+    if sys.platform == "win32":
+        return None
+    return _apply_resource_limits
 
 
 def _preexec_fn() -> callable | None:
@@ -420,30 +477,33 @@ def _warn_if_not_isolated() -> None:
     )
 
 
-def _set_subprocess_limits() -> None:
-    """Apply resource limits + drop to sandbox user (pre-exec hook).
+def _apply_resource_limits() -> None:
+    """Apply `RLIMIT_FSIZE` and `RLIMIT_NPROC` in the child before exec.
 
-    Called via preexec_fn — runs in the child process after fork, before exec.
-    Degrades silently on non-Linux or permission error.
-
-    RLIMIT_AS (virtual memory) is intentionally not set: numpy/scipy/speasy use
-    large sparse mmap regions at import time that can exceed any safe threshold,
-    causing OSError on import rather than at actual allocation. The hard timeout
-    already handles runaway CPU usage.
+    Shared between the bwrap and non-bwrap spawn paths so both enforce the disk and
+    fork-bomb caps promised by SECURITY.md. `RLIMIT_AS` stays unset because
+    numpy/scipy/speasy reserve large sparse mmaps at import time.
     """
-    _drop_privileges()
     try:
         import resource
 
-        # 200 MB max file write — prevents disk exhaustion from large figure dumps
         _200MB = 200 * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_FSIZE, (_200MB, _200MB))
-        # Cap process count — fork-bomb defense in depth (timeout + killpg also apply)
         _, hard = resource.getrlimit(resource.RLIMIT_NPROC)
         cap = _MAX_PROCS if hard == resource.RLIM_INFINITY else min(_MAX_PROCS, hard)
         resource.setrlimit(resource.RLIMIT_NPROC, (cap, hard))
     except Exception:
         pass
+
+
+def _set_subprocess_limits() -> None:
+    """Apply resource limits + drop to sandbox user (pre-exec hook).
+
+    Called via preexec_fn on the non-bwrap path — runs in the child process after
+    fork, before exec. Degrades silently on non-Linux or permission error.
+    """
+    _drop_privileges()
+    _apply_resource_limits()
 
 
 _SANDBOX_PREAMBLE = """\
@@ -800,8 +860,47 @@ def param_card(var, param_id: str) -> None:
 _SANDBOX_POSTAMBLE = """
 import sys, json
 _out = {"figure_paths": __sandbox_figure_paths, "exports": __sandbox_exports, "cards": __sandbox_cards}
-print("__HELIOAI_RESULT__" + json.dumps(_out))
+print(__HELIOAI_MARKER__ + json.dumps(_out))
 """
+
+_FIGURE_SUFFIXES = frozenset({".png", ".pdf"})
+
+
+def valid_figure_paths(paths: object, allowed_dir: str | Path) -> list[str]:
+    """Keep only regular PNG/PDF files that resolve inside `allowed_dir`.
+
+    Sandboxed code runs in the same namespace as `__sandbox_figure_paths`, so any
+    caller on the host (`mcp_server._figure_content`, `vision._png_b64`) that opens
+    returned paths outside bwrap would otherwise follow a forged host path.
+    Shared by the sandbox (primary boundary) and host-side figure readers so the
+    allowed-suffix and containment rules stay in one place.
+    """
+    if not isinstance(paths, list):
+        return []
+    try:
+        root = Path(allowed_dir).resolve()
+    except OSError:
+        return []
+    valid: list[str] = []
+    for raw in paths:
+        if not isinstance(raw, str) or not raw:
+            continue
+        try:
+            resolved = Path(raw).resolve()
+        except OSError:
+            continue
+        if (
+            resolved.is_relative_to(root)
+            and resolved.suffix.lower() in _FIGURE_SUFFIXES
+            and resolved.is_file()
+        ):
+            valid.append(str(resolved))
+        else:
+            from helioai.logging_config import get_logger as _get_logger
+
+            _get_logger(__name__).warning("sandbox_figure_path_rejected", path=raw)
+    return valid
+
 
 # Lines injected ahead of the agent's code: the two __sandbox_* assignments plus the
 # preamble. Derived, never hard-coded — the preamble grows, and a stale constant would
@@ -892,10 +991,10 @@ async def run_python(
     dedented_code = textwrap.dedent(code)
     code_file.write_text(dedented_code, encoding="utf-8")
     n_lines = len(dedented_code.splitlines())
+    result_marker = f"__HELIOAI_RESULT_{secrets.token_hex(12)}__"
+    postamble = _SANDBOX_POSTAMBLE.replace("__HELIOAI_MARKER__", repr(result_marker))
     plot_dir_line = f"__sandbox_plot_dir = {plot_dir!r}\n__sandbox_run_idx = {run_idx!r}\n"
-    full_code = (
-        plot_dir_line + _SANDBOX_PREAMBLE + textwrap.dedent(code) + "\n" + _SANDBOX_POSTAMBLE
-    )
+    full_code = plot_dir_line + _SANDBOX_PREAMBLE + dedented_code + "\n" + postamble
 
     speasy_seed: Path | None = None
     if _bwrap_works():
@@ -920,6 +1019,7 @@ async def run_python(
                 stderr=asyncio.subprocess.PIPE,
                 env=sandbox_env,
                 start_new_session=True,
+                preexec_fn=_bwrap_preexec_fn(),
             )
         else:
             _warn_if_not_isolated()
@@ -945,6 +1045,8 @@ async def run_python(
                 "error": f"Execution timed out after {timeout}s",
                 "stdout": stdout_bytes.decode("utf-8", errors="replace")[-2000:],
                 "stderr": stderr_bytes.decode("utf-8", errors="replace")[-2000:],
+                "code_path": str(code_file),
+                "n_lines": n_lines,
             }
         except asyncio.CancelledError:
             # The caller is gone (a closed SSE stream, a cancelled task): nothing will
@@ -960,10 +1062,10 @@ async def run_python(
         cards: list[dict] = []
         clean_stdout_lines: list[str] = []
         for line in stdout.splitlines():
-            if line.startswith("__HELIOAI_RESULT__"):
+            if line.startswith(result_marker):
                 try:
-                    payload = json.loads(line[len("__HELIOAI_RESULT__") :])
-                    figure_paths = payload.get("figure_paths", [])
+                    payload = json.loads(line[len(result_marker) :])
+                    figure_paths = valid_figure_paths(payload.get("figure_paths"), plot_dir)
                     exports = payload.get("exports", {})
                     cards = payload.get("cards", [])
                 except json.JSONDecodeError:

@@ -162,3 +162,39 @@ async def test_loop_emits_figure_review_event(vision_on, monkeypatch, tmp_path):
     history = store.get_or_create("web", "s1")
     tool_msgs = [m for m in history if m.role == "tool"]
     assert any("figure_review" in (m.content or "") for m in tool_msgs)
+
+
+async def test_vision_rejects_figure_paths_outside_run_workspace(vision_on, monkeypatch, tmp_path):
+    """Vision runs in the host process outside bwrap and must not open figures from
+    outside the run's own workspace — including another user's directory under data_dir."""
+    from PIL import Image
+
+    alice_dir = tmp_path / "users" / "alice" / "s1"
+    bob_dir = tmp_path / "users" / "bob" / "s1"
+    alice_dir.mkdir(parents=True)
+    bob_dir.mkdir(parents=True)
+    alice_code = alice_dir / "code_0.py"
+    alice_code.write_text("pass", encoding="utf-8")
+    bob_fig = bob_dir / "secret.png"
+    Image.new("RGB", (10, 10), (1, 2, 3)).save(bob_fig)
+
+    called = []
+
+    async def fake(images, prompt):
+        called.append(images)
+        return "OK"
+
+    monkeypatch.setattr(vision, "_call_vision", fake)
+    forged = ToolResult.from_raw(
+        "run_python",
+        json.dumps(
+            {
+                "figure_paths": [str(bob_fig)],
+                "code_path": str(alice_code),
+                "exports": {},
+                "stdout": "",
+            }
+        ),
+    )
+    out, verdict = await vision.maybe_review("run_python", forged)
+    assert verdict is None and not called and out.payload.get("figure_review") is None

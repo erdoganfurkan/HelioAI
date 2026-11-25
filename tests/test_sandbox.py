@@ -1072,3 +1072,66 @@ def test_the_program_writes_utf8_whatever_the_host_default_is() -> None:
 
     assert _sandbox_env()["PYTHONUTF8"] == "1"
     assert _sandbox_env(home="/x")["PYTHONUTF8"] == "1"
+
+
+async def test_forged_figure_paths_outside_workspace_are_rejected(tmp_path) -> None:
+    """Sandboxed code shares a namespace with `__sandbox_figure_paths`; a forged host
+    path must be dropped before `mcp_server` or `vision` opens it outside bwrap."""
+    from PIL import Image
+
+    outside = tmp_path / "secret_host.png"
+    Image.new("RGB", (10, 10), (255, 0, 0)).save(outside)
+    plot_dir = tmp_path / "session_ws"
+    plot_dir.mkdir()
+
+    code = (
+        f"__sandbox_figure_paths.append({str(outside)!r})\n"
+        "import json\n"
+        f"print('__HELIOAI_RESULT__' + json.dumps({{'figure_paths': [{str(outside)!r}]}}))\n"
+    )
+    result = await run_python(code, _plot_dir=str(plot_dir), _run_idx=0)
+    assert result.get("error") is None, result
+    assert result["figure_paths"] == []
+    assert result["n_figures"] == 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="RLIMIT_FSIZE is POSIX-only")
+async def test_bwrap_sandbox_enforces_resource_limits(tmp_path) -> None:
+    """SECURITY.md promises resource limits on the bwrap path too, not only the fallback."""
+    if not sandbox._bwrap_works():
+        pytest.skip("bubblewrap not functional on this host")
+
+    code = (
+        "import resource\n"
+        "soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)\n"
+        "print(f'FSIZE={soft},{hard}')\n"
+    )
+    result = await run_python(code, _plot_dir=str(tmp_path), _run_idx=0)
+    assert result.get("error") is None, result
+    assert f"FSIZE={200 * 1024 * 1024},{200 * 1024 * 1024}" in result["stdout"]
+
+
+def test_bwrap_masks_cwd_dotenv_backups_and_hf_token(tmp_path, monkeypatch) -> None:
+    """Pip-installed users keep `.env` in cwd, not site-packages, and dev checkouts
+    often hold `.env.bak-*` beside `.env` — all secret env files and HF tokens must be masked."""
+    fake_home = tmp_path / "home"
+    hf_token = fake_home / ".cache" / "huggingface" / "token"
+    hf_token.parent.mkdir(parents=True)
+    hf_token.write_text("hf_secret_token", encoding="utf-8")
+
+    cwd_dir = tmp_path / "project"
+    cwd_dir.mkdir()
+    (cwd_dir / ".env").write_text("API_KEY=secret1\n", encoding="utf-8")
+    (cwd_dir / ".env.bak-2026-10-11").write_text("API_KEY=secret2\n", encoding="utf-8")
+    (cwd_dir / ".env.example").write_text("API_KEY=\n", encoding="utf-8")
+
+    monkeypatch.setattr(sandbox.Path, "home", lambda: fake_home)
+    monkeypatch.chdir(cwd_dir)
+    monkeypatch.setattr(sandbox, "_bwrap_works", lambda: True)
+
+    cmd = sandbox._build_sandbox_cmd(str(tmp_path / "plot"))
+
+    assert str(cwd_dir / ".env") in cmd
+    assert str(cwd_dir / ".env.bak-2026-10-11") in cmd
+    assert str(cwd_dir / ".env.example") not in cmd
+    assert str(hf_token) in cmd

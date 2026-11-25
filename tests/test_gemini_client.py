@@ -299,3 +299,226 @@ async def test_missing_usage_metadata_costs_zero(client):
     c, models = client
     reply = await c.chat([Message(role="user", content="hi")], tools=[])
     assert (reply.prompt_tokens, reply.completion_tokens, reply.cached_tokens) == (0, 0, 0)
+
+
+async def test_tool_result_prefers_persisted_msg_name_after_provider_switch(client):
+    """Switching from OpenAI/Groq to Gemini mid-session leaves `call_xxx` ids without `::`;
+    `Message.name` is already persisted and must win over splitting `tool_call_id`."""
+    c, models = client
+    await c.chat(
+        [
+            Message(
+                role="tool",
+                content='{"ok": true}',
+                tool_call_id="call_abc123",
+                name="get_timeseries",
+            )
+        ],
+        tools=[],
+    )
+    part = models.calls[-1]["contents"][0].parts[0]
+    assert part.function_response.name == "get_timeseries"
+
+
+async def test_parallel_tool_results_are_grouped_in_one_user_content(client):
+    c, models = client
+    await c.chat(
+        [
+            Message(
+                role="tool", content='{"a": 1}', tool_call_id="t1::1", name="search_parameters"
+            ),
+            Message(role="tool", content='{"b": 2}', tool_call_id="t2::2", name="list_missions"),
+        ],
+        tools=[],
+    )
+    contents = models.calls[-1]["contents"]
+    assert len(contents) == 1
+    assert contents[0].role == "user"
+    assert [p.function_response.name for p in contents[0].parts] == [
+        "search_parameters",
+        "list_missions",
+    ]
+
+
+async def test_thought_parts_are_excluded_from_visible_reply(client):
+    c, models = client
+    models.response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[
+                        SimpleNamespace(function_call=None, text="secret chain", thought=True),
+                        SimpleNamespace(function_call=None, text="visible answer", thought=False),
+                    ]
+                )
+            )
+        ]
+    )
+    reply = await c.chat([Message(role="user", content="hi")], tools=[])
+    assert reply.content == "visible answer"
+
+
+async def test_stream_chat_yields_visible_deltas_and_final_message(client):
+    c, models = client
+
+    async def _gen_stream(**kwargs):
+        models.calls.append(kwargs)
+
+        async def _iter():
+            yield SimpleNamespace(
+                candidates=[
+                    SimpleNamespace(
+                        content=SimpleNamespace(
+                            parts=[
+                                SimpleNamespace(function_call=None, text="thinking", thought=True),
+                                SimpleNamespace(function_call=None, text="Hello ", thought=False),
+                            ]
+                        )
+                    )
+                ],
+                usage_metadata=None,
+            )
+            yield SimpleNamespace(
+                candidates=[
+                    SimpleNamespace(
+                        content=SimpleNamespace(
+                            parts=[SimpleNamespace(function_call=None, text="world", thought=False)]
+                        )
+                    )
+                ],
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=100,
+                    candidates_token_count=20,
+                    cached_content_token_count=10,
+                ),
+            )
+
+        return _iter()
+
+    models.generate_content_stream = _gen_stream
+    items = [item async for item in c.stream_chat([Message(role="user", content="hi")], tools=[])]
+    assert items[:-1] == ["Hello ", "world"]
+    final = items[-1]
+    assert isinstance(final, Message)
+    assert final.content == "Hello world"
+    assert (final.prompt_tokens, final.completion_tokens, final.cached_tokens) == (100, 20, 10)
+
+
+async def test_thought_signature_round_trips_through_chat(client):
+    """Gemini 2.5+/3+ thinking models attach `thought_signature` to function_call parts
+    and return HTTP 400 on the next tool turn if it is not echoed back."""
+    c, models = client
+    sig = b"\xde\xad\xbe\xef-thought-sig"
+    models.response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[
+                        SimpleNamespace(
+                            function_call=SimpleNamespace(name="get_timeseries", args={"id": "b"}),
+                            text=None,
+                            thought_signature=sig,
+                        )
+                    ]
+                )
+            )
+        ]
+    )
+    reply = await c.chat([Message(role="user", content="hi")], tools=[])
+    assert reply.tool_calls is not None
+    assert reply.tool_calls[0].thought_signature == sig
+
+    await c.chat(
+        [
+            Message(role="user", content="hi"),
+            reply,
+            Message(
+                role="tool",
+                content='{"ok": true}',
+                tool_call_id=reply.tool_calls[0].id,
+                name="get_timeseries",
+            ),
+        ],
+        tools=[],
+    )
+    model_turn = models.calls[-1]["contents"][1]
+    assert model_turn.role == "model"
+    assert model_turn.parts[0].thought_signature == sig
+
+
+async def test_thoughts_token_count_is_included_in_completion_tokens(client):
+    """Thinking tokens are billed as output tokens and must not be dropped from usage."""
+    c, models = client
+    models.response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(parts=[SimpleNamespace(function_call=None, text="ok")])
+            )
+        ],
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=500,
+            candidates_token_count=40,
+            thoughts_token_count=310,
+            cached_content_token_count=100,
+        ),
+    )
+    reply = await c.chat([Message(role="user", content="hi")], tools=[])
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.cached_tokens) == (500, 350, 100)
+
+
+async def test_stream_chat_preserves_thought_signature_and_retries_first_chunk(client, monkeypatch):
+    import helioai.core.llm.base as base_mod
+
+    c, models = client
+    sig = b"stream-sig-123"
+    attempts = 0
+
+    class _RetryableError(Exception):
+        status_code = 503
+
+    async def _no_sleep(_):
+        return None
+
+    monkeypatch.setattr(base_mod.asyncio, "sleep", _no_sleep)
+
+    async def _gen_stream(**kwargs):
+        nonlocal attempts
+        attempts += 1
+        models.calls.append(kwargs)
+
+        async def _iter():
+            if attempts == 1:
+                raise _RetryableError("transient 503 on first chunk")
+            yield SimpleNamespace(
+                candidates=[
+                    SimpleNamespace(
+                        content=SimpleNamespace(
+                            parts=[
+                                SimpleNamespace(
+                                    function_call=SimpleNamespace(name="search", args={"q": "Bz"}),
+                                    text=None,
+                                    thought_signature=sig,
+                                )
+                            ]
+                        )
+                    )
+                ],
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=80,
+                    candidates_token_count=12,
+                    thoughts_token_count=88,
+                    cached_content_token_count=0,
+                ),
+            )
+
+        return _iter()
+
+    models.generate_content_stream = _gen_stream
+    items = [item async for item in c.stream_chat([Message(role="user", content="hi")], tools=[])]
+    assert attempts == 2
+    assert len(items) == 1
+    final = items[0]
+    assert isinstance(final, Message)
+    assert final.tool_calls is not None
+    assert final.tool_calls[0].thought_signature == sig
+    assert final.completion_tokens == 100

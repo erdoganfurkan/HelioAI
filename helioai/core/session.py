@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import sqlite3
@@ -89,14 +90,32 @@ _MIGRATIONS = (
 def _dump_tool_calls(tcs: list[ToolCall] | None) -> str | None:
     if not tcs:
         return None
-    return json.dumps([{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in tcs])
+    rows = []
+    for tc in tcs:
+        row: dict = {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+        if tc.thought_signature is not None:
+            row["thought_signature"] = base64.b64encode(tc.thought_signature).decode("ascii")
+        rows.append(row)
+    return json.dumps(rows)
 
 
 def _load_tool_calls(raw: str | None) -> list[ToolCall] | None:
     if not raw:
         return None
     data = json.loads(raw)
-    return [ToolCall(id=d["id"], name=d["name"], arguments=d.get("arguments") or {}) for d in data]
+    out: list[ToolCall] = []
+    for d in data:
+        sig_b64 = d.get("thought_signature")
+        sig = base64.b64decode(sig_b64) if isinstance(sig_b64, str) and sig_b64 else None
+        out.append(
+            ToolCall(
+                id=d["id"],
+                name=d["name"],
+                arguments=d.get("arguments") or {},
+                thought_signature=sig,
+            )
+        )
+    return out
 
 
 SessionKey = tuple[str, str]

@@ -122,11 +122,16 @@ class ToolCall:
         name: Registered tool name.
         arguments: Decoded JSON arguments. Empty when the model emitted
             malformed JSON — a bad tool call must not kill the loop.
+        thought_signature: Opaque token attached to a `function_call` part by
+            Gemini 2.5+/3+ thinking models. Must be echoed back unchanged on the
+            matching `model` turn or Gemini rejects multi-turn tool calls with
+            HTTP 400. Persisted by `SessionStore`; `None` for other providers.
     """
 
     id: str
     name: str
     arguments: dict
+    thought_signature: bytes | None = None
 
 
 @dataclass

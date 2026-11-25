@@ -552,3 +552,33 @@ def test_session_cache_evicts_oldest_unlocked_entries(db: Path, monkeypatch) -> 
         store.save("u", f"s{i}", [Message(role="user", content=f"q{i}")])
     assert len(store._cache) == 3
     assert ("u", "s4") in store._cache and ("u", "s0") not in store._cache
+
+
+def test_tool_call_thought_signature_round_trips(db: Path) -> None:
+    """Gemini 2.5+/3+ thinking models require echoing `thought_signature` on tool calls
+    across turns, including after a session reload from SQLite."""
+    sig = b"\x00\x01\xffgemini-sig"
+    store = SessionStore(db)
+    history = [
+        Message(role="user", content="plot Bz"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="get_timeseries::aa11",
+                    name="get_timeseries",
+                    arguments={"id": "b"},
+                    thought_signature=sig,
+                ),
+                ToolCall(id="plain::bb22", name="list_missions", arguments={}),
+            ],
+        ),
+    ]
+    store.save("u", "s", history)
+
+    reloaded = SessionStore(db).get_or_create("u", "s")
+    tcs = reloaded[1].tool_calls
+    assert tcs is not None
+    assert tcs[0].thought_signature == sig
+    assert tcs[1].thought_signature is None

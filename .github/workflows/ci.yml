@@ -39,6 +39,18 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
 
+  web-js:
+    # The web UI tests run in milliseconds under Node and guard session streaming,
+    # authenticated downloads/figures and turn replay — none of which pytest runs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run web UI tests
+        run: node --test tests/web/*.js
+
   phep3:
     # PyHC PHEP 3: Python versions supported for 36 months, upstream core
     # Scientific Python packages for 24, both adopted within 6 of release.

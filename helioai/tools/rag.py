@@ -129,18 +129,28 @@ def _load_bm25():
     """Build (once, cached) a BM25 index over the documents already in Chroma.
 
     No indexer change needed: the corpus is pulled from the existing collection.
-    Tokenises `id + document` so exact id/code queries match. Returns None if
-    rank_bm25 is missing or the collection is empty (search degrades to dense).
+    Tokenises `id + document` so exact id/code queries match. Resolves the collection
+    before taking `_lock` (which is non-reentrant) so callers like `indexed_providers()`
+    and `dataset_variables()` can run cold without deadlocking or pulling the 90 MB
+    embedding model. Returns None if rank_bm25 is missing or the collection is empty
+    (search degrades to dense).
     """
     global _bm25, _bm25_ids, _bm25_meta, _bm25_docs, _bm25_loaded
     if _bm25_loaded:
         return _bm25
+    try:
+        collection = _collection_only()
+    except Exception as e:
+        log.warning("BM25 unavailable (%s) — falling back to dense-only", e)
+        with _lock:
+            _bm25 = None
+            _bm25_loaded = True
+        return None
     with _lock:
         if not _bm25_loaded:
             try:
                 from rank_bm25 import BM25Okapi
 
-                _, collection = _load()
                 # Paginate: a single get() over the whole catalog blows SQLite's
                 # variable limit on large collections (~83k).
                 _bm25_ids, _bm25_docs, _bm25_meta = [], [], []
@@ -900,12 +910,13 @@ def search_batch(
         return (q, provider, region, measurement_type, top_k, window)
 
     uncached = []
-    for i, q in active:
-        hit = _search_cache.get(_cache_key(q))
-        if hit is not None:
-            results[i] = hit
-        else:
-            uncached.append((i, q))
+    with _lock:
+        for i, q in active:
+            hit = _search_cache.get(_cache_key(q))
+            if hit is not None:
+                results[i] = hit
+            else:
+                uncached.append((i, q))
 
     if not uncached:
         return results
@@ -981,9 +992,10 @@ def search_batch(
             res = _append_cross_provider(res, unfiltered, provider, _CROSS_PROVIDER_EXTRA)
         results[i] = res
         key = _cache_key(q)
-        if len(_search_cache) >= _SEARCH_CACHE_MAX:
-            _search_cache.pop(next(iter(_search_cache)))
-        _search_cache[key] = res
+        with _lock:
+            if len(_search_cache) >= _SEARCH_CACHE_MAX:
+                _search_cache.pop(next(iter(_search_cache)))
+            _search_cache[key] = res
     return results
 
 

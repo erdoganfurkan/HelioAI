@@ -878,3 +878,23 @@ def test_a_recipe_that_is_not_the_one_shipped_is_shown_in_full():
     edited = (_PKG_RECIPES / "theta_bn.py").read_text(encoding="utf-8") + "\n# edited\n"
     assert recipe_run_view(_theta_bn_run(edited), {"datasets": {}}) is None
     assert recipe_run_view("x = 1\nexport('x', x)\n", {"datasets": {}}) is None
+
+
+def test_to_standalone_rewrites_full_speasy_id_in_load_data():
+    """The sandbox accepts `load_data("cda/WI_H0_MFI/BGSM")`, so standalone export must
+    rewrite full ids to `fetch_series(...)` rather than leaking the local host shim."""
+    manifest = {
+        "datasets": {
+            "bgsm": {
+                "kind": "timeseries",
+                "file": "bgsm.npz",
+                "param_id": "cda/WI_H0_MFI/BGSM",
+                "start": "2015-03-17T00:00:00",
+                "stop": "2015-03-18T00:00:00",
+            }
+        }
+    }
+    code = 'b = load_data("cda/WI_H0_MFI/BGSM")\nexport("b", b.values)\n'
+    out = export_module.to_standalone(code, manifest, with_header=False)
+    assert 'fetch_series("cda/WI_H0_MFI/BGSM", "2015-03-17T00:00:00", "2015-03-18T00:00:00")' in out
+    assert "load_data(" not in out

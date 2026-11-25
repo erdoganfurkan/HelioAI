@@ -100,6 +100,7 @@ def _load_tool_calls(raw: str | None) -> list[ToolCall] | None:
 
 
 SessionKey = tuple[str, str]
+_MAX_CACHED_SESSIONS = 256
 
 
 class SessionStore:
@@ -199,14 +200,33 @@ class SessionStore:
         lock = self._turn_locks.get((user_id, session_id))
         return bool(lock and lock.locked())
 
+    def _evict_unlocked(self) -> None:
+        """Keep the in-memory caches bounded without evicting any active turn."""
+        if len(self._cache) > _MAX_CACHED_SESSIONS:
+            for k in list(self._cache):
+                if len(self._cache) <= _MAX_CACHED_SESSIONS:
+                    break
+                lock = self._turn_locks.get(k)
+                if lock is None or not lock.locked():
+                    self._cache.pop(k, None)
+        if len(self._turn_locks) > _MAX_CACHED_SESSIONS:
+            for k in list(self._turn_locks):
+                if len(self._turn_locks) <= _MAX_CACHED_SESSIONS:
+                    break
+                if k not in self._cache and not self._turn_locks[k].locked():
+                    self._turn_locks.pop(k, None)
+
     def get_or_create(self, user_id: str, session_id: str) -> list[Message]:
         """Return the cached history for a session, loading it from disk if needed."""
         key: SessionKey = (user_id, session_id)
         with self._lock:
             if key in self._cache:
-                return self._cache[key]
+                history = self._cache.pop(key)
+                self._cache[key] = history
+                return history
             history = self._load(user_id, session_id)
             self._cache[key] = history
+            self._evict_unlocked()
             return history
 
     def _load(self, user_id: str, session_id: str) -> list[Message]:
@@ -266,6 +286,15 @@ class SessionStore:
                 ],
             )
             conn.commit()
+            key: SessionKey = (user_id, session_id)
+            if key in self._cache:
+                cached = self._cache.pop(key)
+                if cached is not history:
+                    cached[:] = history
+                self._cache[key] = cached
+            else:
+                self._cache[key] = list(history)
+                self._evict_unlocked()
 
     def record_usage(
         self,

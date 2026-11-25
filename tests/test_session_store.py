@@ -526,3 +526,29 @@ def test_a_payload_the_model_would_see_stringified_is_journaled_the_same_way(db:
     store = SessionStore(db)
     store.append_event("u", "s", {"event": "artifact", "data": {"path": PurePosixPath("/a/b")}})
     assert store.events("u", "s")[0]["data"] == {"path": "/a/b"}
+
+
+def test_save_synchronises_in_memory_cache_when_given_a_new_list(db: Path) -> None:
+    """`agent_loop` saves `strip_orphan_tool_calls(history)` (a new list) on error;
+    the in-memory cache must reflect the cleaned list too."""
+    store = SessionStore(db)
+    h = store.get_or_create("u", "s1")
+    h.append(Message(role="user", content="hi"))
+    h.append(Message(role="assistant", tool_calls=[ToolCall(id="c1", name="ping", arguments={})]))
+
+    cleaned = strip_orphan_tool_calls(h)
+    store.save("u", "s1", cleaned)
+
+    assert len(store.get_or_create("u", "s1")) == 1
+    assert store.get_or_create("u", "s1")[0].content == "hi"
+
+
+def test_session_cache_evicts_oldest_unlocked_entries(db: Path, monkeypatch) -> None:
+    import helioai.core.session as session_mod
+
+    monkeypatch.setattr(session_mod, "_MAX_CACHED_SESSIONS", 3)
+    store = SessionStore(db)
+    for i in range(5):
+        store.save("u", f"s{i}", [Message(role="user", content=f"q{i}")])
+    assert len(store._cache) == 3
+    assert ("u", "s4") in store._cache and ("u", "s0") not in store._cache

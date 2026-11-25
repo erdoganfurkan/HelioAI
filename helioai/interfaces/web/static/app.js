@@ -67,11 +67,63 @@ function createView(sid) {
     steps: 0, tools: 0, subagents: 0,
     streaming: false,
     abort: null,
+    streamDone: null,
     pendingUser: null,
     liveReply: null,
+    blobUrls: [],
   };
   views.set(sid, view);
   return view;
+}
+
+function revokeViewBlobs(view) {
+  if (!view || !view.blobUrls || typeof URL === 'undefined' || !URL.revokeObjectURL) return;
+  for (const u of view.blobUrls) URL.revokeObjectURL(u);
+  view.blobUrls = [];
+}
+
+function needsAuthedFetch() {
+  return tokenMode === 'access' || !!getDevToken();
+}
+
+async function fetchBlobUrl(url, view) {
+  const r = await fetch(url);
+  if (r.status === 401) {
+    askForToken();
+    throw new Error('HTTP 401');
+  }
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const blobUrl = URL.createObjectURL(await r.blob());
+  if (view && view.blobUrls) view.blobUrls.push(blobUrl);
+  return blobUrl;
+}
+
+async function downloadAuthed(url, filename) {
+  if (!needsAuthedFetch() || typeof URL === 'undefined' || !URL.createObjectURL) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || '';
+    document.body.append(a);
+    a.click();
+    a.remove();
+    return;
+  }
+  try {
+    const r = await fetch(url);
+    if (r.status === 401) {
+      askForToken();
+      return;
+    }
+    if (!r.ok) return;
+    const blobUrl = URL.createObjectURL(await r.blob());
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename || '';
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  } catch { /* non-critical */ }
 }
 
 function isActive(view) {
@@ -431,6 +483,7 @@ function renderEvent(view, ev) {
   } else if (event === 'error') {
     const banner = el('div', 'error-banner', `⚠ ${data.message}`);
     view.chat.append(banner);
+    if (view.dockOpen) closeDock(view, '⚠ error');
     if (isActive(view)) scrollBottom();
   }
 }
@@ -562,10 +615,7 @@ function renderArtifact(view, data) {
       const url = `/figure?path=${encodeURIComponent(path)}`;
       const wrap = el('div', 'artifact-image');
       const img = document.createElement('img');
-      img.src = url;
-      img.alt = 'Figure';
-      img.addEventListener('click', () => openLightbox(url));
-      img.onerror = () => {
+      const showFallback = () => {
         const fallback = el('div', 'figure-fallback', '⚠ This figure could not be loaded — its file is gone or moved. ');
         const link = el('a', null, 'Open it directly');
         link.href = url;
@@ -574,20 +624,42 @@ function renderArtifact(view, data) {
         fallback.append(link, ' · ', el('code', null, path.split(/[\\/]/).pop()));
         wrap.replaceChildren(fallback);
       };
+      img.alt = 'Figure';
+      img.onerror = showFallback;
+      if (needsAuthedFetch() && typeof URL !== 'undefined' && URL.createObjectURL) {
+        fetchBlobUrl(url, view).then(blobUrl => {
+          img.src = blobUrl;
+          img.addEventListener('click', () => openLightbox(url, blobUrl));
+        }).catch(showFallback);
+      } else {
+        img.src = url;
+        img.addEventListener('click', () => openLightbox(url));
+      }
       const fname = path.split('/').pop() || 'figure.png';
       const dlBtn = document.createElement('a');
       dlBtn.className = 'img-dl';
       dlBtn.href = url;
       dlBtn.download = fname;
       dlBtn.textContent = '↓ PNG';
+      dlBtn.addEventListener('click', e => {
+        if (!needsAuthedFetch()) return;
+        e.preventDefault();
+        downloadAuthed(url, fname);
+      });
 
       const pdfPath = path.replace(/\.png$/, '.pdf');
       const pdfUrl = `/figure?path=${encodeURIComponent(pdfPath)}`;
+      const pdfFname = fname.replace(/\.png$/, '.pdf');
       const pdfBtn = document.createElement('a');
       pdfBtn.className = 'img-dl';
       pdfBtn.href = pdfUrl;
-      pdfBtn.download = fname.replace(/\.png$/, '.pdf');
+      pdfBtn.download = pdfFname;
       pdfBtn.textContent = '↓ PDF';
+      pdfBtn.addEventListener('click', e => {
+        if (!needsAuthedFetch()) return;
+        e.preventDefault();
+        downloadAuthed(pdfUrl, pdfFname);
+      });
 
       wrap.append(img, dlBtn, pdfBtn);
       view.chat.append(wrap);
@@ -740,14 +812,24 @@ const lbImg      = document.getElementById('lb-img');
 const lbDownload = document.getElementById('lb-download');
 const lbPdf      = document.getElementById('lb-pdf');
 
-function openLightbox(url) {
-  lbImg.src = url;
+function openLightbox(url, displayUrl) {
+  lbImg.src = displayUrl || url;
   lbDownload.href = url;
   const pdfUrl = url.replace(/\.png(\?|$)/, '.pdf$1').replace(/path=[^&]+/, m => {
     const p = decodeURIComponent(m.slice(5)).replace(/\.png$/, '.pdf');
     return 'path=' + encodeURIComponent(p);
   });
   lbPdf.href = pdfUrl;
+  lbDownload.onclick = e => {
+    if (!needsAuthedFetch()) return;
+    e.preventDefault();
+    downloadAuthed(url, 'figure.png');
+  };
+  lbPdf.onclick = e => {
+    if (!needsAuthedFetch()) return;
+    e.preventDefault();
+    downloadAuthed(pdfUrl, 'figure.pdf');
+  };
   lightbox.classList.add('open');
 }
 
@@ -811,6 +893,8 @@ async function sendMessage() {
   // the server's setting; sending it would override a provider the user never chose.
   const provider = (provSel.dataset.synced || provSel.dataset.touched) ? provSel.value : null;
 
+  let settleStream;
+  view.streamDone = new Promise(resolve => { settleStream = resolve; });
   try {
     view.abort = new AbortController();
     const resp = await fetch('/chat/stream', {
@@ -855,9 +939,11 @@ async function sendMessage() {
     if (isActive(view)) scrollBottom();
   } finally {
     view.abort = null;
+    view.streamDone = null;
     view.pendingUser = null;
     view.liveReply = null;
     view.streaming = false;
+    settleStream();
     if (isActive(view)) setStreaming(false);
   }
 }
@@ -931,23 +1017,43 @@ function localTime(iso) {
 }
 
 function exportSession(sid) {
-  const a = document.createElement('a');
-  a.href = `/api/export?session_id=${encodeURIComponent(sid)}`;
-  a.download = '';
-  document.body.append(a);
-  a.click();
-  a.remove();
+  downloadAuthed(`/api/export?session_id=${encodeURIComponent(sid)}`, `${sid}.ipynb`);
 }
 
 async function deleteSession(sid) {
   try {
-    await fetch(`/api/sessions/${sid}`, { method: 'DELETE' });
     const view = views.get(sid);
-    if (view && view.abort) view.abort.abort();
+    if (view && view.abort) {
+      view.abort.abort();
+      if (view.streamDone) await view.streamDone;
+    }
+    const url = `/api/sessions/${encodeURIComponent(sid)}`;
+    let resp = await fetch(url, { method: 'DELETE' });
+    // After aborting an active stream, the server may still be unwinding its turn lock.
+    for (let attempt = 0; attempt < 2 && resp.status === 409; attempt++) {
+      await new Promise(r => setTimeout(r, 150));
+      resp = await fetch(url, { method: 'DELETE' });
+    }
+    if (!resp.ok) {
+      if (activeView) {
+        const msg = resp.status === 409
+          ? '⚠ Could not delete session — a reply is still finishing, try again in a moment.'
+          : `⚠ Could not delete session (HTTP ${resp.status})`;
+        activeView.chat.append(el('div', 'error-banner', msg));
+        scrollBottom();
+      }
+      return;
+    }
+    revokeViewBlobs(view);
     views.delete(sid);
     if (sid === sessionId) newSession();
     await loadHistory();
-  } catch { /* non-critical */ }
+  } catch (err) {
+    if (activeView) {
+      activeView.chat.append(el('div', 'error-banner', `⚠ Could not delete session (${err.message})`));
+      scrollBottom();
+    }
+  }
 }
 
 async function resumeSession(sid, itemEl) {

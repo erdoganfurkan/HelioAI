@@ -29,7 +29,7 @@ from helioai.core.session import store
 from helioai.datastore import read_manifest
 
 _PARAM_ID_RE = re.compile(r"\b(?:amda|cda|csa|ssc)/[\w./-]+")
-_LOAD_DATA_RE = re.compile(r"""load_data\(\s*(["'])([a-z0-9_]+)\1\s*\)""")
+_LOAD_DATA_RE = re.compile(r"""load_data\(\s*(["'])([^"']+)\1\s*\)""")
 
 # Real helpers emitted into standalone code (no HelioAI sandbox needed). These
 # are plain strings — never .format()-ed — so their f-string braces stay intact.
@@ -273,6 +273,32 @@ def load_data(name):
 '''
 
 
+def _resolve_manifest_entry(name: str, datasets: dict) -> dict | None:
+    """Resolve a `load_data(name)` argument against the manifest, mirroring the sandbox.
+
+    The sandbox accepts both manifest slugs (`bgsm`) and full product ids
+    (`cda/WI_H0_MFI/BGSM`). Rewriting only `[a-z0-9_]+` missed full-id calls and fell
+    back to the local `load_data` shim, embedding a host path in the exported notebook.
+    An ambiguous id saved over multiple windows returns None so the rewrite stays safe.
+    """
+    if name in datasets:
+        return datasets[name]
+    if "/" in name:
+        matches = [e for e in datasets.values() if e.get("param_id") == name]
+    else:
+
+        def norm(s: str) -> str:
+            return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+
+        target = norm(name)
+        matches = [
+            e
+            for e in datasets.values()
+            if norm(str(e.get("param_id", "")).rstrip("/").split("/")[-1]) == target
+        ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _rewrite_load_data_calls(code_src: str, manifest: dict) -> str:
     """Rewrite load_data("name") into a standalone fetch_series(...)/fetch_events(...) call.
 
@@ -293,7 +319,7 @@ def _rewrite_load_data_calls(code_src: str, manifest: dict) -> str:
 
     def _sub(m: re.Match) -> str:
         name = m.group(2)
-        entry = datasets.get(name)
+        entry = _resolve_manifest_entry(name, datasets)
         if not entry:
             kept_load_data["flag"] = True
             return m.group(0)

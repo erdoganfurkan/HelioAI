@@ -1270,3 +1270,40 @@ def test_the_favicon_is_served_where_browsers_look(web_client):
     html = web_client.get("/").text
     assert "/static/favicon.ico" in html and "/static/icon.png" in html
     assert web_client.get("/static/icon.png").status_code == 200
+
+
+def test_export_endpoint_streams_in_memory_without_leaving_ipynb_on_disk(monkeypatch, tmp_path):
+    """`GET /api/export` used to write `<workspace>/<label>.ipynb` to disk, which
+    neither TTL cleanup (`is_dir()`) nor `DELETE /api/sessions/{id}` ever deleted."""
+    import nbformat
+
+    import helioai.export as export_module
+    from helioai.core.llm.base import Message
+    from helioai.core.session import SessionStore
+
+    test_store = SessionStore(tmp_path / "sessions.db")
+    sid = "web-export-mem"
+    test_store.save("web", sid, [Message(role="user", content="Plot ACE IMF")])
+    test_store.set_workspace_dir("web", sid, "plot-ace_webexp")
+
+    monkeypatch.setattr("helioai.interfaces.web.app.store", test_store)
+    monkeypatch.setattr(export_module, "store", test_store)
+    monkeypatch.setattr(export_module.settings, "data_dir", tmp_path)
+
+    from helioai.interfaces.web.app import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    r = client.get(f"/api/export?session_id={sid}")
+    assert r.status_code == 200
+    assert 'filename="plot-ace_webexp.ipynb"' in r.headers.get("content-disposition", "")
+    nbformat.validate(nbformat.reads(r.content.decode(), as_version=4))
+    assert not list((tmp_path / "users").rglob("*.ipynb"))
+
+
+def test_delete_session_refuses_while_turn_is_streaming(web_client, monkeypatch):
+    """Deleting a busy session used to `rmtree` its workspace mid-run."""
+    import helioai.interfaces.web.app as web_app
+
+    monkeypatch.setattr(web_app.store, "is_busy", lambda user_id, session_id: True)
+    r = web_client.delete("/api/sessions/busy-sess")
+    assert r.status_code == 409

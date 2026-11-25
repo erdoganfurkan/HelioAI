@@ -1062,3 +1062,19 @@ def test_variants_of_one_product_cost_one_slot_and_list_the_others():
         "cda/MMS1_MEC_SRVY_L2_EPHTS04D/mms1_mec_pmin_gsm",
     ]
     assert "also_in" not in out[1], "a different variable name is a different product"
+
+
+def test_indexed_providers_and_dataset_variables_do_not_deadlock_cold(
+    isolated_rag, monkeypatch
+) -> None:
+    """`_load_bm25` used to take non-reentrant `_lock` and then call `_load()`, which
+    re-acquired `_lock` whenever `_model` or `_collection` was None."""
+    _seed_mixed(isolated_rag)
+    monkeypatch.setattr(rag_module, "_model", None)
+    monkeypatch.setattr(rag_module, "_bm25", None)
+    monkeypatch.setattr(rag_module, "_bm25_loaded", False)
+
+    counts = rag_module.indexed_providers()
+
+    assert counts == {"amda": 2, "cda": 2}
+    assert rag_module._model is None, "listing indexed providers must not load the embedding model"

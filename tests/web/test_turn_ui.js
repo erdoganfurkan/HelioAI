@@ -26,18 +26,47 @@ const JOURNAL = [
   // A series only the script loaded: its card carries the dataset where the mission goes.
   card('cda/WI_H0_MFI/B3GSE', { mission: 'WI_H0_MFI', n_points: 10 }),
   { event: 'reply', data: { text: 'MMS1 was in the **solar wind**.' } },
+  { event: 'artifact', data: { kind: 'image', figure_paths: ['/ws/fig_0_0.png'] } },
   { event: 'done', data: { n_iterations: 2 } },
 ];
 
-globalThis.fetch = async (url) => {
+const authedFetches = [];
+let deleteResponses = [];
+globalThis.URL = {
+  createObjectURL: () => 'blob:mock-object-url',
+  revokeObjectURL: () => {},
+};
+globalThis.localStorage.setItem('helioai_dev_token', 'tok-alice');
+
+globalThis.fetch = async (url, opts = {}) => {
+  authedFetches.push({ url, method: opts.method || 'GET', headers: opts.headers || {} });
   if (url === '/api/config') return { ok: true, status: 200, json: async () => CONFIG };
   if (url === '/api/sessions') return { ok: true, status: 200, json: async () => [] };
   if (url === '/api/sessions/turn/events') return { ok: true, status: 200, json: async () => ({ events: JOURNAL }) };
+  if (url === '/api/sessions/capped/events') {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        events: [
+          { event: 'user', data: { text: 'Loop' } },
+          { event: 'error', data: { message: 'agent loop exceeded 25 iterations' } },
+        ],
+      }),
+    };
+  }
+  if (opts.method === 'DELETE' && url.startsWith('/api/sessions/')) {
+    const status = deleteResponses.shift() ?? 200;
+    return { ok: status >= 200 && status < 300, status };
+  }
+  if (url.startsWith('/figure?') || url.startsWith('/api/export?')) {
+    return { ok: true, status: 200, blob: async () => ({ size: 4 }) };
+  }
   throw new Error(`unexpected fetch ${url}`);
 };
 
 const appJs = fs.readFileSync(path.join(__dirname, '../../helioai/interfaces/web/static/app.js'), 'utf8');
-new Function(appJs + '\n;globalThis.__app = { resumeSession };')();
+new Function(appJs + '\n;globalThis.__app = { resumeSession, deleteSession, openDock, activeView: () => activeView };')();
 const app = globalThis.__app;
 const tick = () => new Promise(r => setTimeout(r, 0));
 
@@ -74,6 +103,42 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   assert.ok(reply.querySelector('.msg-copy'), 'the answer has a copy button');
   assert.equal(chat.querySelectorAll('.turn-actions').length, 1, 'one export button, after the answer');
   assert.ok(chat.querySelector('.btn-turn').textContent.includes('notebook'));
+
+  // Under HELIOAI_USERS auth, figures and notebook export must go through fetch() with X-Helio-Token.
+  const img = chat.querySelector('.artifact-image').querySelector('img');
+  assert.equal(img.src, 'blob:mock-object-url', 'authenticated figure loads via fetch+blob');
+  assert.ok(
+    authedFetches.some(f => f.url.startsWith('/figure?') && f.headers['X-Helio-Token'] === 'tok-alice'),
+    'figure fetch carries X-Helio-Token'
+  );
+  chat.querySelector('.btn-turn').dispatch('click');
+  await tick();
+  assert.ok(
+    authedFetches.some(f => f.url.startsWith('/api/export?') && f.headers['X-Helio-Token'] === 'tok-alice'),
+    'notebook export fetch carries X-Helio-Token'
+  );
+
+  // Error event closes an open activity dock (e.g. capped turn ending without done).
+  app.openDock(app.activeView());
+  assert.equal($('activity-dock').classList.contains('collapsed'), false);
+  app.resumeSession('capped', document.createElement('div'));
+  await tick(); await tick();
+  assert.equal($('activity-dock').classList.contains('collapsed'), true, 'error closes the activity dock');
+  assert.ok(chat.querySelector('.error-banner').textContent.includes('exceeded 25 iterations'));
+
+  // deleteSession retries a transient 409 (unwinding turn lock) and succeeds.
+  deleteResponses = [409, 200];
+  const delBefore = authedFetches.filter(f => f.method === 'DELETE').length;
+  await app.deleteSession('turn');
+  assert.equal(authedFetches.filter(f => f.method === 'DELETE').length - delBefore, 2, 'retried once on 409');
+
+  // Persistent 409 surfaces an error banner instead of silently doing nothing.
+  deleteResponses = [409, 409, 409];
+  await app.deleteSession('capped');
+  assert.ok(
+    chat.querySelectorAll('.error-banner').some(e => e.textContent.includes('Could not delete session')),
+    'persistent delete failure is shown to the user'
+  );
 
   console.log('OK web turn ui');
 })().catch(e => { console.error(e); process.exit(1); });

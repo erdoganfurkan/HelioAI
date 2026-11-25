@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -26,7 +26,7 @@ from helioai.core.session import store
 from helioai.interfaces.errors import describe_llm_error, setup_problem
 from helioai.interfaces.web.legacy_replay import messages_view
 from helioai.logging_config import get_logger
-from helioai.workspace import is_under_workspace, user_home
+from helioai.workspace import is_under_workspace, safe_id, user_home
 
 log = get_logger(__name__)
 
@@ -395,6 +395,10 @@ async def put_profile(body: _ProfileBody, user_id: str = Depends(require_user)) 
 async def delete_session(session_id: str, user_id: str = Depends(require_user)) -> dict:
     """Delete one of the caller's sessions and its workspace.
 
+    Refuses with 409 while a turn is actively streaming for the session so `rmtree`
+    cannot delete files under a running `run_python` and the finishing turn cannot
+    resurrect the deleted row.
+
     Args:
         session_id: Session to delete. Sanitised through `safe_id` before it
             reaches the `rmtree` behind this route.
@@ -404,6 +408,10 @@ async def delete_session(session_id: str, user_id: str = Depends(require_user)) 
         `{"deleted": session_id}`, whether or not anything existed — a caller
         learns nothing about other users' session ids from the answer.
     """
+    if store.is_busy(user_id, session_id):
+        raise HTTPException(
+            status_code=409, detail="cannot delete a session while a reply is streaming"
+        )
     wdir = store.get_workspace_dir(user_id, session_id)
     store.reset(user_id, session_id)
     if wdir:
@@ -418,7 +426,7 @@ async def delete_session(session_id: str, user_id: str = Depends(require_user)) 
 
 
 @app.get("/api/export")
-async def export_notebook(session_id: str, user_id: str = Depends(require_user)) -> FileResponse:
+async def export_notebook(session_id: str, user_id: str = Depends(require_user)) -> Response:
     """Export a session as a standalone `.ipynb` and return it.
 
     Args:
@@ -429,15 +437,19 @@ async def export_notebook(session_id: str, user_id: str = Depends(require_user))
         The notebook as a file download, built in memory rather than written to
         the workspace.
     """
-    from helioai.export import export_session_notebook
+    import nbformat
+
+    from helioai.export import build_notebook
 
     if session_id not in store.all_sessions(user_id):
         raise HTTPException(status_code=404, detail="Unknown session")
-    path = export_session_notebook(user_id, session_id)
-    return FileResponse(
-        path,
+    label = store.get_workspace_dir(user_id, session_id) or session_id
+    filename = f"{safe_id(label)}.ipynb"
+    nb = build_notebook(user_id, session_id)
+    return Response(
+        content=nbformat.writes(nb),
         media_type="application/x-ipynb+json",
-        filename=path.name,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
